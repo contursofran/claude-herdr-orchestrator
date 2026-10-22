@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Installs herdr-agents on this machine, or updates it: the two mods, the
-# planner/builder/reviewer subagents, and the Claude Code settings that load them.
+# Installs herdr-agents from this clone, or updates it: the two mods (with the
+# planner/builder/reviewer subagents) and the Claude Code settings that load them.
+# For working on the mod; everyone else installs it from the marketplace (README).
 #
 #   ./install.sh            # from a clone of this repo; run it again after a pull
 #
-# A subagent you changed by hand is kept as <name>.md.bak before it is replaced.
 # Needs node (to edit the JSON settings) and rsync; herdr runs the workers.
 set -euo pipefail
 
@@ -13,25 +13,21 @@ claude=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 mods="$claude/mods"
 
 command -v herdr >/dev/null || echo "note: herdr is not on PATH; workers only start when Claude Code runs inside herdr."
-mkdir -p "$mods/herdr-agents" "$mods/herdr-agents-view" "$claude/agents"
+mkdir -p "$mods/herdr-agents" "$mods/herdr-agents-view"
 
-# A mod is its manifest, its hooks and its type contract. The engine writes
+# A mod is its manifest, its hooks, its subagents and its type contract. The engine writes
 # .claude-plugin/types into the installed folder; that stays.
 install_mod() {
   local src=$1 dest=$2
   mkdir -p "$dest/.claude-plugin"
   cp "$src/.claude-plugin/plugin.json" "$dest/.claude-plugin/"
   rsync -a --delete "$src/hooks/" "$dest/hooks/"
-  if [[ -d $src/types ]]; then rsync -a --delete "$src/types/" "$dest/types/"; fi
+  for dir in types agents; do
+    if [[ -d $src/$dir ]]; then rsync -a --delete "$src/$dir/" "$dest/$dir/"; fi
+  done
 }
 install_mod "$here" "$mods/herdr-agents"
 install_mod "$here/view" "$mods/herdr-agents-view"
-
-for f in "$here"/agents/*.md; do
-  dest="$claude/agents/$(basename "$f")"
-  if [[ -f "$dest" ]] && ! cmp -s "$f" "$dest"; then cp "$dest" "$dest.bak"; fi
-  cp "$f" "$dest"
-done
 
 [[ -f "$claude/herdr-agents.json" ]] || cp "$here/herdr-agents.example.json" "$claude/herdr-agents.json"
 

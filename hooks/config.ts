@@ -8,10 +8,22 @@ import { session } from './session'
 // blocked. Profiles in herdr-agents.json add to these or replace them by name,
 // which is where the person adds other CLIs (codex, opencode) or approval modes.
 export const PROFILES: Record<string, Profile> = {
-  // The subagents in this repo's agents/ folder (install.sh puts them in ~/.claude/agents).
-  planner: { kind: 'claude', args: ['--agent', 'planner', '--permission-mode', 'auto'], note: 'Claude planner agent (Opus medium)' },
-  builder: { kind: 'claude', args: ['--agent', 'builder', '--permission-mode', 'auto'], note: 'Claude builder agent (Haiku xhigh)' },
-  reviewer: { kind: 'claude', args: ['--agent', 'reviewer', '--permission-mode', 'auto'], note: 'Claude reviewer agent (Opus low)' },
+  // The subagents in this repo's agents/ folder, which Claude Code names after the plugin.
+  planner: {
+    kind: 'claude',
+    args: ['--agent', 'herdr-agents:planner', '--permission-mode', 'auto'],
+    note: 'Claude planner agent (Opus medium)',
+  },
+  builder: {
+    kind: 'claude',
+    args: ['--agent', 'herdr-agents:builder', '--permission-mode', 'auto'],
+    note: 'Claude builder agent (Haiku xhigh)',
+  },
+  reviewer: {
+    kind: 'claude',
+    args: ['--agent', 'herdr-agents:reviewer', '--permission-mode', 'auto'],
+    note: 'Claude reviewer agent (Opus low)',
+  },
   // No subagent: the full toolset, for root-cause hunts and fixes that failed twice.
   debugger: {
     kind: 'claude',

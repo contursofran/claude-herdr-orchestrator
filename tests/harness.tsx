@@ -15,9 +15,11 @@ export const BAND = {
 // herdr's state for the workers the tests name; any other worker is idle.
 const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 'w-stuck': 'blocked' }
 
-// Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted.
+// Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
+// to this session and the ones it typed into workers' tabs.
 export async function start($: Engine, on: On, config: Settings = {}) {
   const submitted: string[] = []
+  const typed: string[] = []
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
@@ -52,6 +54,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     const slug = cmd === 'git' && e.argv[3] === 'remote' ? remote[e.argv[2] ?? ''] : undefined
     if (slug) return exit(0, `origin\tgit@github.com:${slug}.git (fetch)\n`)
     if (cmd !== 'herdr') return exit(1)
+    if (sub === 'agent' && verb === 'prompt') typed.push(e.argv[4] ?? '')
     if (sub === 'agent' && verb === 'get') return ok({ agent: { agent_status: STATUS[name] ?? 'idle', pane_id: 'p1' } })
     if (sub === 'tab' && verb === 'create') return ok({ root_pane: { pane_id: 'p1' } })
     return ok({})
@@ -61,7 +64,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     return { text: e.text }
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, files }
+  return { clock, submitted, typed, files }
 }
 
 // A row is one Text per column; its name is padded.

@@ -1,0 +1,16 @@
+{
+  "name": "claude-herdr-orchestrator",
+  "owner": { "name": "contursofran" },
+  "plugins": [
+    {
+      "name": "herdr-agents",
+      "source": "./",
+      "description": "Run a team of coding agents in herdr tabs from one Claude Code session; their reports come back to it, and your decisions wait on a panel above the prompt."
+    },
+    {
+      "name": "herdr-agents-view",
+      "source": "./view",
+      "description": "Draws herdr-agents' worker reports and notices as one dim line; ctrl+o shows them in full."
+    }
+  ]
+}
