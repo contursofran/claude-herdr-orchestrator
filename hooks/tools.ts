@@ -31,7 +31,7 @@ export async function registerTools($: EngineInterface) {
   await $.tool.register({
     name: 'message',
     description:
-      'Send a follow-up to a herdr worker started with spawn, such as review fixes or a correction. It continues in the same tab with its context; its next report arrives as a <herdr-agent> message. Works while the worker is busy too: a Claude worker takes it at its next step, others get it the moment they report.',
+      'Send a follow-up to a herdr worker started with spawn, such as a correction or an answer. Review fixes go to a fresh builder instead (stop, then spawn). It continues in the same tab with its context; its next report arrives as a <herdr-agent> message. Works while the worker is busy too: a Claude worker takes it at its next step, others get it the moment they report.',
     inputSchema: {
       type: 'object',
       properties: {

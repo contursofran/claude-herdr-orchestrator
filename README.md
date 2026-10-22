@@ -48,7 +48,7 @@ The panel shows the coordinator's context (`ctx 75k / 200k`). Past `resetAt` (20
 
 ### A playbook that keeps workers busy
 
-Planner, then builder, then reviewer; the debugger after two failed fix rounds. The coordinator is reminded when fewer than `target` workers run.
+Planner, then builder, then reviewer; each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run.
 
 ### Wrap-up and cleanup
 
@@ -64,7 +64,7 @@ Planner, then builder, then reviewer; the debugger after two failed fix rounds. 
 
 - **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.
 - **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
-- **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus), `builder` (Haiku) and `reviewer` (Opus); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
+- **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus high), `builder` (Haiku xhigh) and `reviewer` (Opus high); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 
 ## Install
 

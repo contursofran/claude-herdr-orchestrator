@@ -9,20 +9,21 @@ import { session } from './session'
 // which is where the person adds other CLIs (codex, opencode) or approval modes.
 export const PROFILES: Record<string, Profile> = {
   // The subagents in this repo's agents/ folder, which Claude Code names after the plugin.
+  // `claude --agent` ignores a subagent's `effort:` line, so each profile passes --effort.
   planner: {
     kind: 'claude',
-    args: ['--agent', 'herdr-agents:planner', '--permission-mode', 'auto'],
-    note: 'Claude planner agent (Opus medium)',
+    args: ['--agent', 'herdr-agents:planner', '--effort', 'high', '--permission-mode', 'auto'],
+    note: 'Claude planner agent (Opus high)',
   },
   builder: {
     kind: 'claude',
-    args: ['--agent', 'herdr-agents:builder', '--permission-mode', 'auto'],
+    args: ['--agent', 'herdr-agents:builder', '--effort', 'xhigh', '--permission-mode', 'auto'],
     note: 'Claude builder agent (Haiku xhigh)',
   },
   reviewer: {
     kind: 'claude',
-    args: ['--agent', 'herdr-agents:reviewer', '--permission-mode', 'auto'],
-    note: 'Claude reviewer agent (Opus low)',
+    args: ['--agent', 'herdr-agents:reviewer', '--effort', 'high', '--permission-mode', 'auto'],
+    note: 'Claude reviewer agent (Opus high)',
   },
   // No subagent: the full toolset, for root-cause hunts and fixes that failed twice.
   debugger: {

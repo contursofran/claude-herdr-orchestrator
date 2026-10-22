@@ -255,8 +255,8 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   if ((await jobs($))[worker]?.status === 'running') return { deny: `worker ${worker} is still running; use message or stop` }
   if (!(await $.env.get('HERDR_SOCKET_PATH'))) return { deny: 'this session is not running inside herdr' }
 
-  // A fix round goes back to the builder that wrote the PR: it still has the
-  // context a fresh worker would rebuild. The debugger takes over after failed rounds.
+  // One writer per worktree. A fix round goes to a fresh builder once the one that
+  // wrote the PR is stopped, so its context stays small. The debugger takes over after failed rounds.
   if (!reviewsOnly(profile) && profile !== 'debugger') {
     for (const j of Object.values(await jobs($))) {
       if (j.name === worker || j.cwd !== cwd || reviewsOnly(j.profile)) continue
@@ -266,7 +266,7 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
         continue
       }
       return {
-        deny: `${j.name} (${j.profile}) is still open in ${cwd}. Send the fixes to it with message: it already has the context. After two failed fix rounds, ${afterFailedRounds(off)} instead.`,
+        deny: `${j.name} (${j.profile}) is still open in ${cwd}. For a fix round, stop it first, then spawn the fresh builder with the PR and the blockers. After two failed fix rounds, ${afterFailedRounds(off)} instead.`,
       }
     }
   }
