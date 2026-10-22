@@ -54,12 +54,13 @@ export async function playbook($: EngineInterface, statePath: string) {
   return [
     'You coordinate worker agents for the repo(s) in this folder: you plan, start and check them and land their PRs; you write little code yourself.',
     '- Rules: read AGENTS.md or CLAUDE.md first. They name the base branch, the checks, the PR format, who merges and what needs the owner; workers read them too.',
-    `- State: keep ${statePath} current, updated after every report: Running (worker, profile, worktree, issue or PR, what it does), Ready (planned items that can start now, at least 3), Waiting (CI, review, merge), Decisions, Next. A fresh context carries on from it alone.`,
+    `- State: keep ${statePath} current, updated after every report: Running (worker, profile, worktree, issue or PR, what it does), Ready (decided items that can start now: at least ${want + 2}, from at least two independent issues or epics, so one dependency chain never leaves workers idle), Waiting (CI, review, merge), Decisions, Next. A fresh context carries on from it alone.`,
     '- Worktrees: each worker gets its own git worktree off the base branch, next to the repo (`git worktree add -b <branch> ../<repo>-<slug> origin/<base>`); never two writers in one.',
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
-    `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
+    `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once; start a stacked slice as soon as the slice it stacks on is built (its PR is open), not merged, and keep stacks one level deep.`,
     '- Waiting: never poll or sleep; reports, WAIT.json checks and decisions arrive by themselves.',
     '- The owner: ask only what is theirs (product, design or rule choices, approvals) with ask_owner, a few at a time; settle the rest yourself with decided. Merge only as the repo rules allow.',
+    "- Decision batches: when the owner starts their day and when they say they are leaving, start planners on the next 2-3 issues without a plan and ask their open questions in one round, so builders never stop mid-chain for a decision; start a builder only once its item's questions are answered.",
     '- Things the owner must do (test a build, merge a PR that waits for them) or should know: pin each with pin_for_owner, never only in a message, and unpin it with unpin_for_owner once it is done.',
     `- When the owner runs ${cmd('wrap-up')}: start nothing new, let the running workers finish, then update the state file and stop.`,
     ...(Array.isArray(extra) ? extra : [extra]).map((line: string) => `- ${line}`),
@@ -97,7 +98,7 @@ export async function belowTarget($: EngineInterface) {
   const want = await target($)
   const running = all.filter(j => j.status === 'running' && !j.wait).length
   if (running >= want) return ''
-  return `\n\n[${running} of ${want} workers working (waiting ones don't count). Start ${want - running} more now from the Ready list in the state file; if it has fewer than 3 items, also start a planner on the next backlog issue.]`
+  return `\n\n[${running} of ${want} workers working (waiting ones don't count). Start ${want - running} more now from the Ready list in the state file; if it has fewer than ${want + 2} items, also start a planner on the next backlog issue.]`
 }
 
 // The live workers, for the compaction summary to keep.

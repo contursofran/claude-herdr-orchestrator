@@ -48,7 +48,7 @@ The panel shows the coordinator's context (`ctx 75k / 200k`). Past `resetAt` (20
 
 ### A playbook that keeps workers busy
 
-Planner, then builder, then reviewer; each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run.
+Planner, then builder, then reviewer; each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run, keeps at least `target` + 2 decided items ready across independent issues, and asks you the planners' open questions in one round at the start and end of your day, so builders don't stop mid-chain.
 
 ### Wrap-up and cleanup
 
