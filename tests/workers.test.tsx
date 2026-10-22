@@ -33,3 +33,30 @@ test('a turned-off built-in cannot start, and the rules name what replaces it', 
   expect(guide).toMatch(/    reviewer .* · off\n/)
   await stopAll($, clock, ['w-busy'])
 })
+
+test('a message after a report with DECISION lines reaches the worker as new text, not TASK.md again', async ($, on) => {
+  const { clock, submitted, typed, files } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-done', profile: 'builder', cwd: '/repo/wt', task: 'Fix the nits.' })
+  const dir = '/repo/wt/.herdr-agents/w-done'
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${dir}/RESULT.md`] = `<!-- report ${token} -->\nStopped.\nDECISION: [Edit scope] May I edit CI scripts? | Yes (recommended) | No`
+  await clock.advance(10_000)
+  expect(submitted.at(-1)).toMatch(/Pinned for the owner as D1/)
+
+  const answer = 'D1 = yes, edit the CI scripts.'
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: answer })
+  // The brief stays as it was; the answer is typed in and kept in a file of its own.
+  expect(files[`${dir}/TASK.md`]).toBe('Fix the nits.')
+  const sent = typed.at(-1) ?? ''
+  expect(sent).toContain(answer)
+  expect(sent).not.toContain('TASK.md')
+  const saved = sent.match(/also saved in (\S+\/MESSAGE-\d+\.md)/)?.[1]
+  expect(saved && files[saved]).toBe(answer)
+
+  // A long message is only pointed to, in a file the worker has not read yet.
+  files[`${dir}/RESULT.md`] = `<!-- report ${typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]} -->\nDone.`
+  await clock.advance(10_000)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: 'x'.repeat(5000) })
+  expect(typed.at(-1)).toMatch(/New message from your coordinator in \S+\/MESSAGE-\d+\.md, a file you have not read yet/)
+  await stopAll($, clock, ['w-done'])
+})

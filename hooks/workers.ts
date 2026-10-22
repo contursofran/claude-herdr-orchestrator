@@ -3,7 +3,7 @@ import type { Job } from '../types'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds, belowTarget } from './coordinator'
-import { INLINE_CHARS, INLINE_LINES, NAME, QUIET_MS } from './defaults'
+import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, QUIET_MS } from './defaults'
 import { acceptFolderTrust, herdr, type HerdrAgent, notify } from './herdr'
 import { ask } from './owner'
 import { cmd } from './session'
@@ -325,8 +325,18 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     await saveJob($, { ...job, queued: [...(job.queued ?? []), path] })
     return { result: `${e.worker} (${kind}) is mid-task, so the message is held and sent the moment it reports.` }
   }
-  await $.fs.write(`${job.dir}/TASK.md`, e.text)
-  await prompt($, job, `New message from your coordinator in ${job.dir}/TASK.md. Read it and do it.`)
+  // A follow-up goes to a file of its own and, when short, into the prompt itself.
+  // Told to read TASK.md again, a worker that read it for its first task took it
+  // for that task resent, did not open it and asked its DECISION lines again.
+  const path = `${job.dir}/MESSAGE-${await $.clock.now()}.md`
+  await $.fs.write(path, e.text)
+  await prompt(
+    $,
+    job,
+    e.text.length <= MESSAGE_CHARS
+      ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${e.text.trim()}\n\nDo what it says.`
+      : `New message from your coordinator in ${path}, a file you have not read yet. It is not your earlier task again: it answers or follows your last report. Read it now and do what it says.`,
+  )
   return { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
 }
 

@@ -15,6 +15,8 @@ export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
 // A report longer than this goes to the coordinator as its first line and its file's path.
 export const INLINE_LINES = 6
 export const INLINE_CHARS = 700
+// A follow-up to a worker up to this long is typed into its prompt as well as saved to a file.
+export const MESSAGE_CHARS = 4000
 // How long a worker may sit with an unchanged screen, not working and without
 // RESULT.md, before it is reported as stopped.
 export const QUIET_MS = 5 * 60_000
