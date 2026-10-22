@@ -4,6 +4,12 @@ Run a team of coding agents from one Claude Code session. The coordinator plans 
 
 ![The panel above the prompt: a to-do for you, a decision with its options, and the workers](docs/images/panel.png)
 
+Install it from the plugin marketplace, at a Claude Code prompt (details under [Install](#install)):
+
+```
+/plugin install herdr-agents --marketplace contursofran/claude-herdr-orchestrator
+```
+
 ## Features
 
 ### Workers in herdr tabs, on any model
