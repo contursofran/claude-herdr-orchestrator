@@ -16,10 +16,11 @@ export const BAND = {
 const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 'w-stuck': 'blocked' }
 
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
-// to this session and the ones it typed into workers' tabs.
+// to this session, the ones it typed into workers' tabs and the tabs it closed.
 export async function start($: Engine, on: On, config: Settings = {}) {
   const submitted: string[] = []
   const typed: string[] = []
+  const closed: string[] = []
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
@@ -55,7 +56,11 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     if (slug) return exit(0, `origin\tgit@github.com:${slug}.git (fetch)\n`)
     if (cmd !== 'herdr') return exit(1)
     if (sub === 'agent' && verb === 'prompt') typed.push(e.argv[4] ?? '')
-    if (sub === 'agent' && verb === 'get') return ok({ agent: { agent_status: STATUS[name] ?? 'idle', pane_id: 'p1' } })
+    if (sub === 'agent' && verb === 'get') {
+      if (closed.includes(`t-${name}`)) return exit(1)
+      return ok({ agent: { agent_status: STATUS[name] ?? 'idle', pane_id: 'p1', tab_id: `t-${name}` } })
+    }
+    if (sub === 'tab' && verb === 'close') closed.push(name)
     if (sub === 'tab' && verb === 'create') return ok({ root_pane: { pane_id: 'p1' } })
     return ok({})
   })
@@ -64,7 +69,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     return { text: e.text }
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, typed, files }
+  return { clock, submitted, typed, closed, files }
 }
 
 // A row is one Text per column; its name is padded.

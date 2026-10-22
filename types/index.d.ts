@@ -13,6 +13,8 @@ export type Job = {
   queued?: string[]
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
+  // its tab was closed (stop, or closeIdle once it sat idle after its report)
+  closed?: boolean
 }
 
 // `every` and `max` in minutes; `lastAt` is when `check` last ran.
@@ -86,6 +88,7 @@ export type Settings = {
   smallTasks?: string | null
   playbook?: string | string[]
   pruneMinutes?: number
+  closeIdleMinutes?: number
   repos?: Record<string, string>
   wrapUp?: boolean
 }

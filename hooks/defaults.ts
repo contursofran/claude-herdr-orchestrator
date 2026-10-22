@@ -9,6 +9,8 @@ export const RESET_AT = 200_000
 export const PREFIX = 'hrd-'
 // How often merged worktrees are pruned (`pruneMinutes`); 0 turns it off.
 export const PRUNE_MINUTES = 30
+// How long a reported worker's tab may sit idle before it is closed (`closeIdleMinutes`); 0 keeps it.
+export const CLOSE_IDLE_MINUTES = 30
 
 // A worker's name: also its herdr tab's label.
 export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/

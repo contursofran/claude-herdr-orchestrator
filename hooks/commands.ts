@@ -137,7 +137,7 @@ async function help($: EngineInterface) {
       'Settings',
       `  ${await userConfigPath($)}, with ${session.cwd}/.claude/herdr-agents.json over it`,
       `  target ${await target($)} workers · state file ${statePath} · compact past ${limit} tokens · prefix ${session.prefix}${c.wrapUp === true ? ' · wrapUp on everywhere' : ''}`,
-      `  ${cmd('config')} changes them. Keys: target, resetAt, statePath, trustRoots, commandPrefix, profiles, disable, smallTasks, playbook, pruneMinutes, repos, wrapUp. See the README.`,
+      `  ${cmd('config')} changes them. Keys: target, resetAt, statePath, trustRoots, commandPrefix, profiles, disable, smallTasks, playbook, pruneMinutes, closeIdleMinutes, repos, wrapUp. See the README.`,
     ].join('\n'),
   }
 }

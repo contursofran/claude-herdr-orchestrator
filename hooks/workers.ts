@@ -5,7 +5,7 @@ import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds, belowTarget } from './coordinator'
 import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, QUIET_MS } from './defaults'
 import { acceptFolderTrust, herdr, type HerdrAgent, notify } from './herdr'
-import { ask } from './owner'
+import { ask, openQuestions } from './owner'
 import { cmd } from './session'
 import { jobs, saveJob } from './state'
 import { excludeFromGit } from './worktrees'
@@ -307,6 +307,10 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
 export async function messageWorker($: EngineInterface, e: { worker: string; text: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
+  if (job.closed)
+    return {
+      deny: `${e.worker}'s tab is closed. Spawn a fresh worker in ${job.cwd} with what it needs; its reports are in ${job.dir}.`,
+    }
   const text = e.text.trim()
   if (!text) return { deny: 'the message is empty' }
   // The suffix keeps two messages sent in one millisecond apart.
@@ -351,5 +355,37 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
   } catch (err) {
     return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}` }
   }
+  await saveJob($, { ...(await jobs($))[job.name]!, closed: true })
   return { result: `Stopped ${e.worker} and closed its tab.${await belowTarget($)}` }
+}
+
+// A reported worker keeps its tab, and its CLI, for follow-ups, so finished workers
+// piled up in herdr. Once one has sat idle `minutes` since its report, its tab is
+// closed; a later follow-up goes to a fresh worker. One with a question still open,
+// or that herdr shows working or blocked, keeps its tab.
+export async function closeIdle($: EngineInterface, minutes: number) {
+  const now = await $.clock.now()
+  const asking = new Set((await openQuestions($)).map(d => d.from))
+  const closed: string[] = []
+  for (const job of Object.values(await jobs($))) {
+    if (job.status !== 'reported' || job.closed || asking.has(job.name)) continue
+    if (job.endedAt === undefined || now - job.endedAt < minutes * 60_000) continue
+    let agent: HerdrAgent | undefined
+    try {
+      agent = (await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])).agent
+    } catch {}
+    if (agent) {
+      if (agent.agent_status === 'working' || agent.agent_status === 'blocked') continue
+      try {
+        await herdr($, ['tab', 'close', agent.tab_id])
+      } catch {
+        continue
+      }
+      closed.push(job.name)
+    }
+    // A message may have woken it meanwhile.
+    const current = (await jobs($))[job.name]
+    if (current?.status === 'reported') await saveJob($, { ...current, closed: true })
+  }
+  if (closed.length) $.ui.toast(`Closed ${closed.length} idle worker tab${closed.length === 1 ? '' : 's'}: ${closed.join(', ')}`)
 }

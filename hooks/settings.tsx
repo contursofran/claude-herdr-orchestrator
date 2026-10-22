@@ -4,7 +4,7 @@ import type { SettingsView } from '../types'
 import type { BandRender } from './band'
 import { refresh } from './board'
 import { allProfiles, BUILT_IN, customized, OPTIONAL, readJson, userConfigPath } from './config'
-import { PREFIX, PRUNE_MINUTES, RESET_AT, TARGET } from './defaults'
+import { CLOSE_IDLE_MINUTES, PREFIX, PRUNE_MINUTES, RESET_AT, TARGET } from './defaults'
 import { tilde } from './format'
 import { session } from './session'
 
@@ -50,7 +50,7 @@ export type SettingRow = {
 }
 
 // The settings typed into a field, with their label, default, unit and hint.
-type TextSetting = 'target' | 'resetAt' | 'statePath' | 'pruneMinutes' | 'commandPrefix'
+type TextSetting = 'target' | 'resetAt' | 'statePath' | 'pruneMinutes' | 'closeIdleMinutes' | 'commandPrefix'
 
 export const TEXT_SETTINGS: [key: TextSetting, label: string, initial: unknown, unit: string, hint: string][] = [
   ['target', 'Workers to keep busy', TARGET, '', 'How many workers the coordinator keeps running.'],
@@ -69,10 +69,17 @@ export const TEXT_SETTINGS: [key: TextSetting, label: string, initial: unknown, 
     ' min',
     'How often merged worktrees are removed; 0 turns it off. New sessions.',
   ],
+  [
+    'closeIdleMinutes',
+    'Close idle worker tabs after',
+    CLOSE_IDLE_MINUTES,
+    ' min',
+    "A reported worker's tab closes once idle this long; 0 keeps it. New sessions.",
+  ],
   ['commandPrefix', 'Command prefix', PREFIX, '', 'What every command starts with. New sessions.'],
 ]
 
-export const NUMBERS: Record<string, number> = { target: 1, resetAt: 10_000, pruneMinutes: 0 }
+export const NUMBERS: Record<string, number> = { target: 1, resetAt: 10_000, pruneMinutes: 0, closeIdleMinutes: 0 }
 
 export async function loadSettings($: EngineInterface, note?: string, error?: string) {
   const paths = { user: await userConfigPath($), folder: `${session.cwd}/.claude/herdr-agents.json` }
