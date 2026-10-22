@@ -1,9 +1,26 @@
 # claude-herdr-orchestrator
 
-Run a team of coding agents from one Claude Code session. The coordinator plans the work, starts workers (Claude, opencode, codex) in herdr tabs, and their reports come back to it as prompts. You answer the questions only you can answer from a panel above the prompt.
+Run a team of coding agents from one Claude Code session. The coordinator plans the work, starts workers (Claude, opencode, codex) in [herdr](https://herdr.dev) tabs, and their reports come back to it as prompts. You answer the questions only you can answer from a panel above the prompt.
 
-- **`herdr-agents`** (the mod): `spawn` / `message` / `stop` tools; each worker's `RESULT.md` comes back as a `<herdr-agent>` prompt. The panel shows, at the top, what the coordinator pinned for you to do or know (`pin_for_owner`, `unpin_for_owner`; Done tells the coordinator), then the decisions waiting for you (`ask_owner`, `decided`, workers' `DECISION:` lines), then the workers, two per line: 4 in the compact view, all of them under Details. A `#123` there links to that issue or PR on GitHub. It also resets the coordinator's context past `resetAt`, shortens long reports, runs workers' `WAIT.json` waits, prunes merged worktrees, and reminds the coordinator when fewer workers run than `target`.
-- **`herdr-agents-view`** (`view/`): draws those prompts as one dim line; ctrl+o shows them in full. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
+![The panel above the prompt: a to-do for you, a decision with its options, and the workers](docs/images/panel.png)
+
+## What you get
+
+- **Workers in herdr tabs.** The coordinator starts each worker in its own herdr tab, usually in its own git worktree, on any model: Claude, opencode or codex. When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt, shown as one dim line in the chat (ctrl+o shows it in full).
+- **One panel for what needs you.** Above the prompt, in this order: to-dos the coordinator pinned for you (test a build, merge a PR; tick Done when you have), decisions with their options, and the workers with their role, time and state. Answer a decision with `1`–`4` from an empty prompt, alt+d and the arrows, or a click. A `#12` links to that issue or PR.
+- **Only your questions reach you.** Workers ask with `DECISION:` lines. The coordinator settles the ones that aren't yours to answer; the panel shows its answer for ten minutes so you can overrule it.
+- **Waits without polling.** A worker waiting on CI or a deploy leaves a `WAIT.json` with a check to run; the mod runs it and wakes the worker when it passes. The panel shows the wait (⏸) and what it is for.
+- **A playbook.** Planner, builder, reviewer, and a debugger after two failed fix rounds; the coordinator keeps `target` workers busy and is reminded when fewer run.
+- **Long sessions stay small.** Past `resetAt` tokens the coordinator saves its state file and is compacted, then reads the state back before the next report.
+- **Wrap-up and cleanup.** `/hrd-wrap-up` (or the panel's button) lets running workers finish and starts no new ones; worktrees whose PR merged are removed every half hour.
+- **Settings in a list.** `/hrd-config` lays the settings out on the panel, like Claude Code's `/config`:
+
+![/hrd-config: the settings listed above the prompt](docs/images/config.png)
+
+## What's in the repo
+
+- **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.
+- **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
 - **Subagents** (`agents/`): `planner` (Opus), `builder` (Haiku) and `reviewer` (Opus); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 
 ## Install (once per machine)

@@ -1,6 +1,6 @@
 {
   "name": "herdr-agents",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "Run worker agents (opencode, codex, claude) in herdr tabs with any provider; their reports come back to this session.",
   "types": "./types/index.d.ts"
 }

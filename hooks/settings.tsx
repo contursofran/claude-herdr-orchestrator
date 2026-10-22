@@ -5,6 +5,7 @@ import type { BandRender } from './band'
 import { refresh } from './board'
 import { allProfiles, BUILT_IN, customized, OPTIONAL, readJson, userConfigPath } from './config'
 import { PREFIX, PRUNE_MINUTES, RESET_AT, TARGET } from './defaults'
+import { tilde } from './format'
 import { session } from './session'
 
 // /hrd-config: the settings, listed on the band above the prompt as /config lists
@@ -16,6 +17,7 @@ const settingsView = atom(
   {
     scope: 'user',
     paths: { user: '', folder: '' },
+    home: '',
     user: {},
     folder: {},
     profiles: [],
@@ -76,6 +78,7 @@ export async function loadSettings($: EngineInterface, note?: string, error?: st
   const paths = { user: await userConfigPath($), folder: `${session.cwd}/.claude/herdr-agents.json` }
   const user = await readJson($, paths.user)
   const folder = await readJson($, paths.folder)
+  const home = (await $.env.get('HOME')) ?? ''
   const all = await allProfiles($)
   const old = await read($, settingsView)
   const scope = old.paths.user ? old.scope : (await $.fs.exists(paths.folder)) ? 'folder' : 'user'
@@ -83,6 +86,7 @@ export async function loadSettings($: EngineInterface, note?: string, error?: st
     ...p,
     scope,
     paths,
+    home,
     user,
     folder,
     profiles: Object.entries(all).map(([name, p]) => ({
@@ -139,7 +143,7 @@ export function settingRows(pane: SettingsView): SettingRow[] {
       value: pane.scope === 'user' ? 'all folders' : 'this folder',
       raw: '',
       isDefault: false,
-      detail: pane.paths[pane.scope],
+      detail: tilde(pane.paths[pane.scope], pane.home),
       hint: "Which file the changes go to. This folder's file overrides the one for all folders.",
     },
     ...TEXT_SETTINGS.map(
@@ -300,7 +304,9 @@ export async function drawSettings($: EngineInterface, e: BandRender) {
     const list = settingRows(settings)
     const focused = list.find(r => r.key === settings.focused)
     const width = Math.max(...list.map(r => r.label.length)) + 4
-    const hint = focused ? [focused.hint, focused.detail].filter(Boolean).join('  ·  ') : `${settings.paths[settings.scope]}`
+    const hint = focused
+      ? [focused.hint, focused.detail].filter(Boolean).join('  ·  ')
+      : tilde(settings.paths[settings.scope], settings.home)
     return (
       <Box flexDirection="column">
         {list.map(row =>

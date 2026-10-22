@@ -97,6 +97,8 @@ export type SettingsView = {
   isOpen?: boolean
   scope: 'user' | 'folder'
   paths: { user: string; folder: string }
+  // $HOME, so the paths show as ~/...
+  home: string
   user: Settings
   folder: Settings
   // `customized`: a built-in whose settings a file changes
