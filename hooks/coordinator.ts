@@ -56,7 +56,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     '- Rules: read AGENTS.md or CLAUDE.md first. They name the base branch, the checks, the PR format, who merges and what needs the owner; workers read them too.',
     `- State: keep ${statePath} current, updated after every report: Running (worker, profile, worktree, issue or PR, what it does), Ready (planned items that can start now, at least 3), Waiting (CI, review, merge), Decisions, Next. A fresh context carries on from it alone.`,
     '- Worktrees: each worker gets its own git worktree off the base branch, next to the repo (`git worktree add -b <branch> ../<repo>-<slug> origin/<base>`); never two writers in one.',
-    `- Each issue: ${steps.join(', ')}. Send blockers back to the same builder with message; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
+    `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
     `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
     '- Waiting: never poll or sleep; reports, WAIT.json checks and decisions arrive by themselves.',
     '- The owner: ask only what is theirs (product, design or rule choices, approvals) with ask_owner, a few at a time; settle the rest yourself with decided. Merge only as the repo rules allow.',

@@ -16,7 +16,7 @@ test('a turned-off built-in cannot start, and the rules name what replaces it', 
     task: 'x',
   })
   expect(JSON.stringify(denied)).toMatch(/reviewer is turned off/)
-  // The builder cannot be turned off; a second writer in its worktree is sent back to it.
+  // The builder cannot be turned off; a second writer in its worktree waits until the first is stopped.
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'x' })
   const again = await $.tool.call({
     tool: 'mcp__herdr-agents__spawn',
@@ -25,6 +25,7 @@ test('a turned-off built-in cannot start, and the rules name what replaces it', 
     cwd: '/repo/wt',
     task: 'y',
   })
+  expect(JSON.stringify(again)).toMatch(/stop it first/)
   expect(JSON.stringify(again)).toMatch(/After two failed fix rounds, ask the owner with ask_owner instead/)
 
   // A changed built-in stays built in, marked customized.

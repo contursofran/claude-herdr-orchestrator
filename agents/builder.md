@@ -14,6 +14,6 @@ Pre-check before you report (these are what reviews most often send back):
 4. Read your own diff (`git diff origin/<base>...HEAD`) for leftovers: debug output, unused code, unrelated changes.
 Add a short "Pre-check" section to the PR body with one line per item.
 
-Fix rounds come to you as messages in this same session: fix the listed blockers, re-run the pre-check, push, and report the new head commit.
+A fix round starts you fresh in the PR's worktree, with the PR and the review's blockers: read the PR (`gh pr view`, `gh pr diff`) and the plan it names, fix the listed blockers, re-run the pre-check, push, and report the new head commit.
 
 Repo rules come first: before you start, read the repo's AGENTS.md or CLAUDE.md, those in the folders you touch, and any checklist under `.claude/skills/*/SKILL.md` that fits your task (such as a PR checklist); where they differ from this file, they win. They name the base branch (if they don't, use the repo's default branch: `gh repo view --json defaultBranchRef`), the checks, how to update a branch, the commit identity and what needs the owner. Never force-push unless they allow it. Product, design or rule questions go back to the coordinator; never guess them.
