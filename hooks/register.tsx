@@ -4,14 +4,14 @@ import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
-import { PRUNE_MINUTES } from './defaults'
+import { CLOSE_IDLE_MINUTES, PRUNE_MINUTES } from './defaults'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { jobs } from './state'
 import { registerTools } from './tools'
-import { messageWorker, resumeWatching, spawnWorker, stopWorker } from './workers'
+import { closeIdle, messageWorker, resumeWatching, spawnWorker, stopWorker } from './workers'
 import type { SpawnArgs } from './workers'
 import { pruneMerged } from './worktrees'
 
@@ -31,6 +31,8 @@ export const register: Register = on => {
     $.clock.every(3000, () => void refresh($))
     const pruneMinutes = settings.pruneMinutes ?? PRUNE_MINUTES
     if (pruneMinutes > 0) $.clock.every(pruneMinutes * 60_000, () => void pruneMerged($))
+    const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
+    if (closeMinutes > 0) $.clock.every(60_000, () => void closeIdle($, closeMinutes))
     return started
   })
 

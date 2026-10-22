@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { command, start, stopAll } from './harness'
+import { command, spawn, start, stopAll } from './harness'
 
 // Starting workers: the rules spawn applies, from the built-in profiles in effect.
 
@@ -69,4 +69,31 @@ test('a message after a report with DECISION lines reaches the worker as new tex
   expect(pointer && files[pointer]).toBe(long)
   expect(typed.at(-1)).not.toContain(long)
   await stopAll($, clock, ['w-done'])
+})
+
+test("a reported worker's tab closes once it has sat idle, unless its question is still open", async ($, on) => {
+  const { clock, typed, closed, files } = await start($, on)
+  const report = async (worker: string, text: string) => {
+    await spawn($, [worker])
+    const token = typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]
+    files[`/repo-${worker}/.herdr-agents/${worker}/RESULT.md`] = `<!-- report ${token} -->\n${text}`
+  }
+  await report('w-done', 'Reviewed: approve.')
+  await report('w-ask', 'DECISION: Ship it today? | Yes | No')
+  // herdr shows this one still working after its report.
+  await report('w-busy', 'Reviewed: two blockers.')
+  await clock.advance(10_000)
+
+  await clock.advance(29 * 60_000)
+  expect(closed).toEqual([])
+  await clock.advance(2 * 60_000)
+  expect(closed).toEqual(['t-w-done'])
+  const late = await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: 'One more thing.' })
+  expect(JSON.stringify(late)).toMatch(/tab is closed\. Spawn a fresh worker in \/repo-w-done/)
+
+  // Once its question is settled, the worker that asked it goes too.
+  await $.tool.call({ tool: 'mcp__herdr-agents__decided', ids: ['D1'], answer: 'Yes', by: 'owner' })
+  await clock.advance(60_000)
+  expect(closed).toEqual(['t-w-done', 't-w-ask'])
+  await stopAll($, clock, ['w-busy'])
 })
