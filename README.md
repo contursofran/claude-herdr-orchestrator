@@ -4,16 +4,53 @@ Run a team of coding agents from one Claude Code session. The coordinator plans 
 
 ![The panel above the prompt: a to-do for you, a decision with its options, and the workers](docs/images/panel.png)
 
-## What you get
+## Features
 
-- **Workers in herdr tabs.** The coordinator starts each worker in its own herdr tab, usually in its own git worktree, on any model: Claude, opencode or codex. When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt, shown as one dim line in the chat (ctrl+o shows it in full).
-- **One panel for what needs you.** Above the prompt, in this order: to-dos the coordinator pinned for you (test a build, merge a PR; tick Done when you have), decisions with their options, and the workers with their role, time and state. Answer a decision with `1`–`4` from an empty prompt, alt+d and the arrows, or a click. A `#12` links to that issue or PR.
-- **Only your questions reach you.** Workers ask with `DECISION:` lines. The coordinator settles the ones that aren't yours to answer; the panel shows its answer for ten minutes so you can overrule it.
-- **Waits without polling.** A worker waiting on CI or a deploy leaves a `WAIT.json` with a check to run; the mod runs it and wakes the worker when it passes. The panel shows the wait (⏸) and what it is for.
-- **A playbook.** Planner, builder, reviewer, and a debugger after two failed fix rounds; the coordinator keeps `target` workers busy and is reminded when fewer run.
-- **Long sessions stay small.** Past `resetAt` tokens the coordinator saves its state file and is compacted, then reads the state back before the next report.
-- **Wrap-up and cleanup.** `/hrd-wrap-up` (or the panel's button) lets running workers finish and starts no new ones; worktrees whose PR merged are removed every half hour.
-- **Settings in a list.** `/hrd-config` lays the settings out on the panel, like Claude Code's `/config`:
+### Workers in herdr tabs, on any model
+
+The coordinator starts each worker in its own herdr tab, usually in its own git worktree, with a profile: the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it.
+
+### Reports come back by themselves
+
+When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report), and long reports are shortened to a pointer to the file.
+
+### To-dos pinned for you
+
+What only you can do (test a build, merge a PR, restart something) is pinned at the top of the panel, so it doesn't scroll away in a report. Tick Done and the coordinator carries on from it; it unpins what is no longer needed.
+
+![A to-do pinned for the owner, with a link to the issue and a Done button](docs/images/panel-todo.png)
+
+### Decisions, with options and a recommendation
+
+Questions that are yours (a product rule, a design choice, an approval) wait on the panel with their options and the recommended one starred, and herdr pings you. Answer with `1`–`4` from an empty prompt, with alt+d and the arrows, or with a click; `o` gives your own answer. A `#12` links to that issue or PR.
+
+![A decision with three options, the recommended one starred](docs/images/panel-decision.png)
+
+### Only your questions reach you
+
+Workers ask with `DECISION:` lines. The coordinator settles the ones that aren't yours, and the panel shows each answer with a ✓ for ten minutes, so you can overrule it.
+
+### Every worker at a glance
+
+Role, time and state for each worker: working, waiting on you, done. Four fit in the compact view; Details shows them all. A worker waiting on CI or a deploy leaves a `WAIT.json` with a check to run; the mod runs it and wakes the worker when it passes, with no model running meanwhile (⏸ and what it waits for).
+
+![The workers: two builders and a reviewer waiting on a deploy, with the coordinator's context use](docs/images/panel-workers.png)
+
+### Auto-compact at 200k
+
+The panel shows the coordinator's context (`ctx 75k / 200k`). Past `resetAt` (200k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` and is compacted, then reads it back before the next report, so a session can run all day.
+
+### A playbook that keeps workers busy
+
+Planner, then builder, then reviewer; the debugger after two failed fix rounds. The coordinator is reminded when fewer than `target` workers run.
+
+### Wrap-up and cleanup
+
+`/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches.
+
+### Settings in a list
+
+`/hrd-config` lays the settings out above the prompt, like Claude Code's `/config`: for all folders or just this one.
 
 ![/hrd-config: the settings listed above the prompt](docs/images/config.png)
 
