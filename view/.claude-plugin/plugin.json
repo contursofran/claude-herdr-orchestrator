@@ -1,5 +1,10 @@
 {
   "name": "herdr-agents-view",
   "version": "0.1.3",
-  "description": "Draws the prompts herdr-agents submits (worker reports, decisions, context notices) as one line; ctrl+o shows them in full."
+  "description": "Draws the prompts herdr-agents submits (worker reports, decisions, context notices) as one line; ctrl+o shows them in full.",
+  "author": {
+    "name": "contursofran"
+  },
+  "repository": "https://github.com/contursofran/claude-herdr-orchestrator",
+  "license": "MIT"
 }

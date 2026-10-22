@@ -58,16 +58,34 @@ Planner, then builder, then reviewer; the debugger after two failed fix rounds. 
 
 - **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.
 - **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
-- **Subagents** (`agents/`): `planner` (Opus), `builder` (Haiku) and `reviewer` (Opus); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
+- **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus), `builder` (Haiku) and `reviewer` (Opus); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 
-## Install (once per machine)
+## Install
 
-```sh
-git clone git@github.com:contursofran/claude-herdr-orchestrator.git
-cd claude-herdr-orchestrator && ./install.sh
+You need [herdr](https://herdr.dev) and Claude Code. At the prompt of a Claude Code session:
+
+```
+/plugin install herdr-agents --marketplace contursofran/claude-herdr-orchestrator
+/plugin install herdr-agents-view@claude-herdr-orchestrator
 ```
 
-It copies both mods to `~/.claude/mods/`, the subagents to `~/.claude/agents/` (a hand-edited one is kept as `.bak`), creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` and `keybindings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`), allows their tools (`mcp__herdr-agents`) and binds alt+d to the panel. Run it again after a `git pull` to update. Restart Claude Code sessions afterwards; `/reload-plugins` does not pick up new plugin folders.
+Answer `y` to add the marketplace, then pick the user scope. The first installs the mod and its planner, builder and reviewer subagents; the second draws worker reports as one line. Start new sessions inside herdr to use it.
+
+The first time the coordinator uses one of the mod's tools (`spawn`, `ask_owner`, …), Claude Code asks; choose "don't ask again", or allow them all at once in `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["mcp__herdr-agents"] } }
+```
+
+Optional: bind alt+d to move into the panel (ctrl+x tab works without it) in `~/.claude/keybindings.json`:
+
+```json
+{ "bindings": [{ "context": "Chat", "bindings": { "alt+d": "abovePrompt:focus" } }] }
+```
+
+### Updates
+
+Each release bumps the version in `plugin.json`. Run `claude plugin update herdr-agents@claude-herdr-orchestrator` (and the same for `herdr-agents-view`), or update them from `/plugin`, then start a new session. Watch the repository's releases on GitHub to hear about new versions.
 
 ## Use it in a repo
 
@@ -131,13 +149,18 @@ Built-in profiles, the playbook's steps: `planner`, `builder`, `reviewer` (the s
 
 ## Develop
 
+To run the mod from a clone instead of the marketplace (uninstall the marketplace copy first: two plugins of one name don't load):
+
 ```sh
-npm install
+git clone git@github.com:contursofran/claude-herdr-orchestrator.git
+cd claude-herdr-orchestrator && npm install
 ./install.sh && npm run types   # once Claude Code has loaded the mod: the plugin API's types
 npm run check                   # formatting, type check, both manifests, tests
 ```
 
-`npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. After a change, run `./install.sh` again and bump `version` in `.claude-plugin/plugin.json` so running sessions reload the mod.
+`install.sh` copies both mods to `~/.claude/mods/`, creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` and `keybindings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`), allows their tools and binds alt+d. Restart Claude Code sessions afterwards; `/reload-plugins` does not pick up new plugin folders.
+
+`npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. After a change, run `./install.sh` again and bump `version` in `.claude-plugin/plugin.json` so running sessions reload the mod and marketplace users get the update.
 
 ### Layout
 
