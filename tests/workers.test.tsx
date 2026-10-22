@@ -43,20 +43,29 @@ test('a message after a report with DECISION lines reaches the worker as new tex
   await clock.advance(10_000)
   expect(submitted.at(-1)).toMatch(/Pinned for the owner as D1/)
 
-  const answer = 'D1 = yes, edit the CI scripts.'
-  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: answer })
+  // An empty message is refused and types nothing.
+  const before = typed.length
+  const empty = await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: '  \n ' })
+  expect(JSON.stringify(empty)).toMatch(/the message is empty/)
+  expect(typed.length).toBe(before)
+
+  const answer = 'D1 = yes, edit the CI scripts.\nKeep "head -n 1" and its `$1` as they are.'
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: `\n${answer}\n` })
   // The brief stays as it was; the answer is typed in and kept in a file of its own.
   expect(files[`${dir}/TASK.md`]).toBe('Fix the nits.')
   const sent = typed.at(-1) ?? ''
   expect(sent).toContain(answer)
   expect(sent).not.toContain('TASK.md')
-  const saved = sent.match(/also saved in (\S+\/MESSAGE-\d+\.md)/)?.[1]
+  const saved = sent.match(/also saved in (\S+\/MESSAGE-\d+-\w+\.md)/)?.[1]
   expect(saved && files[saved]).toBe(answer)
 
   // A long message is only pointed to, in a file the worker has not read yet.
   files[`${dir}/RESULT.md`] = `<!-- report ${typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]} -->\nDone.`
   await clock.advance(10_000)
-  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: 'x'.repeat(5000) })
-  expect(typed.at(-1)).toMatch(/New message from your coordinator in \S+\/MESSAGE-\d+\.md, a file you have not read yet/)
+  const long = 'x'.repeat(5000)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-done', text: long })
+  const pointer = typed.at(-1)?.match(/New message from your coordinator in (\S+\/MESSAGE-\d+-\w+\.md), a file you have not read yet/)?.[1]
+  expect(pointer && files[pointer]).toBe(long)
+  expect(typed.at(-1)).not.toContain(long)
   await stopAll($, clock, ['w-done'])
 })

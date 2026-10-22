@@ -307,11 +307,14 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
 export async function messageWorker($: EngineInterface, e: { worker: string; text: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
+  const text = e.text.trim()
+  if (!text) return { deny: 'the message is empty' }
+  // The suffix keeps two messages sent in one millisecond apart.
+  const path = `${job.dir}/MESSAGE-${await $.clock.now()}-${crypto.randomUUID().slice(0, 4)}.md`
+  await $.fs.write(path, text)
   if (watching.has(job.name)) {
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
-    const path = `${job.dir}/MESSAGE-${await $.clock.now()}.md`
-    await $.fs.write(path, e.text)
     const kind = (await profiles($))[job.profile]?.kind
     if (kind === 'claude') {
       await herdr($, [
@@ -328,13 +331,11 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // A follow-up goes to a file of its own and, when short, into the prompt itself.
   // Told to read TASK.md again, a worker that read it for its first task took it
   // for that task resent, did not open it and asked its DECISION lines again.
-  const path = `${job.dir}/MESSAGE-${await $.clock.now()}.md`
-  await $.fs.write(path, e.text)
   await prompt(
     $,
     job,
-    e.text.length <= MESSAGE_CHARS
-      ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${e.text.trim()}\n\nDo what it says.`
+    text.length <= MESSAGE_CHARS
+      ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${text}\n\nDo what it says.`
       : `New message from your coordinator in ${path}, a file you have not read yet. It is not your earlier task again: it answers or follows your last report. Read it now and do what it says.`,
   )
   return { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
