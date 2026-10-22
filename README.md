@@ -157,6 +157,10 @@ npm run check                   # formatting, type check, both manifests, tests
 
 Each module keeps its own state (atoms in `$.state`) and offers functions to the others. Tests live in `tests/`, one file per area over a shared `harness.tsx`.
 
+## Contributing
+
+Ideas, issues and pull requests are welcome. Run `npm run check` before opening a PR.
+
 ## License
 
 MIT; see [LICENSE](LICENSE).
