@@ -330,21 +330,25 @@ export async function drawSettings($: EngineInterface, e: BandRender) {
           ),
         )}
         <Text> </Text>
-        <Text dimColor>{`  ${hint}`}</Text>
+        {/* One line whatever the row's hint, so moving through the rows never
+            changes the band's height. */}
+        <Text dimColor wrap="truncate-end">{`  ${hint}`}</Text>
         {settings.error ? (
           <Text color="error">{`  ${settings.error}`}</Text>
         ) : settings.note ? (
           <Text color="success">{`  ${settings.note}`}</Text>
         ) : null}
-        <Box columnGap={2}>
-          <Text dimColor>
-            {settings.editing
-              ? '  Enter to save · empty for the default · ↑↓ to leave it'
-              : `  ${settings.focused ? '' : 'alt+d to enter · '}Enter to change · ↑↓ to move · Esc back to the prompt ·`}
-          </Text>
+        {/* Done comes first: the keys after it change with the focus, and a click
+            focuses before it presses, so a Done after them would move away under it. */}
+        <Box columnGap={2} paddingLeft={2}>
           <Button key="cfg-done" plain role="dismiss" onPress={() => void closeSettings($)}>
             Done
           </Button>
+          <Text dimColor wrap="truncate-end">
+            {settings.editing
+              ? 'Enter to save · empty for the default · ↑↓ to leave it'
+              : `${settings.focused ? '' : 'alt+d to enter · '}Enter to change · ↑↓ to move · Esc back to the prompt`}
+          </Text>
         </Box>
       </Box>
     )
