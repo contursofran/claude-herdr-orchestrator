@@ -1,0 +1,4 @@
+.claude-plugin/types/
+view/.claude-plugin/types/
+node_modules/
+*.md

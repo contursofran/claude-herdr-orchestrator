@@ -1,0 +1,19 @@
+{
+  "name": "claude-herdr-orchestrator",
+  "private": true,
+  "description": "Claude Code mods that run a team of coding agents in herdr tabs.",
+  "license": "MIT",
+  "scripts": {
+    "types": "scripts/types.sh",
+    "typecheck": "tsc -p . && tsc -p view",
+    "validate": "claude plugin validate . && claude plugin validate view",
+    "test": "claude plugin test .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run format:check && npm run typecheck && npm run validate && npm test"
+  },
+  "devDependencies": {
+    "prettier": "3.3.3",
+    "typescript": "5.6.3"
+  }
+}
