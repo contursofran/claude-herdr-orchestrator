@@ -99,10 +99,8 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
   expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/#12 +hotbar keys +· +✓ +◐ +◐ +· +r-15 now/)
   expect(await ui.find({ key: 'task-acme/app-client#15' })).toBeUndefined()
 
-  // The # links the PR, and nothing waits for the person, so the box stays empty. A Link's
-  // found text is its href, then what it draws.
-  const gh = (await ui.findAll({ type: 'Link' })).find(l => String(l.text).endsWith('#12'))
-  expect(gh?.props.href).toBe('https://github.com/acme/app-client/pull/15')
+  // The # opens the PR, and nothing waits for the person, so the box stays empty.
+  expect((await ui.find({ key: 'gh-acme/app-client#12' }))?.text).toBe('#12')
   expect(await ui.find({ type: 'Text', text: /Pick a row/ })).toBeUndefined()
   // With nothing picked, report shows the newest report.
   await ui.press({ key: 'tab-report' })
@@ -202,7 +200,7 @@ test('the box shows every answer at the same height, and a closed item keeps its
 
   // A to-do's box links what its text names; Done sends it.
   await ui.press({ key: 'item-T1' })
-  expect((await ui.findAll({ type: 'Link' })).find(l => String(l.text).endsWith('open'))?.props.href).toBe('http://localhost:5173')
+  expect((await ui.find({ key: 'url-1' }))?.text).toBe('open')
   await ui.press({ key: 'tick-1' })
   expect(submitted.at(-1)).toMatch(/herdr-owner-done/)
   expect(await ui.find({ type: 'Text', text: '✓ done' })).toBeDefined()

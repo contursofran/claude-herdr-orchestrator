@@ -268,12 +268,15 @@ const MARGIN = 2
 const FIXED_ROWS = 2 + 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
 
 export async function drawSide($: EngineInterface, e: SideRender): Promise<RenderElement> {
-  const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
-  const g = await gather($, (href, text, key) => (
-    <Link key={key} href={href}>
+  const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+  // herdr draws no OSC 8 links, so a Link there prints its URL after it: links in text stay
+  // plain, and what opens a page is a Button.
+  const g = await gather($, (_href, text) => text)
+  const opener = (key: string, text: string, href: string, dim = true) => (
+    <Button key={key} plain dimColor={dim} onPress={() => $.process.run(['open', href]).then(() => undefined)}>
       {text}
-    </Link>
-  ))
+    </Button>
+  )
   const { v, board, now, open, todos, items, isLive, endOf, rows, tasks, owner, links } = g
   // Two columns of margin on each side, inside the dock.
   const cols = Math.max(30, e.props.bodyColumns - 2 * MARGIN)
@@ -380,12 +383,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   const label = (key: string, text: string, href: string | undefined) => {
     return href ? (
       <Box key={`n-${key}`} width={LABEL}>
-        {/* Alone in its Text: a Link beside other text is drawn with its URL after it. */}
-        <Text dimColor>
-          <Link key={`gh-${key}`} href={href}>
-            {text}
-          </Link>
-        </Text>
+        {opener(`gh-${key}`, text, href)}
       </Box>
     ) : (
       <Text dimColor>{text.padEnd(LABEL)}</Text>
@@ -574,13 +572,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
               'dismiss'
             )}
           </Button>
-          {url ? (
-            <Text>
-              <Link key={`url-${t.id}`} href={/^https?:/.test(url) ? url : `http://${url}`}>
-                open
-              </Link>
-            </Text>
-          ) : null}
+          {url ? opener(`url-${t.id}`, 'open', /^https?:/.test(url) ? url : `http://${url}`, false) : null}
         </Box>
       )
     const hint = isOpen && (d || t) ? 'tab moves · enter presses' : ''
@@ -607,13 +599,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
                 {`next ${after.key} ▸`}
               </Button>
             ) : null}
-            {task && ghUrl(task) ? (
-              <Text dimColor>
-                <Link key="go-task" href={ghUrl(task)!}>
-                  {`${task.label} ▸`}
-                </Link>
-              </Text>
-            ) : null}
+            {task && ghUrl(task) ? opener('go-task', `${task.label} ▸`, ghUrl(task)!) : null}
           </Box>
         </Box>
       </Box>
