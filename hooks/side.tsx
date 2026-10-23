@@ -334,7 +334,9 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     .join(' · ')
 
   // The work table: cursor and #, title, five stage cells, who has it.
-  const titleWidth = cols - LABEL - 2 - STAGES.length * cell - whoWidth
+  // The # column is as wide as the longest number in it and a gap.
+  const numWidth = Math.min(LABEL, 1 + Math.max(4, ...rows.map(r => r.label.length)))
+  const titleWidth = cols - numWidth - 2 - STAGES.length * cell - whoWidth
   const finished = tasks.filter(t => t.isFinished)
   const joined = rows.filter(isJoined)
   const done = new Set([...finished.map(t => t.key), ...joined.map(j => j.key)])
@@ -362,7 +364,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   )
   const columns = (
     <Text dimColor>
-      {' '.repeat(LABEL)}
+      {' '.repeat(numWidth)}
       {titleWidth > 3 ? ` ${' '.repeat(titleWidth)} ` : ''}
       {STAGES.map(s => center(s.length > cell ? s.slice(0, 1) : s, cell)).join('')}
     </Text>
@@ -382,11 +384,11 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   // only the link.
   const label = (key: string, text: string, href: string | undefined) => {
     return href ? (
-      <Box key={`n-${key}`} width={LABEL}>
+      <Box key={`n-${key}`} width={numWidth}>
         {opener(`gh-${key}`, text, href)}
       </Box>
     ) : (
-      <Text dimColor>{text.padEnd(LABEL)}</Text>
+      <Text dimColor>{text.padEnd(numWidth)}</Text>
     )
   }
   const workRow = (t: Task) => (
@@ -400,7 +402,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   const joinedRow = (j: Joined) => (
     <Box key={`task-${j.key}`}>
       {label(j.key, j.label, undefined)}
-      <Text dimColor strikethrough>{` ${fit(`joined ${j.into.label}`, cols - LABEL - 2)}`}</Text>
+      <Text dimColor strikethrough>{` ${fit(`joined ${j.into.label}`, cols - numWidth - 2)}`}</Text>
     </Box>
   )
   const slotRow = (r: Task | Joined) => (isJoined(r) ? joinedRow(r) : workRow(r))
