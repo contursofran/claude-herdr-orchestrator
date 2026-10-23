@@ -1,0 +1,25 @@
+# Runs on every pull request and on main: formatting, the plugin validator and the tests.
+# The typecheck needs the plugin API types a local Claude Code writes (npm run types), so
+# it stays in `npm run check` on your machine.
+name: check
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Claude Code
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: npm run format:check
+      - run: npm run validate
+      - run: npm test
