@@ -7,7 +7,7 @@ import { SIDE_BOX_ROWS, SIDE_COLUMNS, SIDE_NEED_ROWS, SIDE_RECENT_MS, SIDE_WORK_
 import { ago } from './format'
 import { linker, type LinkFn } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
-import { cmd } from './session'
+import { cmd, session } from './session'
 import { jobs, patchJob } from './state'
 import { briefRefs, groupTasks, labelOf, STAGES, type ItemRef, type Stage, type Task } from './tasks'
 
@@ -601,6 +601,141 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         </Box>
       </Box>
     )
+  }
+}
+
+// The board as the sidebar draws it, as plain data for an app outside Claude Code (see
+// bridge.ts and docs/board-schema.json): the same rows in the same slots.
+export async function boardSnapshot($: EngineInterface) {
+  const { v, board, now, open, todos, items, isLive, endOf, rows } = await gather($, (_, text) => text)
+  const busy = board.rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length
+  return {
+    version: BOARD_VERSION,
+    session: await $.session.id(),
+    cwd: session.cwd,
+    at: now,
+    stageNames: [...STAGES],
+    summary: {
+      busy,
+      left: board.rows.filter(r => r.state !== 'reported').length,
+      target: board.target ?? null,
+      wrapUp: !!board.wrapUp,
+      needs: items.filter(it => isLive.has(it.key)).length,
+      context: board.context ?? null,
+    },
+    workers: board.rows.map(r => ({
+      name: r.name,
+      profile: r.profile,
+      state: r.state,
+      startedAt: r.startedAt,
+      endedAt: r.endedAt ?? null,
+      note: r.note ?? null,
+      repo: r.repo ?? null,
+    })),
+    tasks: rows.map(r =>
+      isJoined(r)
+        ? { key: r.key, label: r.label, joined: r.into.key }
+        : {
+            key: r.key,
+            label: r.label,
+            title: r.title,
+            repo: r.repo ?? null,
+            pr: r.pr ?? null,
+            url: ghUrl(r) ?? null,
+            stages: r.stages,
+            who: r.who,
+            now: r.now,
+            item: r.item ?? null,
+            tab: r.tab ?? null,
+            workers: r.jobs.map(j => j.name),
+            isFinished: r.isFinished,
+            isMerged: r.isMerged,
+          },
+    ),
+    needs: items.map(it => {
+      const d = open.find(x => `D${x.id}` === it.key)
+      const t = todos.find(x => `T${x.id}` === it.key)
+      return {
+        key: it.key,
+        kind: it.kind,
+        title: it.title,
+        text: it.text,
+        from: it.from,
+        at: it.at,
+        isOpen: isLive.has(it.key),
+        end: isLive.has(it.key) ? null : endOf(it),
+        options: d?.options ?? [],
+        recommended: d?.recommended ?? null,
+        url: t?.text.match(/\bhttps?:\/\/\S+|\blocalhost:\d+\S*/)?.[0]?.replace(/[).,;]+$/, '') ?? null,
+      }
+    }),
+    status: v.status ?? '',
+  }
+}
+export const BOARD_VERSION = 1
+
+// What an app outside Claude Code asks of the board: the sidebar's own buttons.
+export type BoardAction =
+  | { action: 'answer'; key: string; answer: string }
+  | { action: 'done'; key: string }
+  | { action: 'clearDone'; what?: 'items' | 'tasks' }
+  | { action: 'wrapUp'; on: boolean }
+
+// Does what pressing that button in the sidebar does, and says what came of it; throws
+// when the item is not open or the action unknown.
+export async function boardAct($: EngineInterface, a: BoardAction): Promise<string> {
+  const g = await gather($, (_, text) => text)
+  const keep = (key: string, answer: string, status: string) =>
+    update($, side, s => ({
+      ...s,
+      items: [...s.items, ...g.items.filter(x => !s.items.some(y => y.key === x.key))],
+      answers: { ...s.answers, [key]: answer },
+      status,
+    }))
+  switch (a.action) {
+    case 'answer': {
+      const d = g.open.find(x => `D${x.id}` === a.key)
+      if (!d) throw new Error(`${a.key} is not an open decision`)
+      await keep(a.key, a.answer, `${a.key} → ${a.answer} · sent`)
+      await choose($, d, a.answer)
+      return `${a.key} → ${a.answer}`
+    }
+    case 'done': {
+      const t = g.todos.find(x => `T${x.id}` === a.key)
+      if (!t) throw new Error(`${a.key} is not an open to-do`)
+      const done = t.kind === 'do' ? 'done' : 'dismissed'
+      await keep(a.key, done, `${a.key} ${done}`)
+      await tick($, t)
+      return `${a.key} ${done}`
+    }
+    case 'clearDone': {
+      const resolved = g.items.filter(it => !g.isLive.has(it.key))
+      const finished = g.tasks.filter(t => t.isFinished)
+      const done = new Set([...finished.map(t => t.key), ...g.rows.filter(isJoined).map(j => j.key)])
+      const items = a.what !== 'tasks'
+      const tasks = a.what !== 'items'
+      await update($, side, s => ({
+        ...s,
+        ...(items
+          ? {
+              items: s.items.filter(it => !resolved.some(r => r.key === it.key)),
+              answers: Object.fromEntries(Object.entries(s.answers).filter(([k]) => !resolved.some(r => r.key === k))),
+            }
+          : {}),
+        ...(tasks
+          ? {
+              tasks: s.tasks.filter(k => !done.has(k) && !done.has(g.owner(k)?.key ?? '')),
+              cleared: { ...s.cleared, ...Object.fromEntries(finished.map(t => [t.key, t.jobs.length])) },
+            }
+          : {}),
+      }))
+      return `cleared ${(items ? resolved.length : 0) + (tasks ? done.size : 0)} done`
+    }
+    case 'wrapUp':
+      await toggleWrapUp($, a.on)
+      return a.on ? 'wrapping up' : 'keep going'
+    default:
+      throw new Error(`unknown action ${JSON.stringify((a as { action?: unknown }).action)}`)
   }
 }
 

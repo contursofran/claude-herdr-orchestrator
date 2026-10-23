@@ -2,6 +2,7 @@ import type { Register } from 'claude-code'
 import { drawBand, shortenBrief } from './band'
 import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
+import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES } from './defaults'
@@ -39,6 +40,7 @@ export const register: Register = on => {
       () =>
         void refresh($)
           .then(() => syncSide($))
+          .then(() => publishBoard($))
           .catch(() => {}),
     )
     $.clock.every(PR_POLL_MS, () => void pollPrs($).catch(() => {}))
@@ -47,6 +49,10 @@ export const register: Register = on => {
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     if (closeMinutes > 0) $.clock.every(60_000, () => void closeIdle($, closeMinutes))
     return started
+  })
+  on('session.end', async ($, e, next) => {
+    await removeBoard($).catch(() => {})
+    return next(e)
   })
 
   on('tool.call', { tool: 'mcp__herdr-agents__spawn' }, ($, e) => spawnWorker($, e as unknown as SpawnArgs))
