@@ -48,7 +48,7 @@ Role, time and state for each worker: working, waiting on you, done. Four fit in
 
 The sidebar's background is Claude Code's `composerSidebarBackground` theme color. To match a terminal's background, add a custom theme in `~/.claude/themes/` (for example `{ "name": "Dark", "base": "dark", "overrides": { "composerSidebarBackground": "#101010" } }`) and pick it with `/theme`. The line between the chat and the sidebar is Claude Code's resize grip.
 
-Rows never move on their own. An answered or finished row stays in its slot, struck through, until you press clear done. A new one takes the next free slot. Answering swaps the box's contents in place, and the box stays on the answer until you press next. While the sidebar shows, the panel above the prompt steps aside.
+Rows never move on their own. An answered or finished row stays in its slot, struck through, until you press clear done. A new one takes the next free slot. Answering swaps the box's contents in place, and the box stays on the answer until you press next. While the sidebar shows, the panel above the prompt steps aside. To start every session with the sidebar instead of the panel, set Show workers in to the sidebar in `/hrd-config` (`"view": "side"`).
 
 ### Auto-compact at 200k
 
@@ -144,6 +144,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `closeIdleMinutes` | `30` | How long a worker's tab stays open, idle, after its report; `0` keeps it open. |
 | `repos` | from git remotes | Short names for `#123` links, e.g. `{"web": "owner/website"}`. The repos of the session's and workers' folders are known already, by name and by the part after the last dash (`acme-client`, `client`). |
 | `wrapUp` | off | `true` wraps up every coordinator on the machine; `/hrd-wrap-up off` clears it. |
+| `view` | `band` | Where the workers and what needs you show: `band` above the prompt or `side`, the sidebar, opened at the start of each session. Only one shows; `/hrd-side` switches for the session. |
 
 Built-in profiles, the playbook's steps: `planner`, `builder`, `reviewer` (the subagents above) and `debugger` (Opus medium, full tools, for root-cause hunts and fixes that failed twice). A profile of the same name under `profiles` changes its model or flags and keeps its place in the playbook; `/hrd-help` marks it customized. Any other name is a profile of your own. A profile is `{"kind": "claude" | "codex" | "opencode", "args": [...], "env": {...}, "note": "..."}`; `kind` is the CLI herdr starts and `args` its flags. Other CLIs or models are a profile away:
 

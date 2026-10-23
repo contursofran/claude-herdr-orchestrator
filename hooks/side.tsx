@@ -261,8 +261,8 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const shortFrom = (from: string) => from.replace(/\s*\(.*$/, '').slice(0, 16)
 // The # column (#123456) with its gap; in the needs-you list, the cursor and the key.
 const LABEL = 8
-// Blank columns left and right of the sidebar's content: one on the left, as the transcript
-// leaves before the dock's edge, so the line sits centered between the two.
+// Blank columns left and right of the sidebar's content. The transcript's side of the
+// dock's edge is the engine's, half a cell; one column here keeps the content off the line.
 const MARGIN_LEFT = 1
 const MARGIN = 2
 // The rule over the box: darker than the theme's subtle grey, as in the mockup.

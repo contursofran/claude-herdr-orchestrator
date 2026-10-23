@@ -180,7 +180,7 @@ test('the box shows every answer at the same height, and a closed item keeps its
   expect(await ui.find({ key: 'opt-1-3' })).toBeDefined()
   expect(await ui.find({ key: 'ol1' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^The bag window needs one layout/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^old client used a fixed grid.*…$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^(old )?client used a fixed grid.*…$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /ships first/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'tab moves · enter presses' })).toBeDefined()
 

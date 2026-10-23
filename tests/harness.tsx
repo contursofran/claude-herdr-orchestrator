@@ -91,7 +91,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     return { text: e.text }
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, typed, closed, screens, files, prs }
+  return { clock, submitted, typed, closed, screens, files, prs, panes }
 }
 
 // A row is one Text per column; its name is padded.

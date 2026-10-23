@@ -9,7 +9,7 @@ import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForO
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
-import { drawSide, pollPrs, SIDE, sideClosed, sideShown, syncSide } from './side'
+import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
 import { jobs } from './state'
 import { registerTools } from './tools'
 import { closeIdle, messageWorker, resumeWatching, spawnWorker, stopWorker } from './workers'
@@ -29,6 +29,9 @@ export const register: Register = on => {
     await registerTools($)
     await registerCommands($)
     resumeWatching($, Object.values(await jobs($)))
+    // view "side": the sidebar instead of the band, opened once there is room for it.
+    // A reload finds it open already.
+    if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
     $.clock.every(
       3000,
       () =>

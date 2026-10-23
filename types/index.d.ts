@@ -121,6 +121,8 @@ export type Settings = {
   closeIdleMinutes?: number
   repos?: Record<string, string>
   wrapUp?: boolean
+  // where the workers and what needs the person show: the band above the prompt or the sidebar
+  view?: 'band' | 'side'
 }
 
 // The settings list (/hrd-config), drawn on the band above the prompt: the two files as
