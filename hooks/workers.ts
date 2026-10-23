@@ -8,6 +8,7 @@ import { acceptFolderTrust, herdr, type HerdrAgent, notify } from './herdr'
 import { ask, openQuestions } from './owner'
 import { cmd } from './session'
 import { jobs, saveJob } from './state'
+import { briefRefs, withPr } from './tasks'
 import { excludeFromGit } from './worktrees'
 
 // Worker agents that run in herdr tabs. spawn opens a tab, starts the CLI there,
@@ -187,8 +188,11 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
 
   const resultPath = `${job.dir}/RESULT.md`
   let body: string
+  // The PR a report links, for the sidebar's task rows.
+  let pr: number | undefined
   if (await reported($, current)) {
     body = (await $.fs.read(resultPath)).replace(/^\s*<!-- report \S+ -->\s*/, '')
+    pr = Number(body.match(/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/)?.[1]) || undefined
     // Read the questions from the whole report: they often sit past the cut.
     const asked = [...body.matchAll(/^\s*(?:[-*]\s*)?\**DECISION:?\**:?\s*(.+)$/gm)].map(m => (m[1] ?? '').trim()).filter(Boolean)
     // RESULT.md is removed on the next prompt, so every report keeps its full
@@ -228,7 +232,7 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
 
-  await saveJob($, { ...current, status: 'reported', queued: [], wait: undefined, endedAt: await $.clock.now() })
+  await saveJob($, { ...withPr(current, pr), status: 'reported', queued: [], wait: undefined, endedAt: await $.clock.now() })
   $.ui.toast(`herdr worker ${job.name}: ${status}`)
   // Messages held while a non-Claude worker worked go out now.
   const queued = current.queued ?? []
@@ -305,7 +309,7 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
         await $.clock.sleep(1000)
       }
     }
-    const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'running' }
+    const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'running', ...briefRefs(task, worker) }
     await prompt($, job, `Your task is in ${dir}/TASK.md. Read it and do it.`)
     void refresh($)
     return {

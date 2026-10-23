@@ -17,12 +17,14 @@ const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 
 
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
 // to this session, the ones it typed into workers' tabs and the tabs it closed, and each
-// worker's screen (by pane), which the test sets.
+// worker's screen (by pane) and PR (by owner/name#123), which the test sets.
 export async function start($: Engine, on: On, config: Settings = {}) {
   const submitted: string[] = []
   const typed: string[] = []
   const closed: string[] = []
   const screens: Record<string, string> = {}
+  // What `gh pr view` reports for each PR, by owner/name#123; the test sets it.
+  const prs: Record<string, unknown> = {}
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
@@ -40,7 +42,19 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     files[e.path] = e.text
     return { value: undefined }
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  // The panes the mod opened, as the engine lists them.
+  const panes: string[] = []
+  on('ui.open', (_, e) => {
+    if (!panes.includes(e.id)) panes.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', (_, e) => {
+    if (panes.includes(e.id)) panes.splice(panes.indexOf(e.id), 1)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({
+    value: panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true, plugin: 'herdr-agents' })),
+  }))
   // The band's drawing when the mod passes: the engine's own.
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -56,6 +70,10 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     const remote: Record<string, string> = { '/repo': 'acme/app-client', '/srv': 'acme/app-server' }
     const slug = cmd === 'git' && e.argv[3] === 'remote' ? remote[e.argv[2] ?? ''] : undefined
     if (slug) return exit(0, `origin\tgit@github.com:${slug}.git (fetch)\n`)
+    if (cmd === 'gh' && sub === 'pr' && verb === 'view') {
+      const pr = prs[`${e.argv[5]}#${name}`]
+      return pr ? exit(0, JSON.stringify(pr)) : exit(1)
+    }
     if (cmd !== 'herdr') return exit(1)
     if (sub === 'agent' && verb === 'prompt') typed.push(e.argv[4] ?? '')
     if (sub === 'agent' && verb === 'get') {
@@ -72,7 +90,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     return { text: e.text }
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, typed, closed, screens, files }
+  return { clock, submitted, typed, closed, screens, files, prs }
 }
 
 // A row is one Text per column; its name is padded.

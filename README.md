@@ -42,6 +42,12 @@ Role, time and state for each worker: working, waiting on you, done. Four fit in
 
 ![The workers: two builders and a reviewer waiting on a deploy, with the coordinator's context use](docs/images/panel-workers.png)
 
+### A sidebar beside the chat
+
+`/hrd-side` docks the same things beside the transcript, in grey and white. At the top is the work, one row per issue or PR. The planner, the builders and fix rounds, and the reviewer of the PR a builder linked share that row. Each row has a mark for plan, build, review, CI and you: ✓ done, ◐ running, ⏸ waiting, · not started, ? or ☐ waiting on you, ■ blocked. CI comes from the PR's checks, read with `gh` every two minutes while the sidebar is open. What needs you sits at the bottom, level with the prompt, over a box of fixed height for the row you pick. For a question it shows the answers, the recommended one first. For a to-do it shows Done and any link in the text. For a task it shows its stages, who has it, its PR, its last report and its herdr tab.
+
+Rows never move on their own. An answered or finished row stays in its slot, struck through, until you press clear done. A new one takes the next free slot. Answering swaps the box's contents in place, and the box stays on the answer until you press next. While the sidebar shows, the panel above the prompt steps aside.
+
 ### Auto-compact at 200k
 
 The panel shows the coordinator's context (`ctx 75k / 200k`). Past `resetAt` (200k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` and is compacted, then reads it back before the next report, so a session can run all day.
@@ -110,6 +116,7 @@ All start with `hrd-` (`commandPrefix` changes it).
 | --- | --- |
 | `/hrd-orchestrate <goal>` | Make this session the coordinator, with the playbook and a goal. |
 | `/hrd-wrap-up`, `/hrd-wrap-up off` | Stop starting workers and let the running ones finish; resume. |
+| `/hrd-side` | Open or close the sidebar beside the chat. ctrl+x tab moves into it; there `1`–`3` answer, `o` answers in chat, `d` ticks a to-do off, `n` goes to the next, `t` focuses the task's tab, `b` and `r` switch between the board and the last report. |
 | `/hrd-decisions` | List the questions and to-dos waiting for you. Answer on the panel: `1`–`4` from an empty prompt, or alt+d then arrows and Enter. |
 | `/hrd-workers` | List this session's workers. |
 | `/hrd-prune` | Remove worktrees whose PR is merged (also runs every `pruneMinutes`). |
@@ -181,6 +188,8 @@ npm run check                   # formatting, type check, both manifests, tests
 | `owner.ts` | Questions (`ask_owner`, `DECISION:` lines) and to-dos (`pin_for_owner`) waiting for the person. |
 | `coordinator.ts` | The playbook, the worker target, wrap-up, and compacting the coordinator's context. |
 | `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |
+| `side.tsx`, `tasks.ts` | `/hrd-side`: the sidebar, and grouping workers into one row per issue or PR. |
+| `links.ts` | `#123` links to the right repo, for the panel and the sidebar. |
 | `settings.tsx` | `/hrd-config`. |
 | `commands.ts`, `tools.ts` | The slash commands and the coordinator's tools. |
 | `worktrees.ts`, `herdr.ts` | Pruning merged worktrees; the herdr CLI. |

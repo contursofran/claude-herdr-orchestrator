@@ -43,6 +43,16 @@ export const TODO_ROWS = 6
 export const WORKER_LINES = 2
 export const WORKER_CELL = 56
 
+// The sidebar (/hrd-side): the width it asks for when docked, its fixed rows (work
+// table, needs-you list, the answer box), how long a finished task still shows when it
+// first appears, and how often it reads the GitHub state of the PRs it lists.
+export const SIDE_COLUMNS = 64
+export const SIDE_WORK_ROWS = 8
+export const SIDE_NEED_ROWS = 6
+export const SIDE_BOX_ROWS = 8
+export const SIDE_RECENT_MS = 3 * 60 * 60_000
+export const PR_POLL_MS = 2 * 60_000
+
 // Keys in $.store, which every session on the machine shares.
 export const STATE_OWNER = 'stateOwner'
 export const WRAP_UP = 'wrapUp'

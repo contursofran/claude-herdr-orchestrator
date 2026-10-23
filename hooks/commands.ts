@@ -4,6 +4,7 @@ import { orchestrate, toggleWrapUp } from './coordinator'
 import { openQuestions, pinnedItems } from './owner'
 import { cmd, session } from './session'
 import { closeSettings, openSettings, settingsOpen } from './settings'
+import { toggleSide } from './side'
 import { jobs } from './state'
 import { pruneMerged } from './worktrees'
 
@@ -17,6 +18,11 @@ export async function registerCommands($: EngineInterface) {
       description: 'How herdr-agents works: commands, panel, profiles and settings.',
       immediate: true,
     })
+  await $.command.register({
+    name: `${prefix}side`,
+    description: 'Open or close the sidebar: the work by issue or PR, what needs you, and a box to answer it.',
+    immediate: true,
+  })
   await $.command.register({ name: `${prefix}workers`, description: 'List the herdr workers of this session.' })
   await $.command.register({ name: `${prefix}decisions`, description: 'List the questions and to-dos waiting for you.' })
   await $.command.register({ name: `${prefix}prune`, description: 'Remove worktrees whose PR is merged.' })
@@ -43,6 +49,8 @@ export async function runCommand($: EngineInterface, command: string, args: stri
       return orchestrate($, args)
     case 'wrap-up':
       return { text: await toggleWrapUp($, !/^(off|resume)$/i.test(args.trim())) }
+    case 'side':
+      return { text: await toggleSide($) }
     case 'prune':
       return prune($)
     case 'decisions':
@@ -114,6 +122,7 @@ async function help($: EngineInterface) {
       ...commandRows([
         [`${cmd('orchestrate')} <goal>`, `make this session the coordinator, e.g. ${cmd('orchestrate')} the issues labelled ready`],
         [`${cmd('wrap-up')} [off]`, 'start no new workers and let the running ones finish; off resumes'],
+        [cmd('side'), 'the sidebar beside the chat: work by issue or PR, what needs you, an answer box'],
         [cmd('decisions'), 'the questions and to-dos waiting for you'],
         [cmd('workers'), "this session's workers"],
         [cmd('prune'), 'remove worktrees whose PR is merged'],
@@ -125,6 +134,7 @@ async function help($: EngineInterface) {
       '  To-dos the coordinator pinned for you, then its questions, then the workers.',
       '  Answer a question with 1–4 from an empty prompt, or alt+d (ctrl+x tab), arrows and Enter; Esc goes back.',
       '  Details shows every worker; Wrap up / Keep going toggles the wrap-up.',
+      `  While ${cmd('side')} is open beside the chat, it shows all of this and the band steps aside.`,
       '',
       'Profiles (spawn takes one)',
       ...profileRows('Built in', BUILT_IN),

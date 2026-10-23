@@ -4,11 +4,12 @@ import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
-import { CLOSE_IDLE_MINUTES, PRUNE_MINUTES } from './defaults'
+import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES } from './defaults'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
+import { drawSide, pollPrs, SIDE, sideClosed, sideShown, syncSide } from './side'
 import { jobs } from './state'
 import { registerTools } from './tools'
 import { closeIdle, messageWorker, resumeWatching, spawnWorker, stopWorker } from './workers'
@@ -28,7 +29,14 @@ export const register: Register = on => {
     await registerTools($)
     await registerCommands($)
     resumeWatching($, Object.values(await jobs($)))
-    $.clock.every(3000, () => void refresh($))
+    $.clock.every(
+      3000,
+      () =>
+        void refresh($)
+          .then(() => syncSide($))
+          .catch(() => {}),
+    )
+    $.clock.every(PR_POLL_MS, () => void pollPrs($).catch(() => {}))
     const pruneMinutes = settings.pruneMinutes ?? PRUNE_MINUTES
     if (pruneMinutes > 0) $.clock.every(pruneMinutes * 60_000, () => void pruneMerged($))
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
@@ -83,10 +91,17 @@ export const register: Register = on => {
   on('ui.render', { component: 'ToolUse' }, async ($, e, next) => next(shortenBrief(e)))
 
   // The band above the prompt: the settings while /hrd-config has them open, else
-  // what waits for the person and the workers.
+  // what waits for the person and the workers, unless the sidebar shows them.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     session.bandId = e.requestId
-    return (await drawSettings($, e)) ?? drawBand($, e, next)
+    return (await drawSettings($, e)) ?? ((await sideShown($)) ? next(e) : drawBand($, e, next))
+  })
+
+  // The sidebar (/hrd-side).
+  on('ui.render', { component: 'Pane', requestId: SIDE }, ($, e) => drawSide($, e))
+  on('ui.close', async ($, e, next) => {
+    if (e.id === SIDE) await sideClosed($)
+    return next(e)
   })
   on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
     await trackFocus($, e.element)
