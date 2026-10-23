@@ -192,8 +192,9 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
       who = { text: 'merged', kind: 'dim' }
       said = `PR #${pr} is merged.`
     } else {
+      const when = last.endedAt ? ago(now - last.endedAt) : ''
       who = { text: 'done', kind: 'dim' }
-      said = `${what(last)} reported${last.endedAt ? ` ${ago(now - last.endedAt)} ago` : ''}.`
+      said = `${what(last)} reported${when === 'now' ? ' just now' : when ? ` ${when} ago` : ''}.`
     }
     tasks.push({
       key,

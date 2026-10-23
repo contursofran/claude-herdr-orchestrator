@@ -9,8 +9,8 @@ import { herdr, type HerdrAgent } from './herdr'
 import { linker, type LinkFn } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { cmd } from './session'
-import { jobs } from './state'
-import { groupTasks, labelOf, STAGES, type ItemRef, type Stage, type Task } from './tasks'
+import { jobs, patchJob } from './state'
+import { briefRefs, groupTasks, labelOf, STAGES, type ItemRef, type Stage, type Task } from './tasks'
 
 // The sidebar (/hrd-side): what the band shows, docked beside the transcript. Work at the
 // top, one row per issue or PR with a mark per stage; what needs the person at the bottom,
@@ -154,10 +154,22 @@ export async function toggleSide($: EngineInterface) {
   }
   await update($, side, s => ({ ...s, isOpen: true }))
   const opened = await $.ui.open({ id: SIDE, title: 'herdr', columns: SIDE_COLUMNS })
+  void backfillBriefs($).catch(() => {})
   void pollPrs($).catch(() => {})
   return opened.isPlaced
     ? `Sidebar open: ctrl+x tab moves into it, ${cmd('side')} again closes it.`
     : `The sidebar opens once there is room: ${opened.reason}`
+}
+
+// Workers started before the sidebar existed kept no brief: their TASK.md, else their
+// name (b-645-fix2), gives the title and number their row goes by.
+async function backfillBriefs($: EngineInterface) {
+  for (const j of Object.values(await jobs($))) {
+    if (j.brief !== undefined || j.refs) continue
+    const file = `${j.dir}/TASK.md`
+    const got = briefRefs((await $.fs.exists(file)) ? await $.fs.read(file) : '', j.name)
+    if (Object.keys(got).length) await patchJob($, j.name, got)
+  }
 }
 
 // The person or the mod closed the pane.
@@ -289,16 +301,18 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
       {center(GLYPH[s].ch, width)}
     </Text>
   )
-  const tab = (name: SideView['tab'], hotkey: string) => (
-    <Button key={`tab-${name}`} plain hotkey={hotkey} dimColor={v.tab !== name} onPress={() => update($, side, s => ({ ...s, tab: name }))}>
-      <Text bold={v.tab === name}>{name}</Text>
+  // No hotkeys anywhere: the engine draws them in the accent color, and the sidebar stays
+  // grey and white. Tab walks the buttons, Enter presses.
+  const tab = (name: SideView['tab']) => (
+    <Button key={`tab-${name}`} plain dimColor={v.tab !== name} onPress={() => update($, side, s => ({ ...s, tab: name }))}>
+      {name}
     </Button>
   )
   const header = (
     <Box key="header" justifyContent="space-between">
       <Box columnGap={2}>
-        {tab('board', 'b')}
-        {tab('report', 'r')}
+        {tab('board')}
+        {tab('report')}
       </Box>
       {board.context ? <Text dimColor>{`ctx ${Math.round(board.context.tokens / 1000)}k`}</Text> : null}
     </Box>
@@ -532,17 +546,11 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
             <Box key={`ol${l}`} columnGap={3}>
               {line.map(c =>
                 c.i < 0 ? (
-                  <Button
-                    key={`chat-${d.id}`}
-                    plain
-                    hotkey="o"
-                    dimColor
-                    onPress={() => $.prompt.fill({ text: `${it.key}: `, mode: 'append' })}
-                  >
+                  <Button key={`chat-${d.id}`} plain dimColor onPress={() => $.prompt.fill({ text: `${it.key}: `, mode: 'append' })}>
                     {c.text}
                   </Button>
                 ) : (
-                  <Button key={`opt-${d.id}-${c.i}`} plain hotkey={String(c.i + 1)} onPress={() => answerIt(d, c.label)}>
+                  <Button key={`opt-${d.id}-${c.i}`} plain onPress={() => answerIt(d, c.label)}>
                     {c.isRec ? <Text inverse bold>{` ${c.text} `}</Text> : c.text}
                   </Button>
                 ),
@@ -554,7 +562,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     else if (t)
       actions = (
         <Box columnGap={3}>
-          <Button key={`tick-${t.id}`} plain hotkey="d" dimColor={t.kind === 'know'} onPress={() => tickIt(t)}>
+          <Button key={`tick-${t.id}`} plain dimColor={t.kind === 'know'} onPress={() => tickIt(t)}>
             {t.kind === 'do' ? (
               <Text inverse bold>
                 {' done '}
@@ -564,14 +572,15 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
             )}
           </Button>
           {url ? (
-            <Link key={`url-${t.id}`} href={/^https?:/.test(url) ? url : `http://${url}`}>
-              open
-            </Link>
+            <Text>
+              <Link key={`url-${t.id}`} href={/^https?:/.test(url) ? url : `http://${url}`}>
+                open
+              </Link>
+            </Text>
           ) : null}
         </Box>
       )
-    const hint =
-      isOpen && d ? (options.length ? `1–${options.length} answers · o in chat` : 'o answers in chat') : isOpen && t ? 'd ticks it off' : ''
+    const hint = isOpen && (d || t) ? 'tab moves · enter presses' : ''
     return (
       <Box flexDirection="column" flexGrow={1}>
         <Box justifyContent="space-between" columnGap={2}>
@@ -591,7 +600,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
           <Text color="subtle">{hint}</Text>
           <Box columnGap={2}>
             {after ? (
-              <Button key="next" plain hotkey="n" dimColor={isOpen} onPress={() => choosePick({ kind: 'item', key: after.key })}>
+              <Button key="next" plain dimColor={isOpen} onPress={() => choosePick({ kind: 'item', key: after.key })}>
                 {`next ${after.key} ▸`}
               </Button>
             ) : null}
@@ -608,7 +617,8 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
 
   // The box for a task: its stages spelled out, who has it, and where to look.
   function taskBox(t: Task) {
-    const href = t.repo ? `https://github.com/${t.repo}/${t.pr ? `pull/${t.pr}` : `issues/${t.refs[0] ?? ''}`}` : undefined
+    const n = t.pr ?? t.refs[0]
+    const href = t.repo && n ? `https://github.com/${t.repo}/${t.pr ? 'pull' : 'issues'}/${n}` : undefined
     const where = t.repo ? `${t.repo.split('/')[1]} ${t.pr ? `PR #${t.pr}` : t.label}` : ''
     return (
       <Box flexDirection="column" flexGrow={1}>
@@ -637,16 +647,19 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
               <Text inverse bold>{` ${t.item} ▸ `}</Text>
             </Button>
           ) : null}
+          {/* In a Text: a Link straight in a Box row is drawn with its URL after it. */}
           {href ? (
-            <Link key="open-gh" href={href}>
-              open
-            </Link>
+            <Text>
+              <Link key="open-gh" href={href}>
+                open
+              </Link>
+            </Text>
           ) : null}
           <Button key="show-report" plain onPress={() => update($, side, s => ({ ...s, tab: 'report' as const }))}>
             report
           </Button>
           {t.tab ? (
-            <Button key="focus-tab" plain hotkey="t" onPress={() => focusTab($, t.tab!).then(say)}>
+            <Button key="focus-tab" plain onPress={() => focusTab($, t.tab!).then(say)}>
               {`tab ${t.tab}`}
             </Button>
           ) : null}

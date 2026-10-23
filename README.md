@@ -46,6 +46,8 @@ Role, time and state for each worker: working, waiting on you, done. Four fit in
 
 `/hrd-side` docks the same things beside the transcript, in grey and white. At the top is the work, one row per issue or PR. The planner, the builders and fix rounds, and the reviewer of the PR a builder linked share that row; the same number in two repos is two rows. A row whose work joins another row (a review that started before the builder's report named its PR) says so in its slot until clear done. Each row has a mark for plan, build, review, CI and you: ✓ done, ◐ running, ⏸ waiting, · not started, ? or ☐ waiting on you, ■ blocked. CI comes from the PR's checks, read with `gh` every two minutes while the sidebar is open. What needs you sits at the bottom, level with the prompt, over a box of fixed height for the row you pick. For a question it shows the answers, the recommended one first. For a to-do it shows Done and any link in the text. For a task it shows its stages, who has it, its PR, its last report and its herdr tab.
 
+The sidebar's background is Claude Code's `composerSidebarBackground` theme color. To match a terminal's background, add a custom theme in `~/.claude/themes/` (for example `{ "name": "Dark", "base": "dark", "overrides": { "composerSidebarBackground": "#101010" } }`) and pick it with `/theme`. The line between the chat and the sidebar is Claude Code's resize grip.
+
 Rows never move on their own. An answered or finished row stays in its slot, struck through, until you press clear done. A new one takes the next free slot. Answering swaps the box's contents in place, and the box stays on the answer until you press next. While the sidebar shows, the panel above the prompt steps aside.
 
 ### Auto-compact at 200k
@@ -116,7 +118,7 @@ All start with `hrd-` (`commandPrefix` changes it).
 | --- | --- |
 | `/hrd-orchestrate <goal>` | Make this session the coordinator, with the playbook and a goal. |
 | `/hrd-wrap-up`, `/hrd-wrap-up off` | Stop starting workers and let the running ones finish; resume. |
-| `/hrd-side` | Open or close the sidebar beside the chat. ctrl+x tab moves into it; there `1`–`4` answer, `o` answers in chat, `d` ticks a to-do off, `n` goes to the next, `t` focuses the task's tab, `b` and `r` switch between the board and the last report. |
+| `/hrd-side` | Open or close the sidebar beside the chat. ctrl+x tab moves into it; there Tab walks its buttons and Enter presses one. It draws no hotkeys, so it stays grey and white. |
 | `/hrd-decisions` | List the questions and to-dos waiting for you. Answer on the panel: `1`–`4` from an empty prompt, or alt+d then arrows and Enter. |
 | `/hrd-workers` | List this session's workers. |
 | `/hrd-prune` | Remove worktrees whose PR is merged (also runs every `pruneMinutes`). |

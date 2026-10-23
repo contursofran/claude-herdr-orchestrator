@@ -189,7 +189,7 @@ test('the box shows every answer at the same height, and a closed item keeps its
   expect(await ui.find({ type: 'Text', text: /^The bag window needs one layout/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^client used a fixed grid.*…$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /ships first/ })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: '1–4 answers · o in chat' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'tab moves · enter presses' })).toBeDefined()
 
   // The coordinator settles D1: it stays in its slot, struck through, with the answer, and
   // a new to-do takes the next free slot.

@@ -14,3 +14,8 @@ export async function jobs($: EngineInterface): Promise<Record<string, Job>> {
 export async function saveJob($: EngineInterface, job: Job) {
   await update($, jobsAtom, all => ({ ...all, [job.name]: job }))
 }
+
+// Merges `patch` into a job as it is by now, so a status saved meanwhile stays.
+export async function patchJob($: EngineInterface, name: string, patch: Partial<Job>) {
+  await update($, jobsAtom, all => (all[name] ? { ...all, [name]: { ...all[name], ...patch } } : all))
+}
