@@ -349,7 +349,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     }))
   const workHead = (
     <Box justifyContent="space-between">
-      <Text dimColor>work</Text>
+      <Text dimColor>issues</Text>
       <Box columnGap={2}>
         {done.size ? (
           <Button key="clear-tasks" plain dimColor onPress={clearTasks}>
