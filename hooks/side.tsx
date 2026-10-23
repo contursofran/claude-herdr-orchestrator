@@ -5,7 +5,6 @@ import { readBoard } from './board'
 import { toggleWrapUp } from './coordinator'
 import { SIDE_BOX_ROWS, SIDE_COLUMNS, SIDE_NEED_ROWS, SIDE_RECENT_MS, SIDE_WORK_ROWS } from './defaults'
 import { ago, tilde } from './format'
-import { herdr, type HerdrAgent } from './herdr'
 import { linker, type LinkFn } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { cmd } from './session'
@@ -261,12 +260,12 @@ function wrapLines(text: string, width: number, max: number) {
 }
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 const shortFrom = (from: string) => from.replace(/\s*\(.*$/, '').slice(0, 16)
-// The cursor and the # column (#123456).
+// The # column (#123456) with its gap; in the needs-you list, the cursor and the key.
 const LABEL = 8
 // Blank columns left and right of the sidebar's content.
 const MARGIN = 2
 // The rows of the table, top margin to status line, in a dock tall enough for all of them.
-const FIXED_ROWS = 1 + 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
+const FIXED_ROWS = 2 + 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
 
 export async function drawSide($: EngineInterface, e: SideRender): Promise<RenderElement> {
   const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
@@ -283,17 +282,9 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   const whoWidth = cols >= 56 ? 11 : 0
 
   const firstOpen = items.find(it => isLive.has(it.key))
-  const exists = (p: Pick) => (p.kind === 'item' ? items.some(it => it.key === p.key) : tasks.some(t => t.key === p.key))
-  // A pick on a slot whose task joined another follows it there.
-  const held: Pick | undefined = v.pick?.kind === 'task' ? { kind: 'task', key: owner(v.pick.key)?.key ?? v.pick.key } : v.pick
-  const pick: Pick | undefined =
-    held && exists(held)
-      ? held
-      : firstOpen
-        ? { kind: 'item', key: firstOpen.key }
-        : tasks[0]
-          ? { kind: 'task', key: tasks[0].key }
-          : undefined
+  // Only a needs-you item is picked; with none, the box stays empty.
+  const held = v.pick?.kind === 'item' && items.some(it => it.key === v.pick!.key) ? v.pick : undefined
+  const pick: Pick | undefined = held ?? (firstOpen ? { kind: 'item', key: firstOpen.key } : undefined)
   const choosePick = (p: Pick) => update($, side, s => ({ ...s, pick: p, tab: 'board' as const }))
   const say = (status: string) => update($, side, s => ({ ...s, status }))
   const taskOf = (key: string) =>
@@ -384,23 +375,34 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         {fit(t.who.text, 10).trimEnd().padStart(11)}
       </Text>
     )
-  const workRow = (t: Task) => {
-    const isOn = pick?.kind === 'task' && pick.key === t.key
-    return (
-      <Button key={`task-${t.key}`} plain onPress={() => choosePick({ kind: 'task', key: t.key })}>
-        <Text bold={isOn}>{isOn ? '▸' : ' '}</Text>
-        <Text dimColor>{t.label.padEnd(LABEL - 1)}</Text>
-        {titleWidth > 3 ? <Text dimColor={t.isFinished} strikethrough={t.isMerged}>{` ${fit(t.title, titleWidth)} `}</Text> : null}
-        {t.stages.map((s, i) => glyph(s, `g${i}`))}
-        {who(t)}
-      </Button>
+  // The # opens the issue or PR; the row itself is not pressable, so the pointer lights
+  // only the link.
+  const label = (key: string, text: string, href: string | undefined) => {
+    const pad = ' '.repeat(Math.max(0, LABEL - text.length))
+    return href ? (
+      <Text dimColor>
+        <Link key={`gh-${key}`} href={href}>
+          {text}
+        </Link>
+        {pad}
+      </Text>
+    ) : (
+      <Text dimColor>{text + pad}</Text>
     )
   }
+  const workRow = (t: Task) => (
+    <Box key={`task-${t.key}`}>
+      {label(t.key, t.label, ghUrl(t))}
+      {titleWidth > 3 ? <Text dimColor={t.isFinished} strikethrough={t.isMerged}>{` ${fit(t.title, titleWidth)} `}</Text> : null}
+      {t.stages.map((s, i) => glyph(s, `g${i}`))}
+      {who(t)}
+    </Box>
+  )
   const joinedRow = (j: Joined) => (
-    <Button key={`task-${j.key}`} plain dimColor onPress={() => choosePick({ kind: 'task', key: j.into.key })}>
-      {` ${j.label.padEnd(LABEL - 1)} `}
-      <Text strikethrough>{fit(`joined ${j.into.label}`, cols - LABEL - 2)}</Text>
-    </Button>
+    <Box key={`task-${j.key}`}>
+      {label(j.key, j.label, undefined)}
+      <Text dimColor strikethrough>{` ${fit(`joined ${j.into.label}`, cols - LABEL - 2)}`}</Text>
+    </Box>
   )
   const slotRow = (r: Task | Joined) => (isJoined(r) ? joinedRow(r) : workRow(r))
   const spare = (n: number, at: string) => Array.from({ length: Math.max(0, n) }, (_, i) => <Text key={`${at}${i}`}> </Text>)
@@ -473,10 +475,9 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         {needHead}
         {slots(items, SIDE_NEED_ROWS, needRow, 'n', 'Nothing waits for you.')}
       </Box>
+      <Text color="subtle">{'─'.repeat(cols)}</Text>
       <Box flexDirection="column" marginTop={1} height={SIDE_BOX_ROWS} overflow="hidden">
-        {pick?.kind === 'item' ? itemBox(items.find(it => it.key === pick.key)!) : null}
-        {pick?.kind === 'task' ? taskBox(tasks.find(t => t.key === pick.key)!) : null}
-        {!pick ? <Text dimColor>Pick a row to see it here.</Text> : null}
+        {pick ? itemBox(items.find(it => it.key === pick.key)!) : null}
       </Box>
       {status}
     </Box>
@@ -605,10 +606,12 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
                 {`next ${after.key} ▸`}
               </Button>
             ) : null}
-            {task ? (
-              <Button key="go-task" plain dimColor onPress={() => choosePick({ kind: 'task', key: task.key })}>
-                {`${task.label} ▸`}
-              </Button>
+            {task && ghUrl(task) ? (
+              <Text dimColor>
+                <Link key="go-task" href={ghUrl(task)!}>
+                  {`${task.label} ▸`}
+                </Link>
+              </Text>
             ) : null}
           </Box>
         </Box>
@@ -616,62 +619,10 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     )
   }
 
-  // The box for a task: its stages spelled out, who has it, and where to look.
-  function taskBox(t: Task) {
-    const n = t.pr ?? t.refs[0]
-    const href = t.repo && n ? `https://github.com/${t.repo}/${t.pr ? 'pull' : 'issues'}/${n}` : undefined
-    const where = t.repo ? `${t.repo.split('/')[1]} ${t.pr ? `PR #${t.pr}` : t.label}` : ''
-    return (
-      <Box flexDirection="column" flexGrow={1}>
-        <Box justifyContent="space-between" columnGap={2}>
-          <Text bold wrap="truncate-end">{`${t.label}  ${t.title}`}</Text>
-          <Text dimColor>{where}</Text>
-        </Box>
-        <Text>
-          {STAGES.flatMap((name, i) => [
-            <Text key={`n${i}`} dimColor>{`${name} `}</Text>,
-            glyph(t.stages[i]!, `s${i}`, 1),
-            i < STAGES.length - 1 ? '   ' : '',
-          ])}
-        </Text>
-        <Box flexDirection="column" marginTop={1}>
-          {wrapLines(t.now, cols, 2).map((l, i) => (
-            <Text key={`now${i}`} dimColor>
-              {l}
-            </Text>
-          ))}
-        </Box>
-        <Box flexGrow={1} />
-        <Box columnGap={3}>
-          {t.item ? (
-            <Button key="go-item" plain onPress={() => choosePick({ kind: 'item', key: t.item! })}>
-              <Text inverse bold>{` ${t.item} ▸ `}</Text>
-            </Button>
-          ) : null}
-          {/* In a Text: a Link straight in a Box row is drawn with its URL after it. */}
-          {href ? (
-            <Text>
-              <Link key="open-gh" href={href}>
-                open
-              </Link>
-            </Text>
-          ) : null}
-          <Button key="show-report" plain onPress={() => update($, side, s => ({ ...s, tab: 'report' as const }))}>
-            report
-          </Button>
-          {t.tab ? (
-            <Button key="focus-tab" plain onPress={() => focusTab($, t.tab!).then(say)}>
-              {`tab ${t.tab}`}
-            </Button>
-          ) : null}
-        </Box>
-      </Box>
-    )
-  }
-
-  // The last report of the task picked (or of the picked item's task), as Markdown.
+  // The last report of the picked item's task, else the newest report, as Markdown.
   async function report(): Promise<RenderElement> {
-    const t = pick?.kind === 'task' ? tasks.find(x => x.key === pick.key) : pick ? taskOf(pick.key) : undefined
+    const newest = (x: Task) => Math.max(0, ...x.jobs.map(j => (j.status === 'reported' ? (j.endedAt ?? 0) : 0)))
+    const t = (pick ? taskOf(pick.key) : undefined) ?? [...tasks].sort((a, b) => newest(b) - newest(a))[0]
     const back = (
       <Button key="back" plain dimColor onPress={() => update($, side, s => ({ ...s, tab: 'board' as const }))}>
         back
@@ -681,7 +632,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     if (!t || !j?.token)
       return (
         <Box key="report" flexDirection="column" marginTop={1}>
-          <Text dimColor>{t ? `${t.label}: no report yet.` : 'Pick a task on the board to read its last report.'}</Text>
+          <Text dimColor>{t ? `${t.label}: no report yet.` : 'No reports yet.'}</Text>
           <Box marginTop={1}>{back}</Box>
         </Box>
       )
@@ -703,13 +654,8 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   }
 }
 
-// Brings a worker's herdr tab to the front; says what happened, for the status line.
-async function focusTab($: EngineInterface, name: string) {
-  try {
-    const got = await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', name])
-    await herdr($, ['tab', 'focus', got.agent.tab_id])
-    return `focused ${name}`
-  } catch (err) {
-    return `${name}: ${String(err).slice(0, 80)}`
-  }
+// The task's PR on GitHub, else its issue.
+function ghUrl(t: Task) {
+  const n = t.pr ?? t.refs[0]
+  return t.repo && n ? `https://github.com/${t.repo}/${t.pr ? 'pull' : 'issues'}/${n}` : undefined
 }

@@ -99,12 +99,13 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
   expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/#12 +hotbar keys +· +✓ +◐ +◐ +· +r-15 now/)
   expect(await ui.find({ key: 'task-acme/app-client#15' })).toBeUndefined()
 
-  await ui.press({ key: 'task-acme/app-client#12' })
-  // A Link's found text is its href, then what it draws.
-  const open = (await ui.findAll({ type: 'Link' })).find(l => String(l.text).endsWith('open'))
-  expect(open?.props.href).toBe('https://github.com/acme/app-client/pull/15')
-  expect(await ui.find({ type: 'Text', text: 'app-client PR #15' })).toBeDefined()
-  await ui.press({ key: 'show-report' })
+  // The # links the PR, and nothing waits for the person, so the box stays empty. A Link's
+  // found text is its href, then what it draws.
+  const gh = (await ui.findAll({ type: 'Link' })).find(l => String(l.text).endsWith('#12'))
+  expect(gh?.props.href).toBe('https://github.com/acme/app-client/pull/15')
+  expect(await ui.find({ type: 'Text', text: /Pick a row/ })).toBeUndefined()
+  // With nothing picked, report shows the newest report.
+  await ui.press({ key: 'tab-report' })
   expect((await ui.find({ type: 'Markdown' }))?.props.text).toMatch(/Opened https:\/\/github\.com\/acme\/app-client\/pull\/15/)
   await ui.press({ key: 'back' })
 
@@ -143,10 +144,9 @@ test('one number in two repos is two rows, and a row that joins another keeps it
   expect((await ui.find({ key: 'task-acme/app-server#640' }))?.text).toMatch(/#640 +bag weights/)
   // The review runs before the builder's report says which PR it opened: a row of its own.
   expect((await ui.find({ key: 'task-acme/app-client#15' }))?.text).toMatch(/#15 +hotbar keys +· +· +◐/)
-  await ui.press({ key: 'task-acme/app-client#15' })
 
-  // The report links PR #15: the review joins #12, its slot says so until clear done, the
-  // box follows it to #12, and the PR's failed checks show ■.
+  // The report links PR #15: the review joins #12, its slot says so until clear done, and
+  // the PR's failed checks show ■.
   const token = typed.find(t => t.includes('w-12'))?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-12/RESULT.md'] = `<!-- report ${token} -->\nOpened https://github.com/acme/app-client/pull/15.`
   prs['acme/app-client#15'] = {
@@ -157,7 +157,6 @@ test('one number in two repos is two rows, and a row that joins another keeps it
   await clock.advance(2 * 60_000)
   expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/#12 +hotbar keys +· +✓ +◐ +■ +· +r-15/)
   expect((await ui.find({ key: 'task-acme/app-client#15' }))?.text).toMatch(/#15 +joined #12/)
-  expect(await ui.find({ type: 'Text', text: /^#12  hotbar keys/ })).toBeDefined()
   await ui.press({ key: 'clear-tasks' })
   expect(await ui.find({ key: 'task-acme/app-client#15' })).toBeUndefined()
   expect(await ui.find({ key: 'task-acme/app-client#12' })).toBeDefined()
