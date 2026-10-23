@@ -82,6 +82,26 @@ test('a DECISION line that says none is not pinned for the owner', async ($, on)
   expect(report).toMatch(/Pinned for the owner as D1/)
   expect(report).not.toMatch(/D2/)
   await stopAll($, clock, ['w-none'])
+||||||| parent of d84c7fd (Retry a prompt that starts no work; report a worker it never reaches as blocked)
+
+test('a prompt that starts no work is typed again, and a worker it never reaches is reported blocked', async ($, on) => {
+  const { clock, submitted, typed, files, stalls } = await start($, on)
+  // The first try stalls; the second starts work, so the worker runs on and reports.
+  stalls['w-late'] = 1
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-late', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  expect(typed).toHaveLength(2)
+  expect(typed[1]).toBe(typed[0])
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-late/RESULT.md'] = `<!-- report ${token} -->\nDone.`
+  await clock.advance(10_000)
+  expect(submitted.at(-1)).toMatch(/<herdr-agent name="w-late" profile="builder" status="done">\nDone\./)
+
+  // Every try stalls: reported blocked at once, not idle five minutes later.
+  stalls['w-lost'] = 3
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  expect(typed).toHaveLength(5)
+  await clock.advance(10_000)
+  expect(submitted.at(-1)).toMatch(/status="blocked">\nThe worker stopped \(its prompt was not delivered: no work started after 3 tries\)/)
 })
 
 test("a reported worker's tab closes once it has sat idle, unless its question is still open", async ($, on) => {

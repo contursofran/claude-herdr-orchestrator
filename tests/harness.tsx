@@ -25,6 +25,8 @@ export async function start($: Engine, on: On, config: Settings = {}) {
   const screens: Record<string, string> = {}
   // What `gh pr view` reports for each PR, by owner/name#123; the test sets it.
   const prs: Record<string, unknown> = {}
+  // How many more `agent prompt --wait` calls fail with agent_prompt_stalled, by worker; the test sets it.
+  const stalls: Record<string, number> = {}
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
@@ -76,7 +78,13 @@ export async function start($: Engine, on: On, config: Settings = {}) {
       return pr ? exit(0, JSON.stringify(pr)) : exit(1)
     }
     if (cmd !== 'herdr') return exit(1)
-    if (sub === 'agent' && verb === 'prompt') typed.push(e.argv[4] ?? '')
+    if (sub === 'agent' && verb === 'prompt') {
+      typed.push(e.argv[4] ?? '')
+      if (stalls[name]) {
+        stalls[name]--
+        return exit(1, JSON.stringify({ error: { code: 'agent_prompt_stalled', message: 'no working state within 5000ms' } }))
+      }
+    }
     if (sub === 'agent' && verb === 'get') {
       if (closed.includes(`t-${name}`)) return exit(1)
       return ok({ agent: { agent_status: STATUS[name] ?? 'idle', pane_id: `p-${name}`, tab_id: `t-${name}` } })
@@ -91,7 +99,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
     return { text: e.text }
   })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, typed, closed, screens, files, prs, panes }
+  return { clock, submitted, typed, closed, screens, files, prs, panes, stalls }
 }
 
 // A row is one Text per column; its name is padded.

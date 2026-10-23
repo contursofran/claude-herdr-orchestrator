@@ -3,7 +3,7 @@ import type { Job } from '../types'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds, belowTarget } from './coordinator'
-import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, QUIET_BUSY_MS, QUIET_MS } from './defaults'
+import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, PROMPT_TRIES, QUIET_BUSY_MS, QUIET_MS } from './defaults'
 import { acceptFolderTrust, herdr, type HerdrAgent, notify } from './herdr'
 import { ask, openQuestions } from './owner'
 import { cmd } from './session'
@@ -46,8 +46,32 @@ export async function prompt($: EngineInterface, job: Job, lead: string) {
   const next: Job = { ...job, token, status: 'running', endedAt: undefined }
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   await saveJob($, next)
-  await herdr($, ['agent', 'prompt', job.name, `${lead} ${reportRule(next)}`])
-  watch($, next)
+  // A prompt that never arrived is reported by the watcher: a tool call can't submit one.
+  watch($, next, await send($, job.name, `${lead} ${reportRule(next)}`))
+}
+
+// herdr types a prompt once the CLI looks ready, but a CLI still busy with its own
+// startup (many tabs starting at once) can drop it, leaving the worker at an empty
+// input box. With --wait, herdr fails with agent_prompt_stalled when no work starts
+// within 5 s; then text still in the input box is submitted, else the prompt is typed
+// again. Returns why it was not delivered, or undefined once work started.
+async function send($: EngineInterface, name: string, text: string): Promise<string | undefined> {
+  const started = ['--until', 'working', '--until', 'blocked']
+  const typeIt = () => herdr($, ['agent', 'prompt', name, text, '--wait', ...started, '--timeout', '15000'], 30_000)
+  for (let i = 0; i < PROMPT_TRIES; i++) {
+    try {
+      if (i === 0) await typeIt()
+      else if ((await $.process.run(['herdr', 'agent', 'read', name, '--lines', '40'])).stdout.includes(text.slice(0, 40))) {
+        await herdr($, ['agent', 'send-keys', name, 'enter'])
+        await herdr($, ['agent', 'wait', name, ...started, '--timeout', '5000'], 15_000)
+      } else await typeIt()
+      return undefined
+    } catch (err) {
+      const code = (err as { code?: string }).code
+      if (code !== 'agent_prompt_stalled' && code !== 'timeout') throw err
+    }
+  }
+  return `its prompt was not delivered: no work started after ${PROMPT_TRIES} tries`
 }
 
 // Whether RESULT.md is this prompt's report (see reportRule).
@@ -61,7 +85,8 @@ export async function reported($: EngineInterface, job: Job) {
 // (a Claude worker running its own subagents reads as done while it works).
 // A blocked worker is reported at once; a quiet one after QUIET_MS, or QUIET_BUSY_MS
 // while it waits on background work of its own.
-export function watch($: EngineInterface, job: Job) {
+// `lost` says why its prompt never arrived (see send): it is reported on the first pass.
+export function watch($: EngineInterface, job: Job, lost?: string) {
   if (watching.has(job.name)) return
   watching.add(job.name)
   void (async () => {
@@ -73,6 +98,7 @@ export function watch($: EngineInterface, job: Job) {
         const current = (await jobs($))[job.name]
         if (!current || current.status !== 'running') return
         if (await reported($, job)) return await deliver($, job, 'done')
+        if (lost) return await deliver($, job, 'blocked', QUIET_MS, lost)
 
         let status = 'gone'
         let pane = ''
@@ -181,10 +207,11 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   return true
 }
 
-export async function deliver($: EngineInterface, job: Job, status: string, quietMs = QUIET_MS) {
+// `why` says why a worker stopped when herdr's status alone doesn't (a prompt that never arrived).
+export async function deliver($: EngineInterface, job: Job, status: string, quietMs = QUIET_MS, why?: string) {
   const current = (await jobs($))[job.name]
   if (!current || current.status !== 'running') return
-  const error = status === 'gone' ? 'its tab is gone' : undefined
+  const error = why ?? (status === 'gone' ? 'its tab is gone' : undefined)
 
   const resultPath = `${job.dir}/RESULT.md`
   let body: string
@@ -221,7 +248,7 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     }
     if (ids.length)
       body += `\n\n[Pinned for the owner as ${ids.join(', ')}. The owner is pinged when this turn ends. Settle any that is not theirs (not a product rule, design choice or approval) now, with decided and your answer; the band shows them what you chose.]`
-  } else if (status === 'blocked') {
+  } else if (status === 'blocked' && !why) {
     body =
       'The worker is waiting at an approval or question in its herdr tab. Ask the person to answer it there, or send the answer with the message tool.'
     await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
