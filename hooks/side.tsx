@@ -604,6 +604,24 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   }
 }
 
+// What the snapshot below is built from, cheap to read: when it and the minute are the
+// same, so is the snapshot (rows age out of the table by the minute).
+export async function boardInputs($: EngineInterface) {
+  const b = await readBoard($)
+  return JSON.stringify([
+    Math.floor((await $.clock.now()) / 60_000),
+    b.rows,
+    b.wrapUp,
+    b.target,
+    b.context,
+    await read($, side),
+    await openQuestions($),
+    await pinnedItems($),
+    await answered($),
+    await jobs($),
+  ])
+}
+
 // The board as the sidebar draws it, as plain data for an app outside Claude Code (see
 // bridge.ts and docs/board-schema.json): the same rows in the same slots.
 export async function boardSnapshot($: EngineInterface) {

@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import { BRIDGE_ACTIONS_KEPT, BRIDGE_DIR } from './defaults'
-import { boardAct, boardSnapshot, type BoardAction } from './side'
+import { boardAct, boardInputs, boardSnapshot, type BoardAction } from './side'
 
 // The board for apps outside Claude Code, such as contr (a native herdr client):
 // ~/.herdr-agents/board/<session id>.json holds what the sidebar shows, rewritten when it
@@ -8,7 +8,7 @@ import { boardAct, boardSnapshot, type BoardAction } from './side'
 // is one press of a sidebar button, done on the next pass and removed. What came of the
 // last few is in the snapshot's `actions`.
 
-// The snapshot last written, without its time, and what came of the last actions.
+// What the snapshot last written was built from, and what came of the last actions.
 let written = ''
 let results: { id: string; ok: boolean; message: string }[] = []
 
@@ -22,14 +22,14 @@ async function paths($: EngineInterface) {
 export async function publishBoard($: EngineInterface) {
   const { file, inbox } = await paths($)
   await takeActions($, inbox)
+  const inputs = (await boardInputs($)) + JSON.stringify(results)
+  if (inputs === written) return
   const snap = { ...(await boardSnapshot($)), actions: results }
-  const same = JSON.stringify({ ...snap, at: 0 })
-  if (same === written) return
   await $.process.run(['mkdir', '-p', inbox])
   // Written beside it and moved over it, so a reader never sees half a file.
   await $.fs.write(`${file}.tmp`, JSON.stringify(snap, null, 2))
   const moved = await $.process.run(['mv', '-f', `${file}.tmp`, file])
-  if (moved.exitCode === 0) written = same
+  if (moved.exitCode === 0) written = inputs
 }
 
 async function takeActions($: EngineInterface, inbox: string) {
