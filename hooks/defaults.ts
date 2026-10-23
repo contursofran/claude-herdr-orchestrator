@@ -56,3 +56,6 @@ export const PR_POLL_MS = 2 * 60_000
 // Keys in $.store, which every session on the machine shares.
 export const STATE_OWNER = 'stateOwner'
 export const WRAP_UP = 'wrapUp'
+// A session's jobs, under this prefix and its id (see state.ts), kept this long after their last change.
+export const JOBS_PREFIX = 'jobs:'
+export const JOBS_KEEP_MS = 3 * 24 * 60 * 60_000

@@ -18,7 +18,8 @@ const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
 // to this session, the ones it typed into workers' tabs and the tabs it closed, and each
 // worker's screen (by pane) and PR (by owner/name#123), which the test sets.
-export async function start($: Engine, on: On, config: Settings = {}) {
+// `stored` is what $.store holds at the start, as an earlier load of the mod left it.
+export async function start($: Engine, on: On, config: Settings = {}, stored: Record<string, unknown> = {}) {
   const submitted: string[] = []
   const typed: string[] = []
   const closed: string[] = []
@@ -26,7 +27,7 @@ export async function start($: Engine, on: On, config: Settings = {}) {
   // What `gh pr view` reports for each PR, by owner/name#123; the test sets it.
   const prs: Record<string, unknown> = {}
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on)
+  mock.store(on, stored)
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.register', (_, e) => ({ value: { tool: e.name } }))

@@ -118,3 +118,34 @@ test('a worker that stops without a report is reported once its screen sits stil
   expect(reports('w-shell')[0]).toMatch(/screen unchanged for 60 min/)
   expect(reports('w-sub')).toHaveLength(1)
 })
+
+test('a session whose $.state lost its jobs gets them back from the store; a report written meanwhile is delivered once', async ($, on) => {
+  // What #11 saw: after /reload-plugins $.state had no jobs, though the workers ran on.
+  const job = (name: string) => ({
+    name,
+    profile: 'reviewer',
+    cwd: `/repo-${name}`,
+    dir: `/repo-${name}/.herdr-agents/${name}`,
+    startedAt: 900_000,
+    status: 'running',
+    token: `tok-${name}`,
+  })
+  const kept = {
+    'jobs:session-1234': { at: 990_000, jobs: { 'w-one': job('w-one'), 'w-two': job('w-two') } },
+    'jobs:old': { at: 0, jobs: {} },
+  }
+  const { clock, submitted, typed, files } = await start($, on, {}, kept)
+  files['/repo-w-one/.herdr-agents/w-one/RESULT.md'] = '<!-- report tok-w-one -->\nReviewed: approve.'
+
+  await clock.advance(10_000)
+  const reports = () => submitted.filter(t => t.startsWith('<herdr-agent name="w-one"'))
+  expect(reports()).toHaveLength(1)
+  expect(reports()[0]).toContain('Reviewed: approve.')
+  await clock.advance(30_000)
+  expect(reports()).toHaveLength(1)
+
+  // The other worker is still reachable.
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-two', text: 'Also check the docs.' })
+  expect(typed.at(-1)).toMatch(/Your coordinator sent an extra message while you work/)
+  await stopAll($, clock, ['w-two'])
+})

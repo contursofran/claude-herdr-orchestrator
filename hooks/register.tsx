@@ -10,7 +10,7 @@ import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
-import { jobs } from './state'
+import { jobs, restoreJobs } from './state'
 import { registerTools } from './tools'
 import { closeIdle, messageWorker, resumeWatching, spawnWorker, stopWorker } from './workers'
 import type { SpawnArgs } from './workers'
@@ -28,6 +28,8 @@ export const register: Register = on => {
     if (typeof settings.commandPrefix === 'string') session.prefix = settings.commandPrefix
     await registerTools($)
     await registerCommands($)
+    const restored = await restoreJobs($)
+    if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
     resumeWatching($, Object.values(await jobs($)))
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
