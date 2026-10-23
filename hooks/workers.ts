@@ -3,7 +3,7 @@ import type { Job } from '../types'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds, belowTarget } from './coordinator'
-import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, QUIET_MS } from './defaults'
+import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, QUIET_BUSY_MS, QUIET_MS } from './defaults'
 import { acceptFolderTrust, herdr, type HerdrAgent, notify } from './herdr'
 import { ask, openQuestions } from './owner'
 import { cmd } from './session'
@@ -58,7 +58,8 @@ export async function reported($: EngineInterface, job: Job) {
 
 // RESULT.md is the completion signal: herdr's lifecycle state alone is not
 // (a Claude worker running its own subagents reads as done while it works).
-// A blocked worker is reported at once; a quiet one after QUIET_MS.
+// A blocked worker is reported at once; a quiet one after QUIET_MS, or QUIET_BUSY_MS
+// while it waits on background work of its own.
 export function watch($: EngineInterface, job: Job) {
   if (watching.has(job.name)) return
   watching.add(job.name)
@@ -88,12 +89,9 @@ export function watch($: EngineInterface, job: Job) {
           continue
         }
         const seen = pane ? (await $.process.run(['herdr', 'pane', 'read', pane, '--source', 'visible'])).stdout : ''
-        // A Claude worker waiting on its own background shell or subagent keeps a
-        // still screen; its footer says so ("1 shell still running", "← 1 agent").
-        const busy = /still running|← \d+ agents?|\b\d+ shells?\b/.test(seen)
-        if (status === 'working' || busy || seen !== screen) quietSince = undefined
+        if (status === 'working' || seen !== screen) quietSince = undefined
         else if (quietSince === undefined) quietSince = now
-        else if (now - quietSince > QUIET_MS) return await deliver($, job, status)
+        else if (now - quietSince > (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) return await deliver($, job, status, now - quietSince)
         screen = seen
       }
     } finally {
@@ -103,6 +101,20 @@ export function watch($: EngineInterface, job: Job) {
       if (current?.status === 'running' && current.token !== job.token) watch($, current)
     }
   })()
+}
+
+// A Claude worker waiting on its own background shell, monitor or subagent keeps a
+// still screen; the status lines below its prompt box say so ("· 1 shell", a
+// "◯ general-purpose …" row). Only those lines count: its own messages often say
+// "1 shell" or "still running", and every footer shows "← 1 agent", the session itself.
+export function inBackground(screen: string) {
+  const lines = screen.split('\n')
+  let input = -1
+  lines.forEach((l, i) => {
+    if (l.trimStart().startsWith('❯')) input = i
+  })
+  const footer = lines.slice(input >= 0 ? input + 1 : -4).join('\n')
+  return /\b\d+ (shells?|monitors?)\b|still running|^\s*◯ |← ([2-9]|\d{2,}) agents/m.test(footer)
 }
 
 // A worker that wrote WAIT.json (see reportRule) waits with no model running:
@@ -168,7 +180,7 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   return true
 }
 
-export async function deliver($: EngineInterface, job: Job, status: string) {
+export async function deliver($: EngineInterface, job: Job, status: string, quietMs = QUIET_MS) {
   const current = (await jobs($))[job.name]
   if (!current || current.status !== 'running') return
   const error = status === 'gone' ? 'its tab is gone' : undefined
@@ -213,7 +225,7 @@ export async function deliver($: EngineInterface, job: Job, status: string) {
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
     await $.fs.write(screen, tail.slice(-4000))
-    body = `The worker stopped (${error ?? `${status}, screen unchanged for ${QUIET_MS / 60_000} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
+    body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
 
   await saveJob($, { ...current, status: 'reported', queued: [], wait: undefined, endedAt: await $.clock.now() })
