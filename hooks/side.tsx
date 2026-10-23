@@ -378,16 +378,17 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   // The # opens the issue or PR; the row itself is not pressable, so the pointer lights
   // only the link.
   const label = (key: string, text: string, href: string | undefined) => {
-    const pad = ' '.repeat(Math.max(0, LABEL - text.length))
     return href ? (
-      <Text dimColor>
-        <Link key={`gh-${key}`} href={href}>
-          {text}
-        </Link>
-        {pad}
-      </Text>
+      <Box key={`n-${key}`} width={LABEL}>
+        {/* Alone in its Text: a Link beside other text is drawn with its URL after it. */}
+        <Text dimColor>
+          <Link key={`gh-${key}`} href={href}>
+            {text}
+          </Link>
+        </Text>
+      </Box>
     ) : (
-      <Text dimColor>{text + pad}</Text>
+      <Text dimColor>{text.padEnd(LABEL)}</Text>
     )
   }
   const workRow = (t: Task) => (
