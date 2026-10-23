@@ -45,5 +45,13 @@ export async function linker($: EngineInterface, rows: Row[], link: LinkFn) {
   // The repo a text names (a brief's first line), else its folder's, else the only one known.
   const repoIn = (text: string, cwd: string) =>
     [...text.matchAll(REF)].map(m => repoNamed(m[1], m[2] ?? '')).find(Boolean) ?? byCwd[cwd] ?? only
-  return { linkify, repoOf, repoIn }
+  // Each #123 in a text as owner/repo#123, the repo found as linkify finds it, or #123.
+  const refsIn = (text: string, fallback?: string) => {
+    let last = fallback ?? only
+    return [...text.matchAll(REF)].map(m => {
+      last = repoNamed(m[1], m[2] ?? '') ?? last
+      return `${last ?? ''}#${m[3]}`
+    })
+  }
+  return { linkify, repoOf, repoIn, refsIn }
 }

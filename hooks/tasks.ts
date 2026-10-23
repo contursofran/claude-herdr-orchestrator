@@ -6,14 +6,14 @@ import { ago } from './format'
 // reviewer of the PR a builder linked), with a mark per stage.
 
 // The brief's first line and the issue or PR it names: its first #123 ("PR #123" is a PR),
-// else the number in the worker's name (b513-c1).
+// else the number after a worker name's role letters (b513-c1, p-640).
 export function briefRefs(task: string, worker: string): Pick<Job, 'brief' | 'refs' | 'prs'> {
   const brief = (task.split('\n').find(l => l.trim()) ?? '')
     .replace(/^#+\s*/, '')
     .trim()
     .slice(0, 200)
   const m = brief.match(/(PR\s*)?#(\d{1,6})\b/i)
-  const n = Number(m?.[2] ?? worker.match(/\d{2,6}/)?.[0])
+  const n = Number(m?.[2] ?? worker.match(/^[a-z]{1,3}-?(\d{2,6})(?!\d)/i)?.[1])
   return {
     ...(brief ? { brief } : {}),
     ...(n ? { refs: [n] } : {}),
@@ -45,8 +45,13 @@ export type Stage = 'done' | 'run' | 'wait' | 'none' | 'ask' | 'todo' | 'block'
 export const STAGES = ['plan', 'build', 'rev', 'CI', 'you'] as const
 
 // What waits on the person, as the table matches it to a task: by the worker it came
-// from, or a #123 in its text that the task names.
-export type ItemRef = { key: string; kind: 'ask' | 'do' | 'know'; from: string; text: string; isOpen: boolean }
+// from, or an issue or PR its text names (owner/repo#123, see refKey) that the task names.
+export type ItemRef = { key: string; kind: 'ask' | 'do' | 'know'; from: string; text: string; refs: string[]; isOpen: boolean }
+
+// An issue or PR as the table keys it: owner/repo#123, or #123 when no repo is known.
+export const refKey = (repo: string | undefined, n: number) => `${repo ?? ''}#${n}`
+// A task's or slot's key as the table's # column shows it.
+export const labelOf = (key: string) => (key.includes('#') ? `#${key.split('#').pop()}` : key).slice(0, 7)
 
 export type Task = {
   key: string
@@ -55,6 +60,8 @@ export type Task = {
   repo?: string
   jobs: Job[]
   refs: number[]
+  // the same, as refKey makes them: a slot whose task joined this one names one of them
+  refKeys: string[]
   pr?: number
   stages: Stage[]
   // the right-hand column: `you` and `blocked` stand out, `dim` is quiet
@@ -85,17 +92,27 @@ const CI = /\bci\b|check|workflow|actions/i
 export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task[] {
   const sorted = [...jobs].sort((x, y) => x.startedAt - y.startedAt)
   const rowOf = new Map(rows.map(r => [r.name, r]))
-  // Workers that share a number are one task; the oldest names it.
+  // Numbers count per repo: client #640 and server #640 are two tasks. A #640 whose repo is
+  // unknown is the one repo's #640 that has one.
+  const repoOfJob = new Map(sorted.map(j => [j.name, repoOf(j)]))
+  const keyed = new Set(sorted.flatMap(j => (j.refs ?? []).map(n => refKey(repoOfJob.get(j.name), n))))
+  const alias = (k: string) => {
+    if (!k.startsWith('#')) return k
+    const known = [...keyed].filter(x => !x.startsWith('#') && x.endsWith(k))
+    return known.length === 1 ? known[0]! : k
+  }
+  const keysOf = (j: Job) => (j.refs ?? []).map(n => alias(refKey(repoOfJob.get(j.name), n)))
+  // Workers that share an issue or PR are one task; the oldest names it.
   const root = new Map<string, Job>()
   const find = (j: Job): Job => {
     let r = j
     while (root.get(r.name) !== r) r = root.get(r.name)!
     return r
   }
-  const byRef = new Map<number, Job>()
+  const byRef = new Map<string, Job>()
   for (const j of sorted) {
     root.set(j.name, j)
-    for (const n of j.refs ?? []) {
+    for (const n of keysOf(j)) {
       const other = byRef.get(n)
       if (!other) byRef.set(n, j)
       else {
@@ -110,13 +127,12 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
   const tasks: Task[] = []
   for (const [first, list] of groups) {
     const refs = [...new Set(list.flatMap(j => j.refs ?? []))]
-    const key = first.refs?.[0] ? `#${first.refs[0]}` : first.name
-    const repo = list.map(repoOf).find(Boolean)
+    const refKeys = [...new Set(list.flatMap(keysOf))]
+    const key = keysOf(first)[0] ?? first.name
+    const repo = list.map(j => repoOfJob.get(j.name)).find(Boolean)
     const pr = list.flatMap(j => j.prs ?? []).at(-1)
     const names = new Set(list.map(j => j.name))
-    const mine = items.filter(
-      it => names.has(it.from) || [...`${it.from} ${it.text}`.matchAll(/#(\d{1,6})\b/g)].some(m => refs.includes(Number(m[1]))),
-    )
+    const mine = items.filter(it => names.has(it.from) || it.refs.some(r => refKeys.includes(alias(r))))
     const open = mine.filter(it => it.isOpen)
     const todo = open.find(it => it.kind === 'do')
     const ask = open.find(it => it.kind === 'ask')
@@ -153,7 +169,11 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
     const also = ask && (working || waiting) ? ` ${ask.key} waits for you.` : ''
     let who: Task['who']
     let said: string
-    if (blocked) {
+    const isGone = blocked && rowOf.get(blocked.name)?.state === 'gone'
+    if (blocked && isGone) {
+      who = { text: 'tab gone', kind: 'you' }
+      said = `${what(blocked)} lost its herdr tab before it reported. Start it again or stop it.`
+    } else if (blocked) {
       who = { text: 'blocked', kind: 'you' }
       said = `${what(blocked)} waits at a prompt in its tab. Answer it there.`
     } else if (todo) {
@@ -177,17 +197,18 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
     }
     tasks.push({
       key,
-      label: key.slice(0, 6),
+      label: labelOf(key),
       title: titleOf(first.brief ?? first.name),
       ...(repo ? { repo } : {}),
       jobs: list,
       refs,
+      refKeys,
       ...(pr ? { pr } : {}),
       stages,
       who,
       now: said,
       ...((todo ?? ask) ? { item: (todo ?? ask)!.key } : {}),
-      ...((blocked ?? working ?? waiting) ? { tab: (blocked ?? working ?? waiting)!.name } : {}),
+      ...((isGone ? undefined : (blocked ?? working ?? waiting)) ? { tab: (blocked ?? working ?? waiting)!.name } : {}),
       isFinished: running.length === 0 && open.length === 0,
       isMerged,
     })

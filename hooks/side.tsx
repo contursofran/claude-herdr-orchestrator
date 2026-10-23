@@ -10,7 +10,7 @@ import { linker, type LinkFn } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { cmd } from './session'
 import { jobs } from './state'
-import { groupTasks, STAGES, type ItemRef, type Stage, type Task } from './tasks'
+import { groupTasks, labelOf, STAGES, type ItemRef, type Stage, type Task } from './tasks'
 
 // The sidebar (/hrd-side): what the band shows, docked beside the transcript. Work at the
 // top, one row per issue or PR with a mark per stage; what needs the person at the bottom,
@@ -33,6 +33,9 @@ const side = atom(
 
 export type SideRender = RenderInput<'Pane'>
 type Pick = NonNullable<SideView['pick']>
+// A slot whose task joined another one drawn above or below it: it keeps the row until Clear done.
+type Joined = { key: string; label: string; into: Task }
+const isJoined = (r: Task | Joined): r is Joined => 'into' in r
 
 // The rows the sidebar draws: the needs-you items and the tasks, each in its slot, with
 // what closed items ended as and the open decisions and to-dos they come from.
@@ -49,7 +52,8 @@ async function gather($: EngineInterface, link: LinkFn) {
   ].sort((x, y) => x.at - y.at)
   const isLive = new Set(live.map(it => it.key))
   const kept = new Set(v.items.map(it => it.key))
-  const items = [...v.items, ...live.filter(it => !kept.has(it.key))]
+  const newItems = live.filter(it => !kept.has(it.key))
+  const items = [...v.items, ...newItems]
   // How a closed item ended: the person's answer here, the coordinator's, or only that it closed.
   const endOf = (it: SideItem) => {
     const mine = v.answers[it.key]
@@ -60,7 +64,14 @@ async function gather($: EngineInterface, link: LinkFn) {
   }
 
   const links = await linker($, board.rows, link)
-  const refs: ItemRef[] = items.map(it => ({ key: it.key, kind: it.kind, from: it.from, text: it.text, isOpen: isLive.has(it.key) }))
+  const refs: ItemRef[] = items.map(it => ({
+    key: it.key,
+    kind: it.kind,
+    from: it.from,
+    text: it.text,
+    refs: links.refsIn(`${it.from} ${it.text}`, links.repoOf(it.from)),
+    isOpen: isLive.has(it.key),
+  }))
   const all = groupTasks({
     jobs: Object.values(await jobs($)),
     rows: board.rows,
@@ -70,6 +81,9 @@ async function gather($: EngineInterface, link: LinkFn) {
     repoOf: j => links.repoIn(j.brief ?? '', j.cwd),
   })
   const byKey = new Map(all.map(t => [t.key, t]))
+  // The task a slot's key names now: its own, or the one it joined (a reviewer's PR row
+  // once the builder's report links that PR to the issue).
+  const owner = (k: string) => byKey.get(k) ?? all.find(t => t.refKeys.includes(k) || t.jobs.some(j => j.name === k))
   // A task joins the table while it runs or waits on the person, or when it finished
   // lately; one Clear done removed comes back only with a new worker or a new question.
   const lastAt = (t: Task) => Math.max(...t.jobs.map(j => j.endedAt ?? now))
@@ -78,29 +92,49 @@ async function gather($: EngineInterface, link: LinkFn) {
     if (c !== undefined && t.jobs.length <= c && t.isFinished) return false
     return !t.isFinished || now - lastAt(t) < SIDE_RECENT_MS
   }
-  const slotted = v.tasks.filter(k => byKey.has(k))
-  const keys = [...slotted, ...all.filter(t => !slotted.includes(t.key) && joins(t)).map(t => t.key)]
-  const tasks = keys.map(k => byKey.get(k)!)
-  return { v, board, now, open, todos, items, isLive, endOf, tasks, links }
+  // Each slot keeps its row. One whose task joined a task drawn in another slot says so;
+  // one whose task joined a task not drawn yet shows that task. `moved` is what each stored
+  // key becomes (null: gone), `added` the tasks that take the next free slots.
+  const own = new Set(v.tasks.filter(k => byKey.has(k)))
+  const placed = new Set(own)
+  const rows: (Task | Joined)[] = []
+  const moved = new Map<string, string | null>()
+  for (const k of v.tasks) {
+    const t = owner(k)
+    if (!t) moved.set(k, null)
+    else if (own.has(k)) rows.push(t)
+    else if (placed.has(t.key)) rows.push({ key: k, label: labelOf(k), into: t })
+    else {
+      placed.add(t.key)
+      moved.set(k, t.key)
+      rows.push(t)
+    }
+  }
+  const added = all.filter(t => !placed.has(t.key) && joins(t))
+  rows.push(...added)
+  const tasks = rows.filter((r): r is Task => !isJoined(r))
+  return { v, board, now, open, todos, items, newItems, isLive, endOf, rows, tasks, owner, moved, added, links }
 }
 
 // Keeps the slots as drawn, so a row that closes stays where it was. Runs with the band's refresh.
 export async function syncSide($: EngineInterface) {
-  const held = await read($, side)
-  if (!held.isOpen) return
-  const g = await gather($, (_, text) => text)
-  const items = g.items
-  const tasks = g.tasks.map(t => t.key)
-  const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i])
-  if (
-    same(
-      items.map(it => it.key),
-      held.items.map(it => it.key),
-    ) &&
-    same(tasks, held.tasks)
-  )
-    return
-  await update($, side, s => ({ ...s, items, tasks }))
+  if (!(await read($, side)).isOpen) return
+  const { newItems, added, moved } = await gather($, (_, text) => text)
+  if (!newItems.length && !added.length && [...moved].every(([k, to]) => to === k)) return
+  // Applied to the slots as they are by now, so a Clear done pressed meanwhile stays done.
+  await update($, side, s => ({
+    ...s,
+    items: [...s.items, ...newItems.filter(it => !s.items.some(x => x.key === it.key))],
+    tasks: [
+      ...new Set([
+        ...s.tasks.flatMap(k => {
+          const to = moved.get(k)
+          return to === undefined ? [k] : to === null ? [] : [to]
+        }),
+        ...added.map(t => t.key),
+      ]),
+    ],
+  }))
 }
 
 export async function sideOpen($: EngineInterface) {
@@ -110,7 +144,7 @@ export async function sideOpen($: EngineInterface) {
 // Whether the sidebar is drawn now: the band then leaves its rows to it.
 export async function sideShown($: EngineInterface) {
   if (!(await read($, side)).isOpen) return false
-  return (await $.ui.panes()).some(p => p.id === SIDE && p.isPlaced)
+  return (await $.ui.panes()).some(p => p.id === SIDE && p.isPlaced && p.isShown)
 }
 
 export async function toggleSide($: EngineInterface) {
@@ -131,25 +165,44 @@ export async function sideClosed($: EngineInterface) {
   await update($, side, s => ({ ...s, isOpen: false }))
 }
 
-// The GitHub state of the open PRs the table lists: merged, and its checks.
+// The GitHub state of the open PRs the table lists: merged, and its checks. One poll at a
+// time; when gh fails for all of them the status line says so.
+let polling = false
 export async function pollPrs($: EngineInterface) {
-  if (!(await read($, side)).isOpen) return
-  const { v, tasks, now } = await gather($, (_, text) => text)
-  const want = tasks
-    .filter(t => t.pr && t.repo)
-    .map(t => `${t.repo}#${t.pr}`)
-    .filter(k => v.prs[k]?.state !== 'MERGED' && v.prs[k]?.state !== 'CLOSED')
-  const got: Record<string, Pr> = {}
-  for (const k of want.slice(0, SIDE_WORK_ROWS)) {
-    const [repo = '', n = ''] = k.split('#')
-    try {
-      const ran = await $.process.run(['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,statusCheckRollup'], { timeoutMs: 20_000 })
-      if (ran.exitCode !== 0) continue
-      const pr = JSON.parse(ran.stdout) as { state: Pr['state']; statusCheckRollup?: Check[] }
-      got[k] = { state: pr.state, ci: ciOf(pr.statusCheckRollup ?? []), at: now }
-    } catch {}
+  if (polling || !(await read($, side)).isOpen) return
+  polling = true
+  try {
+    const { v, tasks, now } = await gather($, (_, text) => text)
+    const listed = new Set(tasks.filter(t => t.pr && t.repo).map(t => `${t.repo}#${t.pr}`))
+    const want = [...listed].filter(k => v.prs[k]?.state !== 'MERGED' && v.prs[k]?.state !== 'CLOSED')
+    const got: Record<string, Pr> = {}
+    let failed = ''
+    for (const k of want.slice(0, SIDE_WORK_ROWS)) {
+      const [repo = '', n = ''] = k.split('#')
+      try {
+        const ran = await $.process.run(['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,statusCheckRollup'], { timeoutMs: 20_000 })
+        if (ran.exitCode !== 0) {
+          failed = ran.stderr.trim().split('\n')[0] || `exit ${ran.exitCode}`
+          continue
+        }
+        const pr = JSON.parse(ran.stdout) as { state: Pr['state']; statusCheckRollup?: Check[] }
+        got[k] = { state: pr.state, ci: ciOf(pr.statusCheckRollup ?? []), at: now }
+      } catch (err) {
+        failed = String(err)
+      }
+    }
+    const isStale = Object.keys(v.prs).some(k => !listed.has(k))
+    const allFailed = failed && Object.keys(got).length === 0
+    if (!Object.keys(got).length && !isStale && !allFailed) return
+    // Only the PRs the table still lists are kept.
+    await update($, side, s => ({
+      ...s,
+      prs: Object.fromEntries(Object.entries({ ...s.prs, ...got }).filter(([k]) => listed.has(k))),
+      ...(allFailed ? { status: `PR checks: gh failed: ${failed.slice(0, 60)}` } : {}),
+    }))
+  } finally {
+    polling = false
   }
-  if (Object.keys(got).length) await update($, side, s => ({ ...s, prs: { ...s.prs, ...got } }))
 }
 
 type Check = { __typename?: string; status?: string; conclusion?: string; state?: string }
@@ -172,7 +225,6 @@ const GLYPH: Record<Stage, { ch: string; dim?: boolean; bold?: boolean; subtle?:
   todo: { ch: '☐', bold: true },
   block: { ch: '■', bold: true },
 }
-const CELL = 5
 const center = (s: string, n: number) => {
   const left = Math.floor((n - s.length) / 2)
   return ' '.repeat(Math.max(0, left)) + s + ' '.repeat(Math.max(0, n - s.length - left))
@@ -195,7 +247,10 @@ function wrapLines(text: string, width: number, max: number) {
   if (lines.length > max) out[max - 1] = fit(out[max - 1]!, width).replace(/.$/, '…')
   return out
 }
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 const shortFrom = (from: string) => from.replace(/\s*\(.*$/, '').slice(0, 16)
+// The cursor and the # column (#123456).
+const LABEL = 8
 // The rows of the table, header to status line, in a dock tall enough for all of them.
 const FIXED_ROWS = 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
 
@@ -206,14 +261,19 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
       {text}
     </Link>
   ))
-  const { v, board, now, open, todos, items, isLive, endOf, tasks, links } = g
+  const { v, board, now, open, todos, items, isLive, endOf, rows, tasks, owner, links } = g
   const cols = Math.max(30, e.props.bodyColumns)
+  // A narrow dock gets narrower stage cells, then no who column.
+  const cell = cols >= 45 ? 5 : 3
+  const whoWidth = cols >= 56 ? 11 : 0
 
   const firstOpen = items.find(it => isLive.has(it.key))
   const exists = (p: Pick) => (p.kind === 'item' ? items.some(it => it.key === p.key) : tasks.some(t => t.key === p.key))
+  // A pick on a slot whose task joined another follows it there.
+  const held: Pick | undefined = v.pick?.kind === 'task' ? { kind: 'task', key: owner(v.pick.key)?.key ?? v.pick.key } : v.pick
   const pick: Pick | undefined =
-    v.pick && exists(v.pick)
-      ? v.pick
+    held && exists(held)
+      ? held
       : firstOpen
         ? { kind: 'item', key: firstOpen.key }
         : tasks[0]
@@ -224,7 +284,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   const taskOf = (key: string) =>
     tasks.find(t => t.item === key) ?? tasks.find(t => t.jobs.some(j => j.name === items.find(it => it.key === key)?.from))
 
-  const glyph = (s: Stage, key: string, width = CELL) => (
+  const glyph = (s: Stage, key: string, width = cell) => (
     <Text key={key} dimColor={GLYPH[s].dim} bold={GLYPH[s].bold} color={GLYPH[s].subtle ? 'subtle' : undefined}>
       {center(GLYPH[s].ch, width)}
     </Text>
@@ -235,7 +295,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     </Button>
   )
   const header = (
-    <Box justifyContent="space-between">
+    <Box key="header" justifyContent="space-between">
       <Box columnGap={2}>
         {tab('board', 'b')}
         {tab('report', 'r')}
@@ -244,7 +304,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     </Box>
   )
   const status = (
-    <Text dimColor wrap="truncate-end">
+    <Text key="status" dimColor wrap="truncate-end">
       {v.status || ' '}
     </Text>
   )
@@ -263,20 +323,22 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     .join(' · ')
 
   // The work table: cursor and #, title, five stage cells, who has it.
-  const titleWidth = cols - 7 - 2 - STAGES.length * CELL - 11
+  const titleWidth = cols - LABEL - 2 - STAGES.length * cell - whoWidth
   const finished = tasks.filter(t => t.isFinished)
+  const joined = rows.filter(isJoined)
+  const done = new Set([...finished.map(t => t.key), ...joined.map(j => j.key)])
   const clearTasks = () =>
     update($, side, s => ({
       ...s,
-      tasks: s.tasks.filter(k => !finished.some(t => t.key === k)),
+      tasks: s.tasks.filter(k => !done.has(k) && !done.has(owner(k)?.key ?? '')),
       cleared: { ...s.cleared, ...Object.fromEntries(finished.map(t => [t.key, t.jobs.length])) },
-      status: `cleared ${finished.length} done`,
+      status: `cleared ${done.size} done`,
     }))
   const workHead = (
     <Box justifyContent="space-between">
       <Text dimColor>work</Text>
       <Box columnGap={2}>
-        {finished.length ? (
+        {done.size ? (
           <Button key="clear-tasks" plain dimColor onPress={clearTasks}>
             clear done
           </Button>
@@ -289,13 +351,13 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   )
   const columns = (
     <Text dimColor>
-      {' '.repeat(7)}
+      {' '.repeat(LABEL)}
       {titleWidth > 3 ? ` ${' '.repeat(titleWidth)} ` : ''}
-      {STAGES.map(s => center(s, CELL)).join('')}
+      {STAGES.map(s => center(s.length > cell ? s.slice(0, 1) : s, cell)).join('')}
     </Text>
   )
   const who = (t: Task) =>
-    t.who.kind === 'you' ? (
+    !whoWidth ? null : t.who.kind === 'you' ? (
       <Text key="who">
         {' '.repeat(Math.max(0, 9 - t.who.text.length))}
         <Text inverse bold>{` ${t.who.text} `}</Text>
@@ -310,13 +372,20 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     return (
       <Button key={`task-${t.key}`} plain onPress={() => choosePick({ kind: 'task', key: t.key })}>
         <Text bold={isOn}>{isOn ? '▸' : ' '}</Text>
-        <Text dimColor>{t.label.padEnd(6)}</Text>
+        <Text dimColor>{t.label.padEnd(LABEL - 1)}</Text>
         {titleWidth > 3 ? <Text dimColor={t.isFinished} strikethrough={t.isMerged}>{` ${fit(t.title, titleWidth)} `}</Text> : null}
         {t.stages.map((s, i) => glyph(s, `g${i}`))}
         {who(t)}
       </Button>
     )
   }
+  const joinedRow = (j: Joined) => (
+    <Button key={`task-${j.key}`} plain dimColor onPress={() => choosePick({ kind: 'task', key: j.into.key })}>
+      {` ${j.label.padEnd(LABEL - 1)} `}
+      <Text strikethrough>{fit(`joined ${j.into.label}`, cols - LABEL - 2)}</Text>
+    </Button>
+  )
+  const slotRow = (r: Task | Joined) => (isJoined(r) ? joinedRow(r) : workRow(r))
   const spare = (n: number, at: string) => Array.from({ length: Math.max(0, n) }, (_, i) => <Text key={`${at}${i}`}> </Text>)
   const slots = <T,>(list: T[], rows: number, draw: (x: T) => RenderElement, at: string, empty: string) => {
     const over = list.length > rows
@@ -352,7 +421,6 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
       ) : null}
     </Box>
   )
-  const needWidth = cols - 16
   const needRow = (it: SideItem) => {
     const isOn = pick?.kind === 'item' && pick.key === it.key
     const isOpen = isLive.has(it.key)
@@ -364,9 +432,9 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         <Text bold={isOn}>{isOn ? '▸ ' : '  '}</Text>
         <Text bold={!quiet} dimColor={quiet}>{`${mark} ${it.key.padEnd(4)} `}</Text>
         <Text dimColor={quiet} strikethrough={!isOpen}>
-          {fit(it.title, needWidth)}
+          {fit(it.title, cols - LABEL - 5 - Math.max(4, it.key.length))}
         </Text>
-        <Text dimColor>{` ${task.padStart(6)}`}</Text>
+        <Text dimColor>{` ${task.padStart(LABEL - 1)}`}</Text>
       </Button>
     )
   }
@@ -382,7 +450,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
       <Box flexDirection="column" marginTop={1}>
         {workHead}
         {columns}
-        {slots(tasks, SIDE_WORK_ROWS, workRow, 'w', 'No workers yet.')}
+        {slots(rows, SIDE_WORK_ROWS, slotRow, 'w', 'No workers yet.')}
       </Box>
       <Box flexGrow={1} />
       <Box flexDirection="column" marginTop={1}>
@@ -400,7 +468,8 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   )
 
   // The box for a decision or a to-do: its question in at most three lines, the answers,
-  // and once answered, what was sent. Same height either way.
+  // and once answered, what was sent. Same height either way: answers that take a second
+  // line take one from the question.
   function itemBox(it: SideItem) {
     const isOpen = isLive.has(it.key)
     const d: Decision | undefined = open.find(x => `D${x.id}` === it.key)
@@ -409,10 +478,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     const others = items.filter(x => isLive.has(x.key) && x.key !== it.key)
     const after = others.find(x => items.indexOf(x) > items.indexOf(it)) ?? others[0]
     const options = d
-      ? (d.options ?? [])
-          .map((label, i) => ({ label, isRec: i === d.recommended }))
-          .sort((x, y) => Number(y.isRec) - Number(x.isRec))
-          .slice(0, 3)
+      ? (d.options ?? []).map((label, i) => ({ label, isRec: i === d.recommended })).sort((x, y) => Number(y.isRec) - Number(x.isRec))
       : []
     const url = t?.text.match(/\bhttps?:\/\/\S+|\blocalhost:\d+\S*/)?.[0]?.replace(/[).,;]+$/, '')
     // Answered here: the row keeps its slot, struck through, and the box stays on it.
@@ -424,28 +490,65 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         answers: { ...s.answers, [it.key]: answer },
         status,
       }))
-    const answerIt = async (dd: Decision, label: string) => {
-      await keep(label, `${it.key} → ${label} · sent`)
-      await choose($, dd, label)
+    // "sent" once the prompt went out; what failed otherwise.
+    const send = async (answer: string, status: string, run: () => Promise<unknown>) => {
+      await keep(answer, status)
+      try {
+        await run()
+        await say(`${status}${answer === 'dismissed' ? '' : ' · sent'}`)
+      } catch (err) {
+        await say(`${it.key} not sent: ${String(err).slice(0, 60)}`)
+      }
     }
-    const tickIt = async (tt: Todo) => {
+    const answerIt = (dd: Decision, label: string) => send(label, `${it.key} → ${label}`, () => choose($, dd, label))
+    const tickIt = (tt: Todo) => {
       const done = tt.kind === 'do' ? 'done' : 'dismissed'
-      await keep(done, `${it.key} ${done}${tt.kind === 'do' ? ' · sent' : ''}`)
-      await tick($, tt)
+      return send(done, `${it.key} ${done}`, () => tick($, tt))
+    }
+    // The answers, then answer in chat, in as many lines as the width takes; two always fit a line.
+    const most = Math.max(8, Math.floor((cols - 3) / 2) - 2)
+    const chips = [
+      ...options.map((o, i) => ({ ...o, i, text: clip(o.label, most) })),
+      { label: '', isRec: false, i: -1, text: 'answer in chat' },
+    ]
+    const lines: (typeof chips)[] = []
+    let width = 0
+    for (const c of chips) {
+      const w = c.text.length + (c.isRec ? 2 : 0)
+      if (lines.length && width + 3 + w <= cols) {
+        lines.at(-1)!.push(c)
+        width += 3 + w
+      } else {
+        lines.push([c])
+        width = w
+      }
     }
     let actions: RenderElement | null = null
     if (!isOpen) actions = <Text dimColor>{`✓ ${endOf(it)}`}</Text>
     else if (d)
       actions = (
-        <Box columnGap={3}>
-          {options.map((o, i) => (
-            <Button key={`opt-${d.id}-${i}`} plain hotkey={String(i + 1)} onPress={() => answerIt(d, o.label)}>
-              {o.isRec ? <Text inverse bold>{` ${o.label.slice(0, 24)} `}</Text> : o.label.slice(0, 24)}
-            </Button>
+        <Box flexDirection="column">
+          {lines.map((line, l) => (
+            <Box key={`ol${l}`} columnGap={3}>
+              {line.map(c =>
+                c.i < 0 ? (
+                  <Button
+                    key={`chat-${d.id}`}
+                    plain
+                    hotkey="o"
+                    dimColor
+                    onPress={() => $.prompt.fill({ text: `${it.key}: `, mode: 'append' })}
+                  >
+                    {c.text}
+                  </Button>
+                ) : (
+                  <Button key={`opt-${d.id}-${c.i}`} plain hotkey={String(c.i + 1)} onPress={() => answerIt(d, c.label)}>
+                    {c.isRec ? <Text inverse bold>{` ${c.text} `}</Text> : c.text}
+                  </Button>
+                ),
+              )}
+            </Box>
           ))}
-          <Button key={`chat-${d.id}`} plain hotkey="o" dimColor onPress={() => $.prompt.fill({ text: `${it.key}: `, mode: 'append' })}>
-            answer in chat
-          </Button>
         </Box>
       )
     else if (t)
@@ -476,7 +579,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
           <Text dimColor>{`${shortFrom(it.from)} · ${ago(now - it.at)}`}</Text>
         </Box>
         <Box flexDirection="column" marginTop={1}>
-          {wrapLines(it.text, cols, 3).map((l, i) => (
+          {wrapLines(it.text, cols, Math.max(1, Math.min(3, SIDE_BOX_ROWS - 4 - (isOpen && d ? lines.length : 1)))).map((l, i) => (
             <Text key={`q${i}`} dimColor={!isOpen}>
               {links.linkify(l, links.repoOf(it.from))}
             </Text>

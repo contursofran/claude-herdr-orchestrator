@@ -66,9 +66,10 @@ export async function start($: Engine, on: On, config: Settings = {}) {
       value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
     const ok = (result: unknown) => exit(0, JSON.stringify({ result }))
-    // /repo and /srv are GitHub checkouts.
+    // /repo and /srv are GitHub checkouts; a folder in one (/repo/wt) is a worktree of it.
     const remote: Record<string, string> = { '/repo': 'acme/app-client', '/srv': 'acme/app-server' }
-    const slug = cmd === 'git' && e.argv[3] === 'remote' ? remote[e.argv[2] ?? ''] : undefined
+    const dir = `${e.argv[2] ?? ''}/`
+    const slug = cmd === 'git' && e.argv[3] === 'remote' ? Object.entries(remote).find(([d]) => dir.startsWith(`${d}/`))?.[1] : undefined
     if (slug) return exit(0, `origin\tgit@github.com:${slug}.git (fetch)\n`)
     if (cmd === 'gh' && sub === 'pr' && verb === 'view') {
       const pr = prs[`${e.argv[5]}#${name}`]
