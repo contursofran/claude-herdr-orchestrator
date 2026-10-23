@@ -394,7 +394,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   const workRow = (t: Task) => (
     <Box key={`task-${t.key}`}>
       {label(t.key, t.label, ghUrl(t))}
-      {titleWidth > 3 ? <Text dimColor={t.isFinished} strikethrough={t.isMerged}>{` ${fit(t.title, titleWidth)} `}</Text> : null}
+      {titleWidth > 3 ? <Text color={t.isFinished ? 'subtle' : undefined}>{` ${fit(t.title, titleWidth)} `}</Text> : null}
       {t.stages.map((s, i) => glyph(s, `g${i}`))}
       {who(t)}
     </Box>
