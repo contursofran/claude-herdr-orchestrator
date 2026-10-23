@@ -183,11 +183,11 @@ test('the box shows every answer at the same height, and a closed item keeps its
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // Four answers, the recommended first, take two lines, so the question keeps two.
   expect((await ui.find({ key: 'opt-1-0' }))?.text).toBe(' Tabs per item type ')
-  expect((await ui.find({ key: 'opt-1-1' }))?.text).toBe('A fixed grid like the old c…')
+  expect((await ui.find({ key: 'opt-1-1' }))?.text).toBe('A fixed grid like the old…')
   expect(await ui.find({ key: 'opt-1-3' })).toBeDefined()
   expect(await ui.find({ key: 'ol1' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^The bag window needs one layout/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^client used a fixed grid.*…$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^old client used a fixed grid.*…$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /ships first/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'tab moves · enter presses' })).toBeDefined()
 

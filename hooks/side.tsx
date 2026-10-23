@@ -263,8 +263,10 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const shortFrom = (from: string) => from.replace(/\s*\(.*$/, '').slice(0, 16)
 // The cursor and the # column (#123456).
 const LABEL = 8
-// The rows of the table, header to status line, in a dock tall enough for all of them.
-const FIXED_ROWS = 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
+// Blank columns left and right of the sidebar's content.
+const MARGIN = 2
+// The rows of the table, top margin to status line, in a dock tall enough for all of them.
+const FIXED_ROWS = 1 + 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
 
 export async function drawSide($: EngineInterface, e: SideRender): Promise<RenderElement> {
   const { Box, Button, Link, Markdown, Text } = $.ui.resolve(e)
@@ -274,7 +276,8 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     </Link>
   ))
   const { v, board, now, open, todos, items, isLive, endOf, rows, tasks, owner, links } = g
-  const cols = Math.max(30, e.props.bodyColumns)
+  // Two columns of margin on each side, inside the dock.
+  const cols = Math.max(30, e.props.bodyColumns - 2 * MARGIN)
   // A narrow dock gets narrower stage cells, then no who column.
   const cell = cols >= 45 ? 5 : 3
   const whoWidth = cols >= 56 ? 11 : 0
@@ -453,10 +456,9 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     )
   }
 
-  const rule = <Text color="subtle">{'─'.repeat(cols)}</Text>
   const tall = e.props.placement === 'dock' && e.props.scroll.bodyRows >= FIXED_ROWS
   return (
-    <Box flexDirection="column" height={tall ? e.props.scroll.bodyRows : undefined}>
+    <Box flexDirection="column" paddingX={MARGIN} paddingTop={1} height={tall ? e.props.scroll.bodyRows : undefined}>
       {header}
       <Box marginTop={1}>
         <Text>{summary}</Text>
@@ -471,8 +473,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         {needHead}
         {slots(items, SIDE_NEED_ROWS, needRow, 'n', 'Nothing waits for you.')}
       </Box>
-      {rule}
-      <Box flexDirection="column" height={SIDE_BOX_ROWS} overflow="hidden">
+      <Box flexDirection="column" marginTop={1} height={SIDE_BOX_ROWS} overflow="hidden">
         {pick?.kind === 'item' ? itemBox(items.find(it => it.key === pick.key)!) : null}
         {pick?.kind === 'task' ? taskBox(tasks.find(t => t.key === pick.key)!) : null}
         {!pick ? <Text dimColor>Pick a row to see it here.</Text> : null}
