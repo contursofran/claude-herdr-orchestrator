@@ -4,7 +4,7 @@ import type { Decision, Pr, SideItem, SideView, Todo } from '../types'
 import { readBoard } from './board'
 import { toggleWrapUp } from './coordinator'
 import { SIDE_BOX_ROWS, SIDE_COLUMNS, SIDE_NEED_ROWS, SIDE_RECENT_MS, SIDE_WORK_ROWS } from './defaults'
-import { ago, tilde } from './format'
+import { ago } from './format'
 import { linker, type LinkFn } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { cmd } from './session'
@@ -21,7 +21,6 @@ export const SIDE = 'hrd-side'
 const side = atom(
   { plugin: 'herdr-agents', key: 'side' } as const,
   {
-    tab: 'board',
     items: [],
     tasks: [],
     answers: {},
@@ -262,13 +261,17 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 const shortFrom = (from: string) => from.replace(/\s*\(.*$/, '').slice(0, 16)
 // The # column (#123456) with its gap; in the needs-you list, the cursor and the key.
 const LABEL = 8
-// Blank columns left and right of the sidebar's content.
+// Blank columns left and right of the sidebar's content: one on the left, as the transcript
+// leaves before the dock's edge, so the line sits centered between the two.
+const MARGIN_LEFT = 1
 const MARGIN = 2
+// The rule over the box: darker than the theme's subtle grey, as in the mockup.
+const RULE = '#2A2A2A'
 // The rows of the table, top margin to status line, in a dock tall enough for all of them.
-const FIXED_ROWS = 2 + 4 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
+const FIXED_ROWS = 2 + 2 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
 
 export async function drawSide($: EngineInterface, e: SideRender): Promise<RenderElement> {
-  const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+  const { Box, Button, Text } = $.ui.resolve(e)
   // herdr draws no OSC 8 links, so a Link there prints its URL after it: links in text stay
   // plain, and what opens a page is a Button.
   const g = await gather($, (_href, text) => text)
@@ -278,8 +281,8 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
     </Button>
   )
   const { v, board, now, open, todos, items, isLive, endOf, rows, tasks, owner, links } = g
-  // Two columns of margin on each side, inside the dock.
-  const cols = Math.max(30, e.props.bodyColumns - 2 * MARGIN)
+  // The margins on each side, inside the dock.
+  const cols = Math.max(30, e.props.bodyColumns - MARGIN_LEFT - MARGIN)
   // A narrow dock gets narrower stage cells, then no who column.
   const cell = cols >= 45 ? 5 : 3
   const whoWidth = cols >= 56 ? 11 : 0
@@ -288,7 +291,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   // Only a needs-you item is picked; with none, the box stays empty.
   const held = v.pick?.kind === 'item' && items.some(it => it.key === v.pick!.key) ? v.pick : undefined
   const pick: Pick | undefined = held ?? (firstOpen ? { kind: 'item', key: firstOpen.key } : undefined)
-  const choosePick = (p: Pick) => update($, side, s => ({ ...s, pick: p, tab: 'board' as const }))
+  const choosePick = (p: Pick) => update($, side, s => ({ ...s, pick: p }))
   const say = (status: string) => update($, side, s => ({ ...s, status }))
   const taskOf = (key: string) =>
     tasks.find(t => t.item === key) ?? tasks.find(t => t.jobs.some(j => j.name === items.find(it => it.key === key)?.from))
@@ -298,31 +301,9 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
       {center(GLYPH[s].ch, width)}
     </Text>
   )
-  // No hotkeys anywhere: the engine draws them in the accent color, and the sidebar stays
-  // grey and white. Tab walks the buttons, Enter presses.
-  const tab = (name: SideView['tab']) => (
-    <Button key={`tab-${name}`} plain dimColor={v.tab !== name} onPress={() => update($, side, s => ({ ...s, tab: name }))}>
-      {name}
-    </Button>
-  )
-  const header = (
-    <Box key="header" justifyContent="space-between">
-      <Box columnGap={2}>
-        {tab('board')}
-        {tab('report')}
-      </Box>
-      {board.context ? <Text dimColor>{`ctx ${Math.round(board.context.tokens / 1000)}k`}</Text> : null}
-    </Box>
-  )
-  const status = (
-    <Text key="status" dimColor wrap="truncate-end">
-      {v.status || ' '}
-    </Text>
-  )
-
-  if (v.tab === 'report') return <Box flexDirection="column">{[header, await report(), status]}</Box>
-
-  // The summary line.
+  // The summary line, with wrap up and the context beside it. No hotkeys anywhere: the
+  // engine draws them in the accent color, and the sidebar stays grey and white. Tab walks
+  // the buttons, Enter presses.
   const busy = board.rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length
   const left = board.rows.filter(r => r.state !== 'reported').length
   const needCount = items.filter(it => isLive.has(it.key)).length
@@ -332,6 +313,22 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   ]
     .filter(Boolean)
     .join(' · ')
+  const header = (
+    <Box key="header" justifyContent="space-between" columnGap={2}>
+      <Text wrap="truncate-end">{summary}</Text>
+      <Box columnGap={2} flexShrink={0}>
+        <Button key="wrap-up" plain dimColor onPress={() => toggleWrapUp($, !board.wrapUp)}>
+          {board.wrapUp ? 'keep going' : 'wrap up'}
+        </Button>
+        {board.context ? <Text dimColor>{ctxUsed(board.context)}</Text> : null}
+      </Box>
+    </Box>
+  )
+  const status = (
+    <Text key="status" dimColor wrap="truncate-end">
+      {v.status || ' '}
+    </Text>
+  )
 
   // The work table: cursor and #, title, five stage cells, who has it.
   // The # column is as wide as the longest number in it and a gap.
@@ -350,16 +347,11 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
   const workHead = (
     <Box justifyContent="space-between">
       <Text dimColor>issues</Text>
-      <Box columnGap={2}>
-        {done.size ? (
-          <Button key="clear-tasks" plain dimColor onPress={clearTasks}>
-            clear done
-          </Button>
-        ) : null}
-        <Button key="wrap-up" plain dimColor onPress={() => toggleWrapUp($, !board.wrapUp)}>
-          {board.wrapUp ? 'keep going' : 'wrap up'}
+      {done.size ? (
+        <Button key="clear-tasks" plain dimColor onPress={clearTasks}>
+          clear done
         </Button>
-      </Box>
+      ) : null}
     </Box>
   )
   const columns = (
@@ -461,11 +453,14 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
 
   const tall = e.props.placement === 'dock' && e.props.scroll.bodyRows >= FIXED_ROWS
   return (
-    <Box flexDirection="column" paddingX={MARGIN} paddingTop={1} height={tall ? e.props.scroll.bodyRows : undefined}>
+    <Box
+      flexDirection="column"
+      paddingLeft={MARGIN_LEFT}
+      paddingRight={MARGIN}
+      paddingTop={1}
+      height={tall ? e.props.scroll.bodyRows : undefined}
+    >
       {header}
-      <Box marginTop={1}>
-        <Text>{summary}</Text>
-      </Box>
       <Box flexDirection="column" marginTop={1}>
         {workHead}
         {columns}
@@ -476,7 +471,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         {needHead}
         {slots(items, SIDE_NEED_ROWS, needRow, 'n', 'Nothing waits for you.')}
       </Box>
-      <Text color="subtle">{'─'.repeat(cols)}</Text>
+      <Text color={RULE}>{'─'.repeat(cols)}</Text>
       <Box flexDirection="column" marginTop={1} height={SIDE_BOX_ROWS} overflow="hidden">
         {pick ? itemBox(items.find(it => it.key === pick.key)!) : null}
       </Box>
@@ -607,40 +602,11 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
       </Box>
     )
   }
+}
 
-  // The last report of the picked item's task, else the newest report, as Markdown.
-  async function report(): Promise<RenderElement> {
-    const newest = (x: Task) => Math.max(0, ...x.jobs.map(j => (j.status === 'reported' ? (j.endedAt ?? 0) : 0)))
-    const t = (pick ? taskOf(pick.key) : undefined) ?? [...tasks].sort((a, b) => newest(b) - newest(a))[0]
-    const back = (
-      <Button key="back" plain dimColor onPress={() => update($, side, s => ({ ...s, tab: 'board' as const }))}>
-        back
-      </Button>
-    )
-    const j = t ? (t.jobs.filter(x => x.status === 'reported').at(-1) ?? t.jobs.at(-1)) : undefined
-    if (!t || !j?.token)
-      return (
-        <Box key="report" flexDirection="column" marginTop={1}>
-          <Text dimColor>{t ? `${t.label}: no report yet.` : 'No reports yet.'}</Text>
-          <Box marginTop={1}>{back}</Box>
-        </Box>
-      )
-    const result = `${j.dir}/RESULT-${j.token}.md`
-    const screen = `${j.dir}/SCREEN-${j.token}.txt`
-    const path = (await $.fs.exists(result)) ? result : (await $.fs.exists(screen)) ? screen : undefined
-    const body = path ? (await $.fs.read(path)).slice(0, 8000) : `${j.name} has not reported yet.`
-    const home = (await $.env.get('HOME')) ?? ''
-    return (
-      <Box key="report" flexDirection="column" marginTop={1}>
-        <Text bold wrap="truncate-end">{`${t.label}  ${t.title}`}</Text>
-        <Text dimColor wrap="truncate-start">{`${j.name} ${j.profile} · ${path ? tilde(path, home) : 'running'}`}</Text>
-        <Box marginTop={1} flexDirection="column">
-          {path?.endsWith('.md') ? <Markdown text={body} /> : <Text>{body}</Text>}
-        </Box>
-        <Box marginTop={1}>{back}</Box>
-      </Box>
-    )
-  }
+// The context used, in thousands of tokens and as a share of the coordinator's reset limit.
+function ctxUsed({ tokens, limit }: { tokens: number; limit: number }) {
+  return `ctx ${Math.round(tokens / 1000)}k ${Math.round((100 * tokens) / limit)}%`
 }
 
 // The task's PR on GitHub, else its issue.

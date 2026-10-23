@@ -102,10 +102,6 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
   // The # opens the PR, and nothing waits for the person, so the box stays empty.
   expect((await ui.find({ key: 'gh-acme/app-client#12' }))?.text).toBe('#12')
   expect(await ui.find({ type: 'Text', text: /Pick a row/ })).toBeUndefined()
-  // With nothing picked, report shows the newest report.
-  await ui.press({ key: 'tab-report' })
-  expect((await ui.find({ type: 'Markdown' }))?.props.text).toMatch(/Opened https:\/\/github\.com\/acme\/app-client\/pull\/15/)
-  await ui.press({ key: 'back' })
 
   // Once the review is in and the PR merged, the row is done until clear done removes it.
   await stopAll($, clock, ['r-15'])
@@ -180,7 +176,7 @@ test('the box shows every answer at the same height, and a closed item keeps its
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // Four answers, the recommended first, take two lines, so the question keeps two.
   expect((await ui.find({ key: 'opt-1-0' }))?.text).toBe(' Tabs per item type ')
-  expect((await ui.find({ key: 'opt-1-1' }))?.text).toBe('A fixed grid like the old…')
+  expect((await ui.find({ key: 'opt-1-1' }))?.text).toBe('A fixed grid like the old …')
   expect(await ui.find({ key: 'opt-1-3' })).toBeDefined()
   expect(await ui.find({ key: 'ol1' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^The bag window needs one layout/ })).toBeDefined()

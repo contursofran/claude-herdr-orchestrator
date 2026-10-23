@@ -88,7 +88,6 @@ export type Pr = { state: 'OPEN' | 'MERGED' | 'CLOSED'; ci: 'pass' | 'fail' | 'p
 // one line under it; `prs` by owner/name#123.
 export type SideView = {
   isOpen?: boolean
-  tab: 'board' | 'report'
   pick?: { kind: 'item' | 'task'; key: string }
   items: SideItem[]
   tasks: string[]
