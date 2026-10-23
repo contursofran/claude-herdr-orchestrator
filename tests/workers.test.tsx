@@ -71,6 +71,19 @@ test('a message after a report with DECISION lines reaches the worker as new tex
   await stopAll($, clock, ['w-done'])
 })
 
+test('a DECISION line that says none is not pinned for the owner', async ($, on) => {
+  const { clock, submitted, typed, files } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-none', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-none/RESULT.md'] =
+    `<!-- report ${token} -->\nOpened PR #4.\nDECISION: none. No owner decision is needed for this PR.\n**decision:** None\nDECISION: [Port] Which port? | 5173 (recommended) | 8080`
+  await clock.advance(10_000)
+  const report = submitted.at(-1) ?? ''
+  expect(report).toMatch(/Pinned for the owner as D1/)
+  expect(report).not.toMatch(/D2/)
+  await stopAll($, clock, ['w-none'])
+})
+
 test("a reported worker's tab closes once it has sat idle, unless its question is still open", async ($, on) => {
   const { clock, typed, closed, files } = await start($, on)
   const report = async (worker: string, text: string) => {
