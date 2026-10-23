@@ -66,3 +66,23 @@ test('the settings on the band save to the chosen file and refuse bad values', a
   await ui.unmount()
   await clock.advance(3000)
 })
+
+test('view picks the band or the sidebar, opens it at start, and switches it from the settings', async ($, on) => {
+  const { clock, files, panes } = await start($, on, { view: 'side' })
+  const isSide = async () => panes.includes('hrd-side')
+  await clock.advance(10)
+  expect(await isSide()).toBe(true)
+
+  await command($, 'hrd-config')
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'cfg-view' }))?.text).toMatch(/Show workers in +the sidebar ›$/)
+  // The band is the default for all folders: the key goes, and the sidebar closes.
+  await ui.press({ key: 'cfg-view' })
+  expect(JSON.parse(files['/home/t/.claude/herdr-agents.json']!)).toEqual({ repos: { web: 'acme/website' } })
+  expect(await isSide()).toBe(false)
+  await ui.press({ key: 'cfg-view' })
+  expect(JSON.parse(files['/home/t/.claude/herdr-agents.json']!).view).toBe('side')
+  expect(await isSide()).toBe(true)
+  await ui.unmount()
+  await clock.advance(3000)
+})

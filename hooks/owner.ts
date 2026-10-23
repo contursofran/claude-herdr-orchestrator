@@ -13,6 +13,20 @@ const lastId = atom({ plugin: 'herdr-agents', key: 'lastId' } as const, 0)
 const todos = atom({ plugin: 'herdr-agents', key: 'todos' } as const, [] as Todo[])
 const lastTodo = atom({ plugin: 'herdr-agents', key: 'lastTodo' } as const, 0)
 
+// A decision's name in a list: its title, else the question's first words.
+export function decisionTitle(d: Decision) {
+  return (
+    d.title ??
+    d.question
+      .replace(/^\s*(TEST \(ignore\)\s*:?\s*)?(Q\d+\s*:\s*)?([#\w-]*\d+\s*:?\s*)?/i, '')
+      .replace(/^[^\p{L}\p{N}]+/u, '')
+      .split(/\s+/)
+      .slice(0, 4)
+      .join(' ')
+      .replace(/[?:,.;]+$/, '')
+  )
+}
+
 export function openQuestions($: EngineInterface) {
   return read($, decisions)
 }

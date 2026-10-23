@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
-import type { Decision, Row, View } from '../types'
-import { readBoard, repoLinks } from './board'
+import type { Row, View } from '../types'
+import { readBoard } from './board'
 import { toggleWrapUp } from './coordinator'
 import { SETTLED_MS, TODO_ROWS, WORKER_CELL, WORKER_LINES } from './defaults'
 import { ago, elapsed } from './format'
-import { answered, choose, openQuestions, pinnedItems, tick } from './owner'
+import { linker } from './links'
+import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { cmd } from './session'
 
 // Which decision the band shows, and whether Details lists every worker.
@@ -28,57 +29,15 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
   if (e.props.hasSurvey || (rows.length === 0 && open.length === 0 && recent.length === 0 && items.length === 0)) return next(e)
 
   const { Box, Button, Link, Text } = $.ui.resolve(e)
-  // A #123 on the band links to that issue or PR. owner/repo#1, repo#1 and `repo #1` (a repo's
-  // name or short name, acme-client or client) name the repo; a bare #1 takes the last repo
-  // named before it in the text, else `fallback` (a worker's repo), else the only repo known.
-  const { byCwd, extra } = await repoLinks($)
-  const slugs = [...new Set(Object.values(byCwd))]
-  const known: Record<string, string> = {}
-  for (const slug of slugs) {
-    const name = slug.split('/')[1]!.toLowerCase()
-    for (const k of new Set([name, name.split('-').pop()!])) known[k] = k in known && known[k] !== slug ? '' : slug
-  }
-  for (const [k, slug] of Object.entries(extra)) known[k.toLowerCase()] = String(slug)
-  const REF = /(?:([\w.-]+(?:\/[\w.-]+)?)(\s*))?#(\d{1,6})\b/g
-  const repoNamed = (name: string | undefined, gap: string) =>
-    name ? (name.includes('/') && !gap ? name : known[name.toLowerCase()]) || undefined : undefined
-  const linkify = (text: string, fallback?: string) => {
-    const out: (string | RenderElement)[] = []
-    let at = 0
-    let last = fallback ?? (slugs.length === 1 ? slugs[0] : undefined)
-    for (const m of text.matchAll(REF)) {
-      const [whole, name, gap = '', n = ''] = m
-      const named = repoNamed(name, gap)
-      if (named) last = named
-      if (!last) continue
-      const hash = m.index! + whole.length - n.length - 1
-      out.push(
-        text.slice(at, hash),
-        <Link key={`l${hash}`} href={`https://github.com/${last}/issues/${n}`}>
-          {`#${n}`}
-        </Link>,
-      )
-      at = hash + 1 + n.length
-    }
-    out.push(text.slice(at))
-    return out
-  }
-  // The repo a to-do or decision is about: its worker's, or one its `from` names.
-  const repoOfWorker = new Map(rows.map(r => [r.name, r.repo]))
-  const repoOf = (from: string) => repoOfWorker.get(from) ?? [...from.matchAll(REF)].map(m => repoNamed(m[1], m[2] ?? '')).find(Boolean)
+  const { linkify, repoOf } = await linker($, rows, (href, text, key) => (
+    <Link key={key} href={href}>
+      {text}
+    </Link>
+  ))
   // bodyColumns is the band's box; the border and padding take 4 of it.
   const cols = Math.max(20, (e.props.bodyColumns ?? 100) - 4)
   const isWide = cols >= 116
   const rule = <Text color="subtle">{'─'.repeat(cols)}</Text>
-  const title = (d: Decision) =>
-    d.title ??
-    d.question
-      .replace(/^\s*(TEST \(ignore\)\s*:?\s*)?(Q\d+\s*:\s*)?([#\w-]*\d+\s*:?\s*)?/i, '')
-      .replace(/^[^\p{L}\p{N}]+/u, '')
-      .split(/\s+/)
-      .slice(0, 4)
-      .join(' ')
-      .replace(/[?:,.;]+$/, '')
   const short = (from: string) => from.replace(/\s*\(.*$/, '').slice(0, 22)
   const pick = (id: number) => update($, view, v => ({ ...v, selected: id }))
 
@@ -247,7 +206,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
         return (
           <Button key={`pick-d${d.id}`} plain onPress={() => pick(d.id)}>
             <Text bold={isOn} color={isOn ? 'claude' : undefined} dimColor={!isOn}>{`${isOn ? '▸' : ' '} D${d.id}  `}</Text>
-            <Text bold={isOn}>{title(d).slice(0, 24)}</Text>
+            <Text bold={isOn}>{decisionTitle(d).slice(0, 24)}</Text>
             {'\n'}
             <Text dimColor>{`      ${short(d.from)} · ${ago(now - d.at)}`}</Text>
           </Button>
@@ -263,7 +222,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
       {open.map(d => (
         <Button key={`pick-d${d.id}`} plain dimColor={d !== shown} onPress={() => pick(d.id)}>
           <Text bold={d === shown} inverse={d === shown} color={d === shown ? 'claude' : undefined}>
-            {` D${d.id} ${title(d).slice(0, 18)} `}
+            {` D${d.id} ${decisionTitle(d).slice(0, 18)} `}
           </Text>
         </Button>
       ))}

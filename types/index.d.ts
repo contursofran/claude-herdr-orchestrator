@@ -15,6 +15,12 @@ export type Job = {
   wait?: Wait
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
+  // the brief's first line: the sidebar's task title (TASK.md changes with follow-ups)
+  brief?: string
+  // the issue and PR numbers it worked on: the brief's first #123, then the PR its reports link
+  refs?: number[]
+  // the PRs among them: a brief's "PR #123", a report's /pull/123
+  prs?: number[]
 }
 
 // `every` and `max` in minutes; `lastAt` is when `check` last ran.
@@ -67,6 +73,30 @@ export type Links = { byCwd: Record<string, string>; extra: Record<string, strin
 // `target` is how many workers the coordinator keeps running.
 export type Board = { now: number; rows: Row[]; context?: { tokens: number; limit: number }; target?: number; wrapUp?: boolean }
 
+// One line of the sidebar's needs-you list: a decision (D7) or a to-do (T12) as it was
+// when it arrived, kept after it closes so its row stays in place until Clear done.
+// `title` is its short name, `text` the question or the to-do in full.
+export type SideItem = { key: string; kind: 'ask' | 'do' | 'know'; title: string; text: string; from: string; at: number }
+
+// A PR's GitHub state as the sidebar last read it: `ci` sums its checks.
+export type Pr = { state: 'OPEN' | 'MERGED' | 'CLOSED'; ci: 'pass' | 'fail' | 'pending' | 'none'; at: number }
+
+// The sidebar (/hrd-side). Rows keep their slots: `items` and `tasks` (task keys) are in
+// arrival order and only Clear done removes them. `answers` holds what the person answered
+// in the sidebar; `cleared` the tasks Clear done removed, with their worker count then (a
+// new worker brings one back). `pick` is the row the box at the bottom shows; `status` the
+// one line under it; `prs` by owner/name#123.
+export type SideView = {
+  isOpen?: boolean
+  pick?: { kind: 'item' | 'task'; key: string }
+  items: SideItem[]
+  tasks: string[]
+  answers: Record<string, string>
+  cleared: Record<string, number>
+  status?: string
+  prs: Record<string, Pr>
+}
+
 // The context reset in progress (see maybeReset): the coordinator was asked at
 // `at` to save its state, and the mod compacts once it has.
 export type Reset = { stage: 'saving'; at: number }
@@ -91,6 +121,8 @@ export type Settings = {
   closeIdleMinutes?: number
   repos?: Record<string, string>
   wrapUp?: boolean
+  // where the workers and what needs the person show: the band above the prompt or the sidebar
+  view?: 'band' | 'side'
 }
 
 // The settings list (/hrd-config), drawn on the band above the prompt: the two files as
@@ -128,6 +160,7 @@ declare module 'claude-code' {
       links: Links
       orchestrating: boolean
       settings: SettingsView
+      side: SideView
     }
   }
 }
