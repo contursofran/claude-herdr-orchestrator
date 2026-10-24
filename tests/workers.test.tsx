@@ -108,7 +108,8 @@ test('a prompt that starts no work is typed again, and a worker it never reaches
   expect(submitted.at(-1)).toMatch(/status="blocked">\nThe worker stopped \(its prompt was not delivered: no work started after 3 tries\)/)
 })
 
-test("a reported worker's tab closes once it has sat idle, unless its question is still open", async ($, on) => {
+// It runs 15 minutes or more of sweeps, which a busy CI runner can take most of the default 5 s over.
+test("a reported worker's tab closes once it has sat idle, unless its question is still open", { timeoutMs: 20_000 }, async ($, on) => {
   const { clock, typed, closed, files } = await start($, on)
   const report = async (worker: string, text: string) => {
     await spawn($, [worker])
@@ -289,7 +290,8 @@ test('a sweep reads herdr once for all workers', async ($, on) => {
   await stopAll($, clock, names)
 })
 
-test('a failed sweep does not mark a reported tab closed', async ($, on) => {
+// It runs 15 minutes or more of sweeps, which a busy CI runner can take most of the default 5 s over.
+test('a failed sweep does not mark a reported tab closed', { timeoutMs: 20_000 }, async ($, on) => {
   const { clock, typed, closed, files, fail } = await start($, on)
   await spawn($, ['w-done'])
   await clock.settle()
@@ -308,7 +310,8 @@ test('a failed sweep does not mark a reported tab closed', async ($, on) => {
   expect(JSON.stringify(late)).toMatch(/tab is closed/)
 })
 
-test('a failed pane read starts no quiet clock', async ($, on) => {
+// It runs 15 minutes or more of sweeps, which a busy CI runner can take most of the default 5 s over.
+test('a failed pane read starts no quiet clock', { timeoutMs: 20_000 }, async ($, on) => {
   const { clock, submitted, screens, fail } = await start($, on)
   screens['p-w-quiet'] = '⏺ Done.\n────\n❯ \n────\n  aerolab · wt · Haiku 5.5 (xhigh)'
   await spawn($, ['w-quiet'])
@@ -344,7 +347,8 @@ test('a sweep arms a new wait for a worker whose wait child died while it still 
   await stopAll($, clock, ['w-busy'])
 })
 
-test('a reported worker herdr no longer lists is marked closed, with no tab close to make', async ($, on) => {
+// It runs 15 minutes or more of sweeps, which a busy CI runner can take most of the default 5 s over.
+test('a reported worker herdr no longer lists is marked closed, with no tab close to make', { timeoutMs: 20_000 }, async ($, on) => {
   const { clock, closed, typed, files, gone } = await start($, on)
   await spawn($, ['w-done'])
   await clock.settle()
