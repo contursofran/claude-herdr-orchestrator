@@ -23,3 +23,5 @@ jobs:
       - run: npm run format:check
       - run: npm run validate
       - run: npm test
+      - name: Metrics script tests (scripts/hrd-metrics.py)
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
