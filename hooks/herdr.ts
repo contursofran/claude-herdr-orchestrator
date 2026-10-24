@@ -6,17 +6,19 @@ import { session } from './session'
 export type HerdrAgent = { agent_status: string; pane_id: string; tab_id: string; cwd?: string }
 
 // Runs the herdr CLI and returns its JSON `result`, typed by the caller (`T`); a
-// non-zero exit or an `error` in the JSON throws with herdr's message.
+// non-zero exit or an `error` in the JSON throws with herdr's message, and its
+// `code` (agent_prompt_stalled, timeout…) on the error's `code`.
 export async function herdr<T = unknown>($: EngineInterface, args: string[], timeoutMs = 90_000): Promise<T> {
   const ran = await $.process.run(['herdr', ...args], { timeoutMs })
-  let json: { result?: T; error?: { message?: string } } | undefined
+  let json: { result?: T; error?: { code?: string; message?: string } } | undefined
   try {
     json = JSON.parse(ran.stdout)
   } catch {
     json = undefined
   }
   if (ran.exitCode !== 0 || json?.error) {
-    throw new Error(`herdr ${args[0]} ${args[1] ?? ''}: ${json?.error?.message ?? (ran.stderr || ran.stdout).trim()}`)
+    const err = new Error(`herdr ${args[0]} ${args[1] ?? ''}: ${json?.error?.message ?? (ran.stderr || ran.stdout).trim()}`)
+    throw Object.assign(err, { code: json?.error?.code })
   }
   return json?.result as T
 }

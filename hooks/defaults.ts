@@ -25,6 +25,8 @@ export const QUIET_MS = 5 * 60_000
 // The same for a worker whose status lines show background work of its own (a shell,
 // a monitor, a subagent): a dev server it left running must not hide it for good.
 export const QUIET_BUSY_MS = 60 * 60_000
+// How often a prompt is sent or submitted again when herdr sees no work start after it.
+export const PROMPT_TRIES = 3
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
 
