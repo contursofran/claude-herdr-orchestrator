@@ -27,6 +27,13 @@ export const QUIET_MS = 5 * 60_000
 export const QUIET_BUSY_MS = 60 * 60_000
 // How often a prompt is sent or submitted again when herdr sees no work start after it.
 export const PROMPT_TRIES = 3
+// How often the sweep reads herdr for every running worker at once (one `herdr agent list`).
+export const SWEEP_MS = 60_000
+// How many sweeps in a row must miss a worker's tab before it is reported gone: one failed
+// or late list does not end a job.
+export const GONE_MISSES = 2
+// How long a prompt that never arrived waits before its worker is reported blocked.
+export const LOST_REPORT_MS = 10_000
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
 
