@@ -139,6 +139,7 @@ test("one failed sweep keeps the band's last state", async ($, on) => {
   // herdr is down for the next minute: the sweep's list and every `agent get` fail. The band keeps
   // the state it last saw, and no failed call shows the worker gone.
   fail.list = 100
+  // Only for the undone-change check: an agent get per row would turn these failed gets into Tab gone.
   fail.get = 100
   await clock.advance(60_000)
   fail.list = 0
@@ -148,4 +149,30 @@ test("one failed sweep keeps the band's last state", async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /Tab gone/ })).toBeUndefined()
   await ui.unmount()
   await stopAll($, clock, ['w-busy'])
+})
+
+test('a status a wait or the sweep sees reaches the band row, with no agent get', async ($, on) => {
+  const { clock, calls, emit, status } = await start($, on)
+  await spawn($, ['w-x'])
+  await emit('w-x', 'working')
+  calls.length = 0
+  // Mounts the band afresh and returns its first column, where the one worker's row is.
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ key: 'col0' }))?.text ?? ''
+    await ui.unmount()
+    return text
+  }
+  await clock.advance(3000)
+  expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Working$/)
+  // A wait ends on 'done' before any report: the band shows it at its next tick.
+  await emit('w-x', 'done')
+  await clock.advance(3000)
+  expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Done · report pending$/)
+  // Set without emit, so no wait ends on it: the sweep sees it a minute on, reports the worker blocked, and the row reads Reported.
+  status['w-x'] = 'blocked'
+  await clock.advance(60_000)
+  expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Reported$/)
+  expect(calls.filter(c => c[2] === 'get')).toEqual([])
+  await stopAll($, clock, ['w-x'])
 })

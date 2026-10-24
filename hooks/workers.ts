@@ -440,7 +440,8 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   await excludeFromGit($, cwd)
 
   try {
-    // The role comes last, so a profile's env cannot drop it. A worker's own session reads it (see session.start).
+    // The role comes last, so a profile's env cannot drop it. A worker's own session
+    // reads it (see session.start).
     const env = [...Object.entries(p.env ?? {}), ['HERDR_AGENTS_ROLE', 'worker']].flatMap(([k, v]) => ['--env', `${k}=${v}`])
     const tab = await herdr<{ root_pane: { pane_id: string } }>($, ['tab', 'create', '--cwd', cwd, '--label', worker, '--no-focus', ...env])
     const pane = tab.root_pane.pane_id

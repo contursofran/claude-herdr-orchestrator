@@ -25,7 +25,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     // The mod loads in every worker's own Claude session too (same plugin dirs); spawn marks
-    // those tabs, and they run none of the coordinator's timers.
+    // those tabs, and they run none of the coordinator's timers, only the sweep for the
+    // workers they started while one of them runs.
     const isWorker = (await $.env.get('HERDR_AGENTS_ROLE')) === 'worker'
     session.cwd = started.cwd
     const settings = await config($)
@@ -36,7 +37,16 @@ export const register: Register = on => {
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
-    if (isWorker) return started
+    if (isWorker) {
+      // A worker's own session sweeps the workers it started, but only while one of them runs:
+      // with no running job it makes no herdr call. The other timers stay with the coordinator.
+      const sweepIfRunning = async () => {
+        if (Object.values(await jobs($)).some(j => j.status === 'running')) await sweep($, closeMinutes)
+      }
+      void sweepIfRunning().catch(() => {})
+      $.clock.every(SWEEP_MS, () => void sweepIfRunning().catch(() => {}))
+      return started
+    }
     void sweep($, closeMinutes).catch(() => {})
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.

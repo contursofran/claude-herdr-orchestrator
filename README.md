@@ -14,7 +14,7 @@ Install it from the plugin marketplace, at a Claude Code prompt (details under [
 
 ### Workers in herdr tabs, on any model
 
-The coordinator starts each worker in its own herdr tab, usually in its own git worktree, with a profile: the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker's tab gets `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session and runs none of its timers there.
+The coordinator starts each worker in its own herdr tab, usually in its own git worktree, with a profile: the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker's tab gets `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers and sweeps only while one of the workers it started runs.
 
 ### Reports come back by themselves
 
