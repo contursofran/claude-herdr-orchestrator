@@ -5,7 +5,7 @@ import { registerCommands, runCommand } from './commands'
 import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
-import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES } from './defaults'
+import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS } from './defaults'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
@@ -13,7 +13,7 @@ import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
 import { jobs, restoreJobs } from './state'
 import { registerTools } from './tools'
-import { closeIdle, messageWorker, resumeWatching, spawnWorker, stopWorker } from './workers'
+import { messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
 import type { SpawnArgs } from './workers'
 import { pruneMerged } from './worktrees'
 
@@ -31,7 +31,9 @@ export const register: Register = on => {
     await registerCommands($)
     const restored = await restoreJobs($)
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
+    const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
+    void sweep($, closeMinutes).catch(() => {})
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
@@ -46,8 +48,9 @@ export const register: Register = on => {
     $.clock.every(PR_POLL_MS, () => void pollPrs($).catch(() => {}))
     const pruneMinutes = settings.pruneMinutes ?? PRUNE_MINUTES
     if (pruneMinutes > 0) $.clock.every(pruneMinutes * 60_000, () => void pruneMerged($))
-    const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
-    if (closeMinutes > 0) $.clock.every(60_000, () => void closeIdle($, closeMinutes))
+    // The sweep always runs: it is what catches a worker whose wait child died. Only its
+    // closeIdle step depends on closeIdleMinutes.
+    $.clock.every(SWEEP_MS, () => void sweep($, closeMinutes).catch(() => {}))
     return started
   })
   on('session.end', async ($, e, next) => {

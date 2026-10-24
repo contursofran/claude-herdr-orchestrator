@@ -3,8 +3,18 @@ import type { Job } from '../types'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds, belowTarget } from './coordinator'
-import { INLINE_CHARS, INLINE_LINES, MESSAGE_CHARS, NAME, PROMPT_TRIES, QUIET_BUSY_MS, QUIET_MS } from './defaults'
-import { acceptFolderTrust, herdr, type HerdrAgent, notify } from './herdr'
+import {
+  GONE_MISSES,
+  INLINE_CHARS,
+  INLINE_LINES,
+  LOST_REPORT_MS,
+  MESSAGE_CHARS,
+  NAME,
+  PROMPT_TRIES,
+  QUIET_BUSY_MS,
+  QUIET_MS,
+} from './defaults'
+import { acceptFolderTrust, herdr, type HerdrAgent, lastStatus, notify } from './herdr'
 import { ask, openQuestions } from './owner'
 import { cmd } from './session'
 import { jobs, saveJob } from './state'
@@ -12,12 +22,27 @@ import { briefRefs, withPr } from './tasks'
 import { excludeFromGit } from './worktrees'
 
 // Worker agents that run in herdr tabs. spawn opens a tab, starts the CLI there,
-// hands it the task and returns at once. When herdr sees the worker settle, its
-// RESULT.md is submitted to this session as a new prompt.
+// hands it the task and returns at once. When the worker ends its turn, its RESULT.md
+// is submitted to this session as a new prompt.
+//
+// herdr tells the mod when a worker settles: arm starts a `herdr agent wait` for it in
+// a child process, and the sweep (every SWEEP_MS, one `herdr agent list` for all
+// workers) catches what the waits miss. Everything that may deliver, prompt or check a
+// job goes through serial, so a wait and a sweep never act on the same job twice.
 
-// The module's own variables start over on every reload; the jobs live in
-// $.state, so session.start re-attaches a watcher to each running one.
-const watching = new Set<string>()
+// The module's own variables start over on every reload; the jobs live in $.state, so
+// session.start arms a wait for each running one (resumeWatching).
+// The wait armed for each worker: the token it was armed for, whether it waits for the
+// turn to end ('finish') or for the next turn to start ('resume'), and an id, so a child
+// that ends late does not clear a newer one.
+const armed = new Map<string, { token?: string; mode: 'finish' | 'resume'; id: number }>()
+let armIds = 0
+// Sweeps in a row that found no tab for each worker (see sweep).
+const misses = new Map<string, number>()
+// Each worker's screen as the sweep last saw it, and since when it has not changed.
+const quiet = new Map<string, { token?: string; screen: string; since: number }>()
+// The last step queued for each worker (see serial).
+const chains = new Map<string, Promise<void>>()
 
 // Each prompt gets a fresh token the worker puts on RESULT.md's first line, so a
 // report the worker writes late for an earlier prompt is never taken as this one's.
@@ -39,15 +64,23 @@ export function reportRule(job: Job) {
   ].join(' ')
 }
 
-// Sends `text` to the worker and, in the background, waits for it to settle
-// and delivers its report.
+// Sends `text` to the worker and, once herdr sees it working, arms the wait for its turn
+// to end, which delivers its report.
 export async function prompt($: EngineInterface, job: Job, lead: string) {
   const token = crypto.randomUUID().slice(0, 8)
   const next: Job = { ...job, token, status: 'running', endedAt: undefined }
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   await saveJob($, next)
-  // A prompt that never arrived is reported by the watcher: a tool call can't submit one.
-  watch($, next, await send($, job.name, `${lead} ${reportRule(next)}`))
+  const lost = await send($, job.name, `${lead} ${reportRule(next)}`)
+  if (lost === undefined) {
+    // Only once the worker works is its turn's end the one to wait for: herdr answers a wait at
+    // once for a state the worker is already in, and the last turn's 'done' may still be there.
+    lastStatus.set(next.name, 'working')
+    arm($, next, 'finish')
+  } else {
+    // A prompt that never arrived is reported after a while: a tool call can't submit one.
+    void $.clock.sleep(LOST_REPORT_MS).then(() => serial(next.name, () => deliver($, next, 'blocked', QUIET_MS, lost)))
+  }
 }
 
 // herdr types a prompt once the CLI looks ready, but a CLI still busy with its own
@@ -81,53 +114,130 @@ export async function reported($: EngineInterface, job: Job) {
   return !job.token || (await $.fs.read(path)).trimStart().startsWith(`<!-- report ${job.token} -->`)
 }
 
+// Runs fn once the worker's earlier steps are done, so a wait and a sweep never deliver,
+// prompt or check the same job twice. An error ends that step only.
+function serial(name: string, fn: () => Promise<void>): Promise<void> {
+  const next = (chains.get(name) ?? Promise.resolve()).then(fn).catch(() => {})
+  chains.set(name, next)
+  return next
+}
+
+// Starts a herdr wait for the worker in a child process: for its turn to end ('finish':
+// done, idle or blocked) or for its next turn to start ('resume': working or blocked).
+// The child lives until herdr answers. A child that could not start, or whose hook was
+// let go, leaves the worker to the sweep, which arms a new one.
+export function arm($: EngineInterface, job: Job, mode: 'finish' | 'resume') {
+  const held = armed.get(job.name)
+  if (held && held.token === job.token && held.mode === mode) return
+  const id = ++armIds
+  armed.set(job.name, { token: job.token, mode, id })
+  const until =
+    mode === 'finish' ? ['--until', 'done', '--until', 'idle', '--until', 'blocked'] : ['--until', 'working', '--until', 'blocked']
+  void (async () => {
+    let out = ''
+    try {
+      for await (const piece of $.process.spawn({ argv: ['herdr', 'agent', 'wait', job.name, ...until] })) {
+        if (piece.stream === 'stdout') out += piece.text
+      }
+    } catch {
+      return
+    } finally {
+      if (armed.get(job.name)?.id === id) armed.delete(job.name)
+    }
+    // herdr prints one JSON line: its result, or an error (agent_not_found, agent_not_running…),
+    // and an error decides nothing.
+    let reply: { result?: { agent?: { agent_status?: string } }; error?: unknown }
+    try {
+      reply = JSON.parse(out)
+    } catch {
+      return
+    }
+    const status = reply.result?.agent?.agent_status
+    if (!status || reply.error) return
+    lastStatus.set(job.name, status)
+    void serial(job.name, () => settle($, job, mode, status))
+  })()
+}
+
+// What a settled wait means for its job. The report decides what happened; herdr's state
+// only moves the job along: a blocked worker is reported at once, and one that ends its
+// turn without a report is waited on for its next turn. The sweep judges a quiet one.
+async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', status: string) {
+  const current = (await jobs($))[job.name]
+  // A stale child: its job was reported, stopped or prompted again since it was armed.
+  if (!current || current.status !== 'running' || current.token !== job.token) return
+  if (await reported($, current)) return await deliver($, current, 'done')
+  if (status === 'blocked') return await deliver($, current, 'blocked')
+  // A resume wait only ends once the worker works again; its turn's end is the one to wait for next.
+  if (mode === 'resume') return arm($, current, 'finish')
+  const now = await $.clock.now()
+  await waiting($, current, status, now)
+  // A WAIT.json that woke the worker prompted it again, and that prompt armed its own wait.
+  if ((await jobs($))[job.name]?.token !== job.token) return
+  arm($, current, 'resume')
+}
+
 // RESULT.md is the completion signal: herdr's lifecycle state alone is not
 // (a Claude worker running its own subagents reads as done while it works).
 // A blocked worker is reported at once; a quiet one after QUIET_MS, or QUIET_BUSY_MS
-// while it waits on background work of its own.
-// `lost` says why its prompt never arrived (see send): it is reported on the first pass.
-export function watch($: EngineInterface, job: Job, lost?: string) {
-  if (watching.has(job.name)) return
-  watching.add(job.name)
-  void (async () => {
-    let screen = ''
-    let quietSince: number | undefined
-    try {
-      for (;;) {
-        await $.clock.sleep(10_000)
-        const current = (await jobs($))[job.name]
-        if (!current || current.status !== 'running') return
-        if (await reported($, job)) return await deliver($, job, 'done')
-        if (lost) return await deliver($, job, 'blocked', QUIET_MS, lost)
-
-        let status = 'gone'
-        let pane = ''
-        try {
-          const agent = (await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])).agent
-          status = agent.agent_status
-          pane = agent.pane_id
-        } catch {}
-        if (status === 'gone' || status === 'blocked') return await deliver($, job, status)
-
-        const now = await $.clock.now()
-        if (await waiting($, job, status, now)) {
-          if (!(await jobs($))[job.name]?.wait) return // woken: the prompt it got is watched anew
-          quietSince = undefined
-          continue
-        }
-        const seen = pane ? (await $.process.run(['herdr', 'pane', 'read', pane, '--source', 'visible'])).stdout : ''
-        if (status === 'working' || seen !== screen) quietSince = undefined
-        else if (quietSince === undefined) quietSince = now
-        else if (now - quietSince > (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) return await deliver($, job, status, now - quietSince)
-        screen = seen
-      }
-    } finally {
-      watching.delete(job.name)
-      // deliver may have sent queued messages, starting a new prompt this loop couldn't watch.
+// while it waits on background work of its own. The sweep, every SWEEP_MS, does this for
+// all running workers with one `herdr agent list`. A tab herdr no longer lists counts as
+// gone only after GONE_MISSES sweeps in a row, and a failed list decides nothing.
+export async function sweep($: EngineInterface, closeMinutes: number) {
+  const now = await $.clock.now()
+  let agents: HerdrAgent[] | undefined
+  try {
+    agents = (await herdr<{ agents: HerdrAgent[] }>($, ['agent', 'list'])).agents
+  } catch {
+    agents = undefined
+  }
+  const byName = new Map<string, HerdrAgent>()
+  for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
+  for (const job of Object.values(await jobs($))) {
+    if (job.status !== 'running') continue
+    await serial(job.name, async () => {
       const current = (await jobs($))[job.name]
-      if (current?.status === 'running' && current.token !== job.token) watch($, current)
-    }
-  })()
+      if (!current || current.status !== 'running') return
+      if (await reported($, current)) return await deliver($, current, 'done')
+      // A CLI error is not evidence of anything.
+      if (agents === undefined) return
+      const a = byName.get(job.name)
+      if (!a) {
+        const n = (misses.get(job.name) ?? 0) + 1
+        misses.set(job.name, n)
+        if (n >= GONE_MISSES) await deliver($, current, 'gone')
+        return
+      }
+      misses.delete(job.name)
+      lastStatus.set(job.name, a.agent_status)
+      if (a.agent_status === 'blocked') return await deliver($, current, 'blocked')
+      if (!armed.has(job.name)) arm($, current, a.agent_status === 'working' ? 'finish' : 'resume')
+      if (await waiting($, current, a.agent_status, now)) {
+        quiet.delete(job.name)
+        return
+      }
+      if (a.agent_status === 'working') {
+        quiet.delete(job.name)
+        return
+      }
+      let seen: string
+      try {
+        const ran = await $.process.run(['herdr', 'pane', 'read', a.pane_id, '--source', 'visible'])
+        if (ran.exitCode !== 0) return
+        seen = ran.stdout
+      } catch {
+        return
+      }
+      const q = quiet.get(job.name)
+      if (!q || q.token !== current.token || q.screen !== seen) {
+        quiet.set(job.name, { token: current.token, screen: seen, since: now })
+        return
+      }
+      if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, a.agent_status, now - q.since)
+    })
+  }
+  if (closeMinutes > 0) await closeIdle($, closeMinutes, agents)
+  void refresh($)
 }
 
 // A Claude worker waiting on its own background shell, monitor or subagent keeps a
@@ -211,6 +321,9 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
 export async function deliver($: EngineInterface, job: Job, status: string, quietMs = QUIET_MS, why?: string) {
   const current = (await jobs($))[job.name]
   if (!current || current.status !== 'running') return
+  // A caller holding an earlier prompt's token does nothing: that prompt has been replaced.
+  if (job.token !== undefined && current.token !== job.token) return
+  if (status === 'gone') lastStatus.set(job.name, 'gone')
   const error = why ?? (status === 'gone' ? 'its tab is gone' : undefined)
 
   const resultPath = `${job.dir}/RESULT.md`
@@ -263,6 +376,8 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
   }
 
   await saveJob($, { ...withPr(current, pr), status: 'reported', queued: [], wait: undefined, endedAt: await $.clock.now() })
+  misses.delete(job.name)
+  quiet.delete(job.name)
   $.ui.toast(`herdr worker ${job.name}: ${status}`)
   // Messages held while a non-Claude worker worked go out now.
   const queued = current.queued ?? []
@@ -280,8 +395,9 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
   })
 }
 
+// session.start: each running worker gets its wait back, since a reload killed the children.
 export function resumeWatching($: EngineInterface, list: Job[]) {
-  for (const job of list) if (job.status === 'running') watch($, job)
+  for (const job of list) if (job.status === 'running') arm($, job, 'finish')
 }
 
 export type SpawnArgs = { worker: string; profile: string; cwd: string; task: string }
@@ -362,7 +478,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // The suffix keeps two messages sent in one millisecond apart.
   const path = `${job.dir}/MESSAGE-${await $.clock.now()}-${crypto.randomUUID().slice(0, 4)}.md`
   await $.fs.write(path, text)
-  if (watching.has(job.name)) {
+  if (job.status === 'running') {
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
     const kind = (await profiles($))[job.profile]?.kind
@@ -408,18 +524,18 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
 // A reported worker keeps its tab, and its CLI, for follow-ups, so finished workers
 // piled up in herdr. Once one has sat idle `minutes` since its report, its tab is
 // closed; a later follow-up goes to a fresh worker. One with a question still open,
-// or that herdr shows working or blocked, keeps its tab.
-export async function closeIdle($: EngineInterface, minutes: number) {
+// or that herdr shows working or blocked, keeps its tab. `agents` is the sweep's list:
+// undefined when that call failed, and then no tab is closed.
+export async function closeIdle($: EngineInterface, minutes: number, agents?: HerdrAgent[]) {
+  if (agents === undefined) return
   const now = await $.clock.now()
   const asking = new Set((await openQuestions($)).map(d => d.from))
   const closed: string[] = []
   for (const job of Object.values(await jobs($))) {
     if (job.status !== 'reported' || job.closed || asking.has(job.name)) continue
     if (job.endedAt === undefined || now - job.endedAt < minutes * 60_000) continue
-    let agent: HerdrAgent | undefined
-    try {
-      agent = (await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])).agent
-    } catch {}
+    // A tab herdr no longer lists is marked closed without a close call.
+    const agent = agents.find(a => a.name === job.name)
     if (agent) {
       if (agent.agent_status === 'working' || agent.agent_status === 'blocked') continue
       try {
