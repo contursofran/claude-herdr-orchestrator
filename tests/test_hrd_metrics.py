@@ -1,4 +1,4 @@
-"""Fixture tests for scripts/hrd-metrics.py: one small coordinator, two workers and a plain session.
+"""Fixture tests for scripts/hrd-metrics.py: one small coordinator, three workers and a plain session.
 
 Every expected number below is worked out by hand from the timeline in build(); none is copied from
 the script's output. Run: python3 -m unittest discover -s tests -p 'test_*.py'
