@@ -82,7 +82,7 @@ test('a DECISION line that says none is not pinned for the owner', async ($, on)
   expect(report).toMatch(/Pinned for the owner as D1/)
   expect(report).not.toMatch(/D2/)
   await stopAll($, clock, ['w-none'])
-||||||| parent of d84c7fd (Retry a prompt that starts no work; report a worker it never reaches as blocked)
+})
 
 test('a prompt that starts no work is typed again, and a worker it never reaches is reported blocked', async ($, on) => {
   const { clock, submitted, typed, files, stalls } = await start($, on)
