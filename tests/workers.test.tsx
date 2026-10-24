@@ -374,3 +374,20 @@ test('a prompt that never arrived is not reported over a newer prompt to the sam
   expect(submitted.filter(t => t.startsWith('<herdr-agent name="w-lost"'))).toEqual([])
   await stopAll($, clock, ['w-lost'])
 })
+
+// The mod loads in a worker's own Claude session too, with HERDR_AGENTS_ROLE=worker from its tab.
+test("a worker's own session runs no timers, opens no sidebar and writes no board", async ($, on) => {
+  const { clock, calls, panes, files } = await start($, on, { view: 'side' }, {}, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  expect(panes).toEqual([])
+  expect(Object.keys(files).filter(f => f.startsWith('/home/t/.herdr-agents/board/'))).toEqual([])
+})
+
+test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env", async ($, on) => {
+  const { clock, calls } = await start($, on, { profiles: { x: { kind: 'claude', args: [], env: { A: '1' } } } })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'x', cwd: '/repo/wt', task: 'x' })
+  const create = calls.find(c => c[1] === 'tab' && c[2] === 'create') ?? []
+  expect(create.slice(-4)).toEqual(['--env', 'A=1', '--env', 'HERDR_AGENTS_ROLE=worker'])
+  await stopAll($, clock, ['w-env'])
+})

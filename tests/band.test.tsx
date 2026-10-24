@@ -108,3 +108,44 @@ test('a #123 links to the issue or PR of the repo named before it', async ($, on
   await ui.unmount()
   await stopAll($, clock, ['b-srv'])
 })
+
+// It runs 10 minutes of ticks and sweeps, which a busy CI runner can take most of the default 5 s over.
+test(
+  'the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute',
+  { timeoutMs: 20_000 },
+  async ($, on) => {
+    const { clock, calls, emit } = await start($, on)
+    const names = ['w-a', 'w-b', 'w-c']
+    await spawn($, names)
+    for (const name of names) await emit(name, 'working')
+    calls.length = 0
+    await clock.advance(10 * 60_000)
+    // No `agent get` per worker any more: one `agent list` a minute is all the herdr calls there are.
+    expect(calls.filter(c => c[2] === 'get')).toEqual([])
+    expect(calls.length / (names.length * 10)).toBeLessThan(3)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const shown = [(await ui.find({ key: 'col0' }))?.text, (await ui.find({ key: 'col1' }))?.text].join('\n')
+    for (const name of names) expect(shown).toMatch(new RegExp(`${name} +reviewer +\\S+ +Working`))
+    await ui.unmount()
+    await stopAll($, clock, names)
+  },
+)
+
+test("one failed sweep keeps the band's last state", async ($, on) => {
+  const { clock, fail } = await start($, on)
+  await spawn($, ['w-busy'])
+  await clock.advance(60_000)
+  // herdr is down for the next minute: the sweep's list and every `agent get` fail. The band keeps
+  // the state it last saw, and no failed call shows the worker gone.
+  fail.list = 100
+  fail.get = 100
+  await clock.advance(60_000)
+  fail.list = 0
+  fail.get = 0
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ key: 'col0' }))?.text).toMatch(/^● w-busy +reviewer +\S+ +Working$/)
+  expect(await ui.find({ type: 'Text', text: /Tab gone/ })).toBeUndefined()
+  await ui.unmount()
+  await stopAll($, clock, ['w-busy'])
+})

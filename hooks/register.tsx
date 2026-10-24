@@ -24,6 +24,9 @@ import { pruneMerged } from './worktrees'
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    // The mod loads in every worker's own Claude session too (same plugin dirs); spawn marks
+    // those tabs, and they run none of the coordinator's timers.
+    const isWorker = (await $.env.get('HERDR_AGENTS_ROLE')) === 'worker'
     session.cwd = started.cwd
     const settings = await config($)
     if (typeof settings.commandPrefix === 'string') session.prefix = settings.commandPrefix
@@ -33,10 +36,13 @@ export const register: Register = on => {
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
+    if (isWorker) return started
     void sweep($, closeMinutes).catch(() => {})
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
+    // The band, the sidebar and the bridge's inbox, every 3 s with no herdr calls: refresh
+    // reads the states the waits and the sweep last saw.
     $.clock.every(
       3000,
       () =>
