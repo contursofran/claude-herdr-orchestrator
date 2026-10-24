@@ -71,7 +71,7 @@ test('workers on one issue share a row, and an answer stays in its slot until cl
 })
 
 test("a reviewer joins the row of the PR its builder linked, with the PR's checks", async ($, on) => {
-  const { clock, typed, files, prs } = await start($, on)
+  const { clock, typed, files, prs, finish } = await start($, on)
   await $.tool.call({
     tool: 'mcp__herdr-agents__spawn',
     worker: 'w-done',
@@ -79,10 +79,11 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
     cwd: '/repo/wt',
     task: '# Build #12: hotbar keys',
   })
+  await clock.settle()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-done/RESULT.md'] =
     `<!-- report ${token} -->\nOpened https://github.com/acme/app-client/pull/15. Tests pass.`
-  await clock.advance(10_000)
+  await finish('w-done')
   await $.tool.call({
     tool: 'mcp__herdr-agents__spawn',
     worker: 'r-15',

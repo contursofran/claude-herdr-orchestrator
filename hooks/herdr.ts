@@ -2,8 +2,13 @@ import type { EngineInterface } from 'claude-code'
 import { config } from './config'
 import { session } from './session'
 
-// What `herdr agent get` and `herdr agent list` report for a worker.
-export type HerdrAgent = { agent_status: string; pane_id: string; tab_id: string; cwd?: string }
+// What `herdr agent get` and `herdr agent list` report for a worker. Only workers have a name.
+export type HerdrAgent = { agent_status: string; pane_id: string; tab_id: string; cwd?: string; name?: string }
+
+// The last status herdr reported for each worker (working, idle, done, blocked or unknown),
+// or 'gone' once a report said its tab was gone. The waits and the sweep set it from what
+// herdr says, prompt() sets 'working' once a prompt is delivered.
+export const lastStatus = new Map<string, string>()
 
 // Runs the herdr CLI and returns its JSON `result`, typed by the caller (`T`); a
 // non-zero exit or an `error` in the JSON throws with herdr's message, and its

@@ -12,13 +12,25 @@ export const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 140, scroll: { offset: 0, bodyRows: 29 }, view: {} },
 } as const
 
-// herdr's state for the workers the tests name; any other worker is idle.
+// herdr's state for the workers the tests name; a worker that starts without one is idle.
 const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 'w-stuck': 'blocked' }
+
+// The JSON herdr prints for a wait that ended with a status, and for a failed call.
+const answer = (name: string, status: string) =>
+  JSON.stringify({ result: { agent: { agent_status: status, name, pane_id: `p-${name}`, tab_id: `t-${name}` } } })
+const failure = (code: string, message: string) => JSON.stringify({ error: { code, message } })
+
+// A `herdr agent wait` the fake holds until its worker shows one of its `until` states, or
+// until herdr would end it (end: its exit code and output).
+type Wait = { name: string; until: string[]; end: (code: number, out: string) => void }
 
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
 // to this session, the ones it typed into workers' tabs and the tabs it closed, and each
 // worker's screen (by pane) and PR (by owner/name#123), which the test sets.
 // `stored` is what $.store holds at the start, as an earlier load of the mod left it.
+// The herdr fake: `calls` is every herdr argv the mod ran, `status` herdr's state per worker,
+// and `emit`, `finish`, `kill` move a worker's wait (see below). `fail` makes the next
+// calls fail, `gone` lists the workers herdr no longer knows.
 export async function start($: Engine, on: On, config: Settings = {}, stored: Record<string, unknown> = {}) {
   const submitted: string[] = []
   const typed: string[] = []
@@ -28,7 +40,34 @@ export async function start($: Engine, on: On, config: Settings = {}, stored: Re
   const prs: Record<string, unknown> = {}
   // How many more `agent prompt --wait` calls fail with agent_prompt_stalled, by worker; the test sets it.
   const stalls: Record<string, number> = {}
+  // Every herdr call the mod makes, in order: the CLI's process.run argv and the process.spawn ones.
+  const calls: string[][] = []
+  // herdr's status for each worker it knows: the stored jobs' workers from the start, then each
+  // `agent start`, then what emit sets.
+  const status: Record<string, string> = {}
+  // How many more `agent list`, `agent get` and `pane read` calls fail, by the next calls; the test sets them.
+  const fail = { list: 0, get: 0, pane: 0 }
+  const waits: Wait[] = []
+  const end = (match: (w: Wait) => boolean, code: number, out: string) => {
+    for (const w of waits.filter(match)) {
+      waits.splice(waits.indexOf(w), 1)
+      w.end(code, out)
+    }
+  }
+  // The workers herdr no longer knows: adding one ends its pending waits as herdr would.
+  class Gone extends Set<string> {
+    add(name: string): this {
+      super.add(name)
+      end(w => w.name === name, 1, failure('agent_not_found', `no agent named ${name}`))
+      return this
+    }
+  }
+  const gone = new Gone()
   const clock = mock.clock(on, { now: 1_000_000 })
+  // The workers the stored jobs name are herdr's already, listed at their status.
+  for (const [key, value] of Object.entries(stored))
+    if (key.startsWith('jobs:'))
+      for (const name of Object.keys((value as { jobs?: object }).jobs ?? {})) status[name] = STATUS[name] ?? 'idle'
   mock.store(on, stored)
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -71,6 +110,7 @@ export async function start($: Engine, on: On, config: Settings = {}, stored: Re
   })
   on('process.run', (_, e) => {
     const [cmd, sub, verb, name = ''] = e.argv
+    if (cmd === 'herdr') calls.push([...e.argv])
     const exit = (exitCode: number, stdout = '') => ({
       value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
@@ -105,21 +145,89 @@ export async function start($: Engine, on: On, config: Settings = {}, stored: Re
         return exit(1, JSON.stringify({ error: { code: 'agent_prompt_stalled', message: 'no working state within 5000ms' } }))
       }
     }
-    if (sub === 'agent' && verb === 'get') {
-      if (closed.includes(`t-${name}`)) return exit(1)
-      return ok({ agent: { agent_status: STATUS[name] ?? 'idle', pane_id: `p-${name}`, tab_id: `t-${name}` } })
+    if (sub === 'agent' && verb === 'start') {
+      status[name] = STATUS[name] ?? 'idle'
+      gone.delete(name)
+      return ok({})
     }
-    if (sub === 'tab' && verb === 'close') closed.push(name)
-    if (sub === 'pane' && verb === 'read') return exit(0, screens[name] ?? '')
+    if (sub === 'agent' && verb === 'list') {
+      if (fail.list > 0) {
+        fail.list--
+        return exit(1, failure('server_not_running', 'herdr is not running'))
+      }
+      const agents = Object.keys(status)
+        .filter(n => !gone.has(n) && !closed.includes(`t-${n}`))
+        .map(n => ({ name: n, agent_status: status[n], pane_id: `p-${n}`, tab_id: `t-${n}` }))
+      return ok({ agents })
+    }
+    if (sub === 'agent' && verb === 'get') {
+      if (fail.get > 0) {
+        fail.get--
+        return exit(1, failure('server_not_running', 'herdr is not running'))
+      }
+      if (gone.has(name) || status[name] === undefined) return exit(1, failure('agent_not_found', `no agent named ${name}`))
+      if (closed.includes(`t-${name}`)) return exit(1)
+      return ok({ agent: { agent_status: status[name], pane_id: `p-${name}`, tab_id: `t-${name}` } })
+    }
+    if (sub === 'tab' && verb === 'close') {
+      closed.push(name)
+      end(w => `t-${w.name}` === name, 1, failure('agent_not_running', 'agent is no longer running in the target pane'))
+    }
+    if (sub === 'pane' && verb === 'read') {
+      if (fail.pane > 0) {
+        fail.pane--
+        return exit(1, failure('server_not_running', 'herdr is not running'))
+      }
+      return exit(0, screens[name] ?? '')
+    }
     if (sub === 'tab' && verb === 'create') return ok({ root_pane: { pane_id: 'p1' } })
     return ok({})
+  })
+  // `herdr agent wait` runs as a child process. Like herdr's wait, it answers at once when the worker
+  // is already in one of its --until states; otherwise it is held until emit, kill, a closed tab or
+  // gone ends it. Any other child exits 1.
+  on('process.spawn', async function* (_, e) {
+    calls.push([...e.argv])
+    const [cmd, sub, verb, name = ''] = e.argv
+    if (cmd !== 'herdr' || sub !== 'agent' || verb !== 'wait') return { value: { code: 1, signal: null } }
+    const until = e.argv.flatMap((arg, i) => (arg === '--until' && e.argv[i + 1] !== undefined ? [e.argv[i + 1]!] : []))
+    const now = status[name]
+    if (now === undefined || gone.has(name)) {
+      yield { stream: 'stdout', text: failure('agent_not_found', `no agent named ${name}`) }
+      return { value: { code: 1, signal: null } }
+    }
+    if (until.includes(now)) {
+      yield { stream: 'stdout', text: answer(name, now) }
+      return { value: { code: 0, signal: null } }
+    }
+    const reply = await new Promise<{ code: number; out: string }>(resolve =>
+      waits.push({ name, until, end: (code, out) => resolve({ code, out }) }),
+    )
+    yield { stream: 'stdout', text: reply.out }
+    return { value: { code: reply.code, signal: null } }
   })
   on('prompt.submit', (_, e) => {
     submitted.push(e.text)
     return { text: e.text }
   })
+  // A worker's status moves to `next`: the waits it ends answer with it, then the engine settles.
+  const emit = async (name: string, next: string) => {
+    status[name] = next
+    end(w => w.name === name && w.until.includes(next), 0, answer(name, next))
+    await clock.settle()
+  }
+  // The worker took a turn and ended it.
+  const finish = async (name: string) => {
+    await emit(name, 'working')
+    await emit(name, 'done')
+  }
+  // The worker's tab is closed under its wait: the tab stays, the wait ends as herdr ends it.
+  const kill = async (name: string) => {
+    end(w => w.name === name, 1, failure('agent_not_running', 'agent is no longer running in the target pane'))
+    await clock.settle()
+  }
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, typed, closed, screens, files, prs, panes, stalls }
+  return { clock, submitted, typed, closed, screens, files, prs, panes, stalls, calls, status, fail, gone, emit, finish, kill }
 }
 
 // A row is one Text per column; its name is padded.

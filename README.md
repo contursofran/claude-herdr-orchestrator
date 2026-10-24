@@ -18,7 +18,7 @@ The coordinator starts each worker in its own herdr tab, usually in its own git 
 
 ### Reports come back by themselves
 
-When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report), and long reports are shortened to a pointer to the file.
+When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report), and long reports are shortened to a pointer to the file. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job.
 
 ### To-dos pinned for you
 
