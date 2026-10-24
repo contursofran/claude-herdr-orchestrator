@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/contursofran/claude-herdr-orchestrator/docs/board-schema.json",
+  "title": "herdr-agents board, version 1",
+  "description": "~/.herdr-agents/board/<session id>.json: what the sidebar (/hrd-side) shows for one coordinator session, rewritten when it changes and removed when the session ends. An app presses the sidebar's buttons by writing one action file (see $defs/action) into ~/.herdr-agents/board/<session id>.actions/; the mod does it within about 3 seconds, removes the file and reports the outcome in `actions`. Files there are taken in name order.",
+  "type": "object",
+  "required": ["version", "session", "cwd", "at", "stageNames", "summary", "workers", "tasks", "needs", "status", "actions"],
+  "properties": {
+    "version": { "const": 1, "description": "Bumped when a field changes meaning or goes away; new fields may appear without a bump." },
+    "session": { "type": "string" },
+    "cwd": { "type": "string", "description": "The coordinator's folder." },
+    "at": { "type": "number", "description": "When it was written, ms since the epoch." },
+    "stageNames": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The five stage columns, in order: plan, build, rev, CI, you."
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "busy": { "type": "integer", "description": "Workers neither reported nor waiting." },
+        "left": { "type": "integer", "description": "Workers not reported yet." },
+        "target": { "type": ["integer", "null"], "description": "Workers the coordinator keeps running." },
+        "wrapUp": { "type": "boolean" },
+        "needs": { "type": "integer", "description": "Open items waiting for the owner." },
+        "context": {
+          "type": ["object", "null"],
+          "properties": { "tokens": { "type": "number" }, "limit": { "type": "number" } }
+        }
+      }
+    },
+    "workers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Also its herdr tab's label." },
+          "profile": { "type": "string" },
+          "state": {
+            "type": "string",
+            "description": "herdr's agent status (idle, working, blocked, done), or reported, or waiting (on a WAIT.json check)."
+          },
+          "startedAt": { "type": "number" },
+          "endedAt": { "type": ["number", "null"] },
+          "note": { "type": ["string", "null"] },
+          "repo": { "type": ["string", "null"], "description": "owner/name on GitHub." }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "description": "The work rows in their slots, top to bottom. A slot whose task joined another row has only key, label and joined.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string" },
+          "label": { "type": "string", "description": "#640" },
+          "joined": { "type": "string", "description": "The key of the row it joined; such a slot has no other fields." },
+          "title": { "type": "string" },
+          "repo": { "type": ["string", "null"] },
+          "pr": { "type": ["integer", "null"] },
+          "url": { "type": ["string", "null"], "description": "The PR on GitHub, else the issue." },
+          "stages": { "type": "array", "items": { "$ref": "#/$defs/stage" }, "minItems": 5, "maxItems": 5 },
+          "who": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "kind": { "enum": ["you", "dim", "text"], "description": "you: waits on the owner, drawn to stand out." }
+            }
+          },
+          "now": { "type": "string", "description": "One sentence: who is on it and what it waits for." },
+          "item": { "type": ["string", "null"], "description": "The open decision or to-do it waits on (D7, T12)." },
+          "tab": { "type": ["string", "null"], "description": "The worker whose tab to focus." },
+          "workers": { "type": "array", "items": { "type": "string" } },
+          "isFinished": { "type": "boolean" },
+          "isMerged": { "type": "boolean" }
+        }
+      }
+    },
+    "needs": {
+      "type": "array",
+      "description": "What waits on the owner, in its slots; closed ones stay until clearDone.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "D7 (a decision) or T12 (a to-do)." },
+          "kind": { "enum": ["ask", "do", "know"] },
+          "title": { "type": "string" },
+          "text": { "type": "string", "description": "The question or the to-do in full." },
+          "from": { "type": "string" },
+          "at": { "type": "number" },
+          "isOpen": { "type": "boolean" },
+          "end": { "type": ["string", "null"], "description": "How a closed one ended: the answer, done, dismissed." },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "recommended": { "type": ["integer", "null"], "description": "Index into options." },
+          "url": { "type": ["string", "null"], "description": "A link in a to-do's text (https://…, localhost:5173)." }
+        }
+      }
+    },
+    "status": { "type": "string", "description": "The sidebar's status line." },
+    "actions": {
+      "type": "array",
+      "description": "The outcome of the last 10 action files, oldest first.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "The action file's name." },
+          "ok": { "type": "boolean" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stage": { "enum": ["done", "run", "wait", "none", "ask", "todo", "block"] },
+    "action": {
+      "description": "One JSON file in <session id>.actions/, named so name order is the order to do them in (e.g. <ms>-<random>.json); write it elsewhere and move it in.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["action", "key", "answer"],
+          "properties": {
+            "action": { "const": "answer" },
+            "key": { "type": "string", "description": "An open decision, D7." },
+            "answer": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["action", "key"],
+          "properties": {
+            "action": { "const": "done" },
+            "key": { "type": "string", "description": "An open to-do, T12: done for a do, dismissed for a know." }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["action"],
+          "properties": { "action": { "const": "clearDone" }, "what": { "enum": ["items", "tasks"], "description": "Leave out for both." } }
+        },
+        {
+          "type": "object",
+          "required": ["action", "on"],
+          "properties": { "action": { "const": "wrapUp" }, "on": { "type": "boolean" } }
+        }
+      ]
+    }
+  }
+}

@@ -68,6 +68,10 @@ Planner, then builder, then reviewer; each fix round goes to a fresh builder, an
 
 ![/hrd-config: the settings listed above the prompt](docs/images/config.png)
 
+### The board for other apps
+
+What the sidebar shows is also kept in `~/.herdr-agents/board/<session id>.json`, rewritten when it changes and removed when the session ends, so an app outside Claude Code (such as [contr](https://github.com/contursofran/contr), a native herdr client) can draw it. The app presses the sidebar's buttons by dropping a JSON file in `<session id>.actions/` beside it: answer a decision, tick or dismiss a to-do, clear done, wrap up or keep going. The coordinator gets the same prompts as from a click in the sidebar. The format is in [docs/board-schema.json](docs/board-schema.json).
+
 ## What's in the repo
 
 - **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.

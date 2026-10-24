@@ -39,7 +39,13 @@ export async function start($: Engine, on: On, config: Settings = {}, stored: Re
   // The config names one short repo name; /repo and /srv are GitHub checkouts.
   const CONFIG = '/home/t/.claude/herdr-agents.json'
   const files: Record<string, string> = { [CONFIG]: JSON.stringify({ repos: { web: 'acme/website' }, ...config }) }
-  on('fs.exists', (_, e) => ({ value: e.path in files }))
+  // A folder exists while a file is in it.
+  on('fs.exists', (_, e) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
+  on('fs.list', (_, e) => ({
+    value: Object.keys(files)
+      .filter(f => f.startsWith(`${e.path}/`) && !f.slice(e.path!.length + 1).includes('/'))
+      .map(f => ({ name: f.slice(e.path!.length + 1), kind: 'file' as const, size: files[f]!.length, mtimeMs: 0, isLink: false })),
+  }))
   on('fs.read', (_, e) => ({ value: files[e.path] ?? '' }))
   on('fs.write', (_, e) => {
     files[e.path] = e.text
@@ -77,6 +83,19 @@ export async function start($: Engine, on: On, config: Settings = {}, stored: Re
     if (cmd === 'gh' && sub === 'pr' && verb === 'view') {
       const pr = prs[`${e.argv[5]}#${name}`]
       return pr ? exit(0, JSON.stringify(pr)) : exit(1)
+    }
+    // The file moves and removals the bridge makes, on the files above.
+    if (cmd === 'mkdir') return exit(0)
+    const [from = '', to = ''] = e.argv.slice(2).filter(a => !a.startsWith('-'))
+    if (cmd === 'mv' && from in files) {
+      files[to] = files[from]!
+      delete files[from]
+      return exit(0)
+    }
+    if (cmd === 'rm') {
+      for (const p of e.argv.slice(2).filter(a => !a.startsWith('-')))
+        for (const f of Object.keys(files)) if (f === p || f.startsWith(`${p}/`)) delete files[f]
+      return exit(0)
     }
     if (cmd !== 'herdr') return exit(1)
     if (sub === 'agent' && verb === 'prompt') {
