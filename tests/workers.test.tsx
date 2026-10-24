@@ -374,3 +374,72 @@ test('a prompt that never arrived is not reported over a newer prompt to the sam
   expect(submitted.filter(t => t.startsWith('<herdr-agent name="w-lost"'))).toEqual([])
   await stopAll($, clock, ['w-lost'])
 })
+
+// The mod loads in a worker's own Claude session too, with HERDR_AGENTS_ROLE=worker from its tab.
+test("a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board", async ($, on) => {
+  const { clock, calls, panes, files } = await start($, on, { view: 'side' }, {}, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  expect(panes).toEqual([])
+  expect(Object.keys(files).filter(f => f.startsWith('/home/t/.herdr-agents/board/'))).toEqual([])
+})
+
+test("a worker's own session sweeps the workers it started, so a dead wait child still gets its report", async ($, on) => {
+  const { clock, submitted, typed, files, calls, kill } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-sub', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  // herdr ends the wait with an error: the child is gone, and nothing reports for it.
+  await kill('w-sub')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-sub/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
+  await clock.advance(60_000)
+  expect(submitted.filter(t => t.startsWith('<herdr-agent name="w-sub"'))).toHaveLength(1)
+  expect(calls.map(c => c.join(' '))).toContain('herdr agent list')
+  // Its report was its last running job: from then on the session makes no herdr call.
+  calls.length = 0
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  await stopAll($, clock, ['w-sub'])
+})
+
+test("a worker's own session sweeps its restored running jobs at start-up, not a minute later", async ($, on) => {
+  const job = {
+    name: 'w-busy',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: '/repo/wt/.herdr-agents/w-busy',
+    startedAt: 900_000,
+    status: 'running',
+    token: 'tok-busy',
+  }
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-busy': job } } }
+  const { clock, calls } = await start($, on, {}, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  // No clock advance: the start-up sweep lists herdr as soon as the session starts.
+  await clock.settle()
+  expect(calls.map(c => c.join(' '))).toContain('herdr agent list')
+  await stopAll($, clock, ['w-busy'])
+})
+
+test("a worker's own session whose jobs are all reported makes no herdr call, at start-up or after", async ($, on) => {
+  const job = {
+    name: 'w-done',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: '/repo/wt/.herdr-agents/w-done',
+    startedAt: 900_000,
+    endedAt: 950_000,
+    status: 'reported',
+    token: 'tok-done',
+  }
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': job } } }
+  const { clock, calls } = await start($, on, {}, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+})
+
+test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env", async ($, on) => {
+  const { clock, calls } = await start($, on, { profiles: { x: { kind: 'claude', args: [], env: { A: '1' } } } })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'x', cwd: '/repo/wt', task: 'x' })
+  const create = calls.find(c => c[1] === 'tab' && c[2] === 'create') ?? []
+  expect(create.slice(-4)).toEqual(['--env', 'A=1', '--env', 'HERDR_AGENTS_ROLE=worker'])
+  await stopAll($, clock, ['w-env'])
+})

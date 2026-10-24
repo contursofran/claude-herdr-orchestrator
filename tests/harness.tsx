@@ -27,11 +27,18 @@ type Wait = { name: string; until: string[]; end: (code: number, out: string) =>
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
 // to this session, the ones it typed into workers' tabs and the tabs it closed, and each
 // worker's screen (by pane) and PR (by owner/name#123), which the test sets.
-// `stored` is what $.store holds at the start, as an earlier load of the mod left it.
+// `stored` is what $.store holds at the start, as an earlier load of the mod left it; `env` is
+// merged over the session's environment (HOME, the herdr socket).
 // The herdr fake: `calls` is every herdr argv the mod ran, `status` herdr's state per worker,
 // and `emit`, `finish`, `kill` move a worker's wait (see below). `fail` makes the next
 // calls fail, `gone` lists the workers herdr no longer knows.
-export async function start($: Engine, on: On, config: Settings = {}, stored: Record<string, unknown> = {}) {
+export async function start(
+  $: Engine,
+  on: On,
+  config: Settings = {},
+  stored: Record<string, unknown> = {},
+  env: Record<string, string> = {},
+) {
   const submitted: string[] = []
   const typed: string[] = []
   const closed: string[] = []
@@ -69,7 +76,7 @@ export async function start($: Engine, on: On, config: Settings = {}, stored: Re
     if (key.startsWith('jobs:'))
       for (const name of Object.keys((value as { jobs?: object }).jobs ?? {})) status[name] = STATUS[name] ?? 'idle'
   mock.store(on, stored)
-  mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock' })
+  mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock', ...env })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.register', (_, e) => ({ value: { tool: e.name } }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))

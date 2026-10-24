@@ -4,6 +4,7 @@ import type { Board, Links, Row } from '../types'
 import { config, target, wrappingUp } from './config'
 import { LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { elapsed } from './format'
+import { lastStatus } from './herdr'
 import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
 import { jobs } from './state'
@@ -48,7 +49,9 @@ async function learnRepos($: EngineInterface, cwds: string[]): Promise<Links> {
   return out
 }
 
-// Reads each shown worker's herdr state into the band's atom.
+// Puts each shown worker's state into the band's atom. It makes no herdr calls: a running
+// worker shows the state its wait or the sweep last saw (lastStatus), and a failed sweep
+// leaves that as it was, so one error never shows a worker as gone.
 export async function refresh($: EngineInterface) {
   const now = await $.clock.now()
   await pingQuiet($, d => now - d.at > QUIET_MAX_MS)
@@ -60,14 +63,7 @@ export async function refresh($: EngineInterface) {
   const rows: Row[] = []
   for (const j of shown) {
     let state = 'reported'
-    if (j.status === 'running') {
-      try {
-        const got = await $.process.run(['herdr', 'agent', 'get', j.name])
-        state = JSON.parse(got.stdout)?.result?.agent?.agent_status ?? 'gone'
-      } catch {
-        state = 'gone'
-      }
-    }
+    if (j.status === 'running') state = lastStatus.get(j.name) ?? 'working'
     if (j.status === 'running' && j.wait && state !== 'blocked' && state !== 'gone') state = 'waiting'
     rows.push({
       name: j.name,
