@@ -13,10 +13,15 @@ Per report (one <herdr-agent> prompt from the mod):
   turns     assistant turns from the prompt to its first spawn/message/stop call (that turn
             included), or to the next user or plugin prompt when there is no such call
   reaction  everything until the next user or plugin prompt: tokens and cost per report
-  lag       RESULT-<token>.md mtime to the prompt. The prompt names the token when the report
-            is long (a pointer); a short report is matched to the worker's RESULT files by its text
+  det       detection lag: the worker's own RESULT.md write (a Write or Edit call, or a Bash redirect
+            or heredoc, in the worker's transcript, with `<!-- report <token> -->` on its first line)
+            to the mtime of RESULT-<token>.md, which the mod writes when it delivers the report
+  queue     queue lag: RESULT-<token>.md mtime to the prompt. The prompt names the token when the
+            report is long (a pointer); a short report is matched to the worker's RESULT files by its text
   action    prompt to the first spawn/message/stop call
-Reads and COORDINATOR-STATE.md edits are counted per session and divided by its reports.
+Reads of RESULT files (Read calls, and Bash cat/head/tail/sed/less on them) are counted per session;
+read% is the share of reports followed by one. COORDINATOR-STATE.md edits are counted per session and
+divided by its reports.
 Spawn time is the duration of each spawn call that succeeded; a denied one ("Wrapping up") is left out.
 Subagent transcripts (<session>/subagents/*.jsonl) are not top-level files and are not counted.
 """
@@ -60,6 +65,14 @@ POINTER = re.compile(r"\[[^\n]*?Full report[^\n]*?RESULT-(\w+)\.md")
 TASK_IN_PROMPT = re.compile(r"(/\S*?)/\.herdr-agents/([^/\s]+)/TASK\.md")
 RESULT_FILE = re.compile(r"RESULT(?:-\w+)?\.md")
 REPORT_MARK = re.compile(r"^\s*<!-- report \S+ -->\s*")
+MARK = re.compile(r"<!-- report (\S+) -->")  # the token a worker puts on RESULT.md's first line
+READ_CMDS = ("cat", "head", "tail", "sed", "less")
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)^[ \t]*\2[ \t]*$", re.M | re.S)
+CD = re.compile(r"\s*cd\s+[\"']?([^\s\"';&|]+)[\"']?\s*(?:&&|;)")
+ASSIGN = re.compile(r"[A-Za-z_]\w*=")
+ASSIGN_VALUE = re.compile(r"(?:^|[;&\n]\s*)([A-Za-z_]\w*)=([^\s;&|'\"]+)")  # D=/path; ... $D/RESULT.md
+RESULT_WRITE = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*[\"']?([^\s\"'<>|;&]*?)RESULT\.md(?![\w.-])")
+RESULT_OUT = re.compile(r">>?\s*\S*RESULT(?:-\w+)?\.md")  # a segment that writes a RESULT file is not a read
 SKIP_LINES = (b'{"type":"api-request',)  # the big system-prompt dumps; no metric reads them
 
 
@@ -90,6 +103,78 @@ def prompt_text(content):
         if parts:
             return "\n".join(parts)
     return None
+
+
+def first_line_token(text):
+    """The token of a `<!-- report <token> -->` that is the first line of text (blank lines before it are skipped)."""
+    m = MARK.match(text.lstrip())
+    return m.group(1) if m else None
+
+
+def result_folder(path):
+    """The folder <cwd>/.herdr-agents/<worker> that a RESULT.md path lies in; None for any other path."""
+    path = os.path.normpath(path)
+    if os.path.basename(path) != "RESULT.md":
+        return None
+    folder = os.path.dirname(path)
+    return folder if os.path.basename(os.path.dirname(folder)) == ".herdr-agents" else None
+
+
+def expand_assignments(cmd):
+    """The command with $NAME and ${NAME} replaced by the value of a plain `NAME=value` set earlier in it."""
+    values = dict(ASSIGN_VALUE.findall(cmd))
+    return re.sub(r"\$\{?(\w+)\}?", lambda m: values.get(m.group(1), m.group(0)), cmd)
+
+
+def bash_result_writes(cmd, cwd):
+    """(folder, token) for each RESULT.md that a Bash command writes by a redirect, tee or heredoc.
+
+    A command may hold several heredocs (a plan, then the report). Each piece of the command between
+    heredocs is one unit: its redirect takes the token on the first line of the heredoc after it, or, when
+    that has none, the first `<!-- report <token> -->` in the unit (printf arguments). The text after the
+    last heredoc takes that heredoc's token (`{ cat <<EOF ... EOF` then `} > RESULT.md`).
+    """
+    cmd = expand_assignments(cmd)
+    cd = CD.match(cmd)  # `cd <dir> && cat > RESULT.md` writes into <dir>
+    base = os.path.join(cwd or "", os.path.expanduser(cd.group(1))) if cd else (cwd or "")
+    units, pos, last = [], 0, None  # (unit text, the token of the heredoc after it)
+    for m in HEREDOC.finditer(cmd):
+        units.append((cmd[pos : m.start()], first_line_token(m.group(3))))
+        pos = m.end()
+        last = units[-1][1]
+    units.append((cmd[pos:], last))
+    found = []
+    for text, token in units:
+        mark = MARK.search(text)
+        token = token or (mark.group(1) if mark else None)
+        if token is None:
+            continue
+        for m in RESULT_WRITE.finditer(text):
+            folder = result_folder(os.path.join(base, os.path.expanduser(m.group(1)), "RESULT.md"))
+            if folder:
+                found.append((folder, token))
+    return found
+
+
+def sed_in_place(opts):
+    """Whether sed's options (the words after `sed`) include -i or --in-place: that edits the file."""
+    return any(o == "--in-place" or o.startswith("--in-place=") or (o[:1] == "-" and o[1:2] != "-" and "i" in o) for o in opts)
+
+
+def bash_reads(cmd):
+    """Whether a segment of a Bash command reads a RESULT file: cat, head, tail, sed or less on it, not a write."""
+    for seg in re.split(r"\|\||&&|[|;&\n]", expand_assignments(HEREDOC.sub("", cmd))):
+        words = seg.split()
+        while words and ASSIGN.match(words[0]):
+            words = words[1:]
+        if not words:
+            continue
+        name = os.path.basename(words[0].lstrip("({"))
+        if name not in READ_CMDS or (name == "sed" and sed_in_place(words[1:])) or RESULT_OUT.search(seg):
+            continue
+        if any(RESULT_FILE.fullmatch(os.path.basename(w.strip("'\""))) for w in words[1:]):
+            return True
+    return False
 
 
 def usage(msg):
@@ -142,9 +227,10 @@ class Report:
         self.action = None
         self.read = False
         self.tot = new_tot()
-        self.lag = None
-        self.lag_how = None  # "token" or "text": how the RESULT file was found
-        self.lag_miss = None  # why there is no lag, when there is none
+        self.queue = None
+        self.queue_how = None  # "token" or "text": how the RESULT file was found
+        self.queue_miss = None  # why there is no queue lag, when there is none
+        self.det = None  # the worker's RESULT.md write to the RESULT file's mtime
 
 
 class Session:
@@ -156,7 +242,9 @@ class Session:
         self.spawn_cwd = {}
         self.spawn_folders = set()
         self.spawn_secs = []
-        self.reads = 0
+        self.read_calls = 0  # Read calls on a RESULT file
+        self.bash_reads = 0  # Bash cat/head/tail/sed/less on a RESULT file
+        self.result_writes = []  # (worker folder, token, time) of each RESULT.md this session wrote
         self.edits = 0
         self.tot = new_tot()
         self.by_model = {}
@@ -169,7 +257,7 @@ class Session:
         end = text.find("</herdr-agent>", tag.end())
         inner = text[tag.end() : end if end >= 0 else len(text)].strip()
         cwd = self.spawn_cwd.get(name) or self.cwd
-        folder = os.path.join(cwd, ".herdr-agents", name) if cwd else None
+        folder = os.path.normpath(os.path.join(cwd, ".herdr-agents", name)) if cwd else None
         r = Report(ts, folder, inner)
         self.reports.append(r)
         return r
@@ -227,6 +315,7 @@ def scan(path, since):
                 add(cur.tot, u, c)
         if cur is not None and cur.resp_open:
             cur.turns.add(mid)
+        rcwd = d.get("cwd") or s.cwd  # the directory this record's Bash and file paths start from
         for b in content if isinstance(content, list) else []:
             if not (isinstance(b, dict) and b.get("type") == "tool_use"):
                 continue
@@ -241,42 +330,93 @@ def scan(path, since):
                     s.spawn_cwd[worker] = cwd
                     s.spawn_folders.add((cwd, worker))
             elif name == "Read" and RESULT_FILE.fullmatch(os.path.basename(str(args.get("file_path") or ""))):
-                s.reads += 1
+                s.read_calls += 1
                 if cur is not None:
                     cur.read = True
-            elif name in ("Edit", "Write") and os.path.basename(str(args.get("file_path") or "")) == "COORDINATOR-STATE.md":
-                s.edits += 1
+            elif name == "Bash":
+                cmd = str(args.get("command") or "")
+                if bash_reads(cmd):
+                    s.bash_reads += 1
+                    if cur is not None:
+                        cur.read = True
+                s.result_writes.extend((folder, token, ts) for folder, token in bash_result_writes(cmd, rcwd))
+            elif name in ("Edit", "Write"):
+                file_path = str(args.get("file_path") or "")
+                if os.path.basename(file_path) == "COORDINATOR-STATE.md":
+                    s.edits += 1
+                folder = result_folder(os.path.join(rcwd or "", file_path))
+                token = first_line_token(str(args.get("content" if name == "Write" else "new_string") or ""))
+                if folder and token:
+                    s.result_writes.append((folder, token, ts))
     return s
 
 
-def resolve(s, since):
-    """Fills each report's lag from the RESULT file the mod wrote for it, and counts quiet stops."""
-    texts = {}  # folder -> [(mtime, body)], read once per folder
+def collect(root, since):
+    """Scans every transcript written in the window; returns (coordinator sessions, worker sessions), resolved."""
+    scanned = [
+        scan(path, since)
+        for path in sorted(glob.glob(os.path.join(root, "*", "*.jsonl")))
+        if os.path.getmtime(path) >= since
+    ]
+    coords = [s for s in scanned if s.reports]
+    workers = [s for s in scanned if not s.reports and s.worker]
+    writes = write_index(scanned)  # a worker's RESULT.md write can only be found once every transcript is read
+    for s in coords:
+        resolve(s, since, writes)
+    return coords, workers
+
+
+def write_index(sessions):
+    """(folder, token) -> the earliest time a session wrote that RESULT.md with the token on its first line."""
+    first = {}
+    for s in sessions:
+        for folder, token, ts in s.result_writes:
+            first[(folder, token)] = min(ts, first.get((folder, token), ts))
+    return first
+
+
+def found(r, mtime, how, writes):
+    """Sets a report's queue from its RESULT file's mtime, and its det from the worker's write of that file."""
+    r.queue, r.queue_how = r.ts - mtime, how
+    wrote = writes.get((r.folder, r.token))
+    if wrote is not None:
+        r.det = mtime - wrote
+
+
+def resolve(s, since, writes):
+    """Fills each report's queue and det from the RESULT file the mod wrote for it, and counts quiet stops.
+
+    writes is write_index() over every session: the worker's RESULT.md writes.
+    """
+    texts = {}  # folder -> [(mtime, body, token)], read once per folder
     for r in s.reports:
         if not r.folder:
-            r.lag_miss = "no cwd"
+            r.queue_miss = "no cwd"
             continue
         if not os.path.isdir(r.folder):
-            r.lag_miss = "folder gone"  # the worktree was pruned after its PR merged
+            r.queue_miss = "folder gone"  # the worktree was pruned after its PR merged
             continue
         if r.token:
             path = os.path.join(r.folder, f"RESULT-{r.token}.md")
             if os.path.exists(path):
-                r.lag, r.lag_how = r.ts - os.path.getmtime(path), "token"
+                found(r, os.path.getmtime(path), "token", writes)
             else:
-                r.lag_miss = "token file missing"
+                r.queue_miss = "token file missing"
             continue
         if r.folder not in texts:
             texts[r.folder] = []
             for path in glob.glob(os.path.join(r.folder, "RESULT-*.md")):
                 with open(path, encoding="utf-8", errors="replace") as fh:
-                    texts[r.folder].append((os.path.getmtime(path), REPORT_MARK.sub("", fh.read()).strip()))
+                    body = REPORT_MARK.sub("", fh.read()).strip()
+                token = os.path.basename(path)[len("RESULT-") : -len(".md")]
+                texts[r.folder].append((os.path.getmtime(path), body, token))
         # The prompt carries a short report whole, so its text starts with the file's text.
-        hits = [mt for mt, body in texts[r.folder] if body and mt <= r.ts + 5 and r.inner.startswith(body)]
+        hits = [(mt, tok) for mt, body, tok in texts[r.folder] if body and mt <= r.ts + 5 and r.inner.startswith(body)]
         if hits:
-            r.lag, r.lag_how = r.ts - max(hits), "text"
+            mt, r.token = max(hits)
+            found(r, mt, "text", writes)
         else:
-            r.lag_miss = "no report file"  # blocked and stopped prompts write none; older mods wrote RESULT.md only
+            r.queue_miss = "no report file"  # blocked and stopped prompts write none; older mods wrote RESULT.md only
     s.quiet = sum(
         1
         for cwd, worker in s.spawn_folders
@@ -314,17 +454,22 @@ def share(part, whole):
     return part / whole if whole else None
 
 
-def lag_by(reports):
-    """How many lags were found by token, by text, and why the rest have none."""
-    found = collections.Counter(r.lag_how for r in reports if r.lag is not None)
-    missing = collections.Counter(r.lag_miss for r in reports if r.lag is None)
-    return {"token": found["token"], "text": found["text"], "missing": dict(missing)}
+def queue_by(reports):
+    """How many queue lags were found by token, by text, and why the rest have none."""
+    how = collections.Counter(r.queue_how for r in reports if r.queue is not None)
+    missing = collections.Counter(r.queue_miss for r in reports if r.queue is None)
+    return {"token": how["token"], "text": how["text"], "missing": dict(missing)}
+
+
+def det_missing(reports):
+    """Why each report has no det: no queue lag either (the same reason), or no worker wrote its RESULT.md."""
+    why = [r.queue_miss if r.queue is None else "no worker write" for r in reports if r.det is None]
+    return dict(collections.Counter(why))
 
 
 def coordinator_row(s):
     reports = s.reports
     n = len(reports)
-    lags = [r.lag for r in reports if r.lag is not None]
     return {
         "start": s.start,
         "session": s.sid[:8],
@@ -334,10 +479,12 @@ def coordinator_row(s):
         "turns": dist([len(r.turns) for r in reports]),
         "read_share": share(sum(r.read for r in reports), n),
         "pointer_share": share(sum(r.pointer for r in reports), n),
-        "reads": s.reads,
+        "reads": {"read": s.read_calls, "bash": s.bash_reads},
         "edits_per_report": share(s.edits, n),
-        "lag": dist(lags),
-        "lag_by": lag_by(reports),
+        "det": dist([r.det for r in reports if r.det is not None]),
+        "det_missing": det_missing(reports),
+        "queue": dist([r.queue for r in reports if r.queue is not None]),
+        "queue_by": queue_by(reports),
         "action": dist([r.action[1] - r.ts for r in reports if r.action]),
         "spawn": dist(s.spawn_secs),
         "quiet": s.quiet,
@@ -360,10 +507,12 @@ def totals(rows, coords):
         "turns": dist([len(r.turns) for r in reports]),
         "read_share": share(sum(r.read for r in reports), n),
         "pointer_share": share(sum(r.pointer for r in reports), n),
-        "reads": sum(s.reads for s in coords),
+        "reads": {"read": sum(s.read_calls for s in coords), "bash": sum(s.bash_reads for s in coords)},
         "edits_per_report": share(sum(s.edits for s in coords), n),
-        "lag": dist([r.lag for r in reports if r.lag is not None]),
-        "lag_by": lag_by(reports),
+        "det": dist([r.det for r in reports if r.det is not None]),
+        "det_missing": det_missing(reports),
+        "queue": dist([r.queue for r in reports if r.queue is not None]),
+        "queue_by": queue_by(reports),
         "action": dist([r.action[1] - r.ts for r in reports if r.action]),
         "spawn": dist([x for s in coords for x in s.spawn_secs]),
         "quiet": sum(s.quiet for s in coords),
@@ -403,28 +552,34 @@ def when(ts):
     return datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
 
 
+def missing_text(missing):
+    return ", ".join(f"{n} {why}" for why, n in sorted(missing.items(), key=lambda kv: -kv[1])) or "none"
+
+
 def print_text(days, rows, tot, workers, by_model, unpriced, root):
     print(f"== coordinator sessions, last {days} days: {len(rows)} with {tot['reports']} reports")
     if not rows:
         print("   none: no transcript in the window got a <herdr-agent> prompt")
     else:
         print("start        session  cwd                              rpts turns read% ptr%  reads edit/r"
-              "  lag med  p90  max  act med  p90  spawn med  max quiet")
+              "  det med  p90  max  queue med  p90  max  act med  p90  spawn med  max quiet")
         for r in rows + [None]:
             row = tot if r is None else r
             label = "total" if r is None else short(r["project"], 32)
             start = "" if r is None else when(r["start"])
             session = "" if r is None else r["session"]
-            lag, act, spawn = row["lag"], row["action"], row["spawn"]
+            det, queue, act, spawn = row["det"], row["queue"], row["action"], row["spawn"]
+            reads = row["reads"]["read"] + row["reads"]["bash"]
             print(f"{start:12s} {session:8s} {label:32s} {row['reports']:4d} {fmt_1(row['turns']['median']):>5s} "
-                  f"{fmt_pct(row['read_share']):>5s} {fmt_pct(row['pointer_share']):>4s} {row['reads']:6d} "
-                  f"{fmt_ratio(row['edits_per_report']):>6s}  {fmt_s(lag['median']):>7s} {fmt_s(lag['p90']):>4s} "
-                  f"{fmt_s(lag['max']):>4s}  {fmt_s(act['median']):>7s} {fmt_s(act['p90']):>4s}  "
+                  f"{fmt_pct(row['read_share']):>5s} {fmt_pct(row['pointer_share']):>4s} {reads:6d} "
+                  f"{fmt_ratio(row['edits_per_report']):>6s}  {fmt_s(det['median']):>7s} {fmt_s(det['p90']):>4s} "
+                  f"{fmt_s(det['max']):>4s}  {fmt_s(queue['median']):>9s} {fmt_s(queue['p90']):>4s} {fmt_s(queue['max']):>4s}  "
+                  f"{fmt_s(act['median']):>7s} {fmt_s(act['p90']):>4s}  "
                   f"{fmt_s(spawn['median']):>9s} {fmt_s(spawn['max']):>4s} {row['quiet']:5d}")
-        print("   turns: model turns per report up to its spawn/message/stop call; read%: reports followed by a RESULT Read;"
-              " ptr%: reports whose prompt pointed at the file")
-        print("   lag s: RESULT-<token>.md mtime to the prompt; act s: prompt to its spawn/message/stop call; spawn: the tool call;"
-              " quiet: SCREEN files (stopped without a report)")
+        print("   turns: model turns per report up to its spawn/message/stop call; read%: reports followed by a RESULT read"
+              " (Read or Bash); ptr%: reports whose prompt pointed at the file")
+        print("   det s: the worker's RESULT.md write to RESULT-<token>.md; queue s: RESULT-<token>.md to the prompt;"
+              " act s: prompt to its spawn/message/stop call; spawn: the tool call; quiet: SCREEN files (stopped without a report)")
         print("\n== tokens and cost (session = every turn in the window; $/rpt = cost inside each report's reaction)")
         print("start        session  rpts        input      cache-r      cache-w      output       cost  $/rpt")
         for r in rows + [None]:
@@ -435,16 +590,18 @@ def print_text(days, rows, tot, workers, by_model, unpriced, root):
             per = row["reaction_cost_per_report"]
             print(f"{start:12s} {label:8s} {row['reports']:4d}  {fmt_tok(t['inp']):>11s}  {fmt_tok(t['cr']):>11s}  "
                   f"{fmt_tok(t['cw']):>11s}  {fmt_tok(t['out']):>11s}  ${t['cost']:9,.2f}  {fmt_money(per):>5s}")
-        missing = ", ".join(f"{n} {why}" for why, n in sorted(tot["lag_by"]["missing"].items(), key=lambda kv: -kv[1]))
-        print(f"\n== lag found for {tot['lag']['n']} of {tot['reports']} reports (by token {tot['lag_by']['token']}, "
-              f"by text {tot['lag_by']['text']}); the rest: {missing or 'none'}")
+        print(f"\n== det found for {tot['det']['n']} of {tot['reports']} reports; the rest: {missing_text(tot['det_missing'])}")
+        print(f"== queue found for {tot['queue']['n']} of {tot['reports']} reports (by token {tot['queue_by']['token']}, "
+              f"by text {tot['queue_by']['text']}); the rest: {missing_text(tot['queue_by']['missing'])}")
     print(f"\n== worker sessions by model: {len(workers)} (first prompt names .herdr-agents/<worker>/TASK.md)")
     if by_model:
         print("model                  sess    turns        input      cache-r      cache-w      output       cost")
         for model, m in sorted(by_model.items(), key=lambda kv: -kv[1]["cost"]):
             print(f"{model[:22]:22s} {m['sessions']:5d}  {m['turns']:7d}  {fmt_tok(m['inp']):>11s}  {fmt_tok(m['cr']):>11s}  "
                   f"{fmt_tok(m['cw']):>11s}  {fmt_tok(m['out']):>11s}  ${m['cost']:9,.2f}")
-    print("\n   not counted: subagent transcripts (<session>/subagents/); Bash reads of RESULT files (only Read calls count)")
+    result_reads = tot["reads"]
+    print(f"\n   reads of RESULT files: {result_reads['read']} Read calls and {result_reads['bash']} Bash reads (cat, head, tail, sed, less)")
+    print("   not counted: subagent transcripts (<session>/subagents/)")
     if unpriced:
         print(f"   no price for {', '.join(sorted(unpriced))}: cost counted as 0")
     print(f"   transcripts from {root}")
@@ -458,16 +615,7 @@ def main():
     since = time.time() - args.days * 86400
     root = os.path.join(os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"), "projects")
 
-    coords, workers = [], []
-    for path in sorted(glob.glob(os.path.join(root, "*", "*.jsonl"))):
-        if os.path.getmtime(path) < since:
-            continue
-        s = scan(path, since)
-        if s.reports:
-            resolve(s, since)
-            coords.append(s)
-        elif s.worker:
-            workers.append(s)
+    coords, workers = collect(root, since)
     coords.sort(key=lambda s: s.start)
     rows = [coordinator_row(s) for s in coords]
     tot = totals(rows, coords)
