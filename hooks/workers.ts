@@ -194,7 +194,10 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     body = (await $.fs.read(resultPath)).replace(/^\s*<!-- report \S+ -->\s*/, '')
     pr = Number(body.match(/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/)?.[1]) || undefined
     // Read the questions from the whole report: they often sit past the cut.
-    const asked = [...body.matchAll(/^\s*(?:[-*]\s*)?\**DECISION:?\**:?\s*(.+)$/gm)].map(m => (m[1] ?? '').trim()).filter(Boolean)
+    // "DECISION: none. No owner decision is needed" asks nothing, so it is not pinned.
+    const asked = [...body.matchAll(/^\s*(?:[-*]\s*)?\**DECISION:?\**:?\s*(.+)$/gm)]
+      .map(m => (m[1] ?? '').trim())
+      .filter(q => q && !/^(?:none|n\/a)\b/i.test(q))
     // RESULT.md is removed on the next prompt, so every report keeps its full
     // text in a file of its own. Claude Code draws a plugin's prompt in full and
     // no hook can shorten it, so only a short report goes inline: a longer one
