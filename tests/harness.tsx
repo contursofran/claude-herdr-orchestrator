@@ -320,6 +320,13 @@ export async function spawn($: Engine, names: string[], cwd?: string) {
   for (const worker of names)
     await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker, profile: 'reviewer', cwd: cwd ?? `/repo-${worker}`, task: 'x' })
 }
+// Settles until `done` holds, up to 200 times. Work the mod leaves running unawaited (a refresh
+// learning a repo's remote, the sidebar's PR poll) waits on a process.run answer that can land
+// after clock.settle() returns on a busy machine; the test's expect then checks it.
+export async function until(clock: MockClock, done: () => boolean | Promise<boolean>) {
+  for (let i = 0; i < 200 && !(await done()); i++) await clock.settle()
+}
+
 // Their watch loops end before the test does.
 export async function stopAll($: Engine, clock: MockClock, names: string[]) {
   for (const worker of names) await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker })

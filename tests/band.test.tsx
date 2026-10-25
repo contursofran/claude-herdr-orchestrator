@@ -13,12 +13,16 @@ test('a pinned to-do shows at the top, and Done unpins it and tells the coordina
   await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Merge client #565' })
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await ui.find({ type: 'Text', text: /Merge client #565/ }))?.text).toMatch(/☐ Merge client #565\s+T1 · app-client#541/)
-  expect((await ui.find({ type: 'Text', text: /98 GB/ }))?.text).toMatch(/ℹ Staging disk at 98 GB free\s+T2 · coordinator/)
+  // The #numbers link once the start-up refresh, which runs in the background, has learned /repo's
+  // GitHub remote. A Link's found text is its href, then what it draws: the line as drawn leaves the hrefs out.
+  const line = async (text: RegExp) =>
+    (await ui.find({ type: 'Text', text }))?.text.replace(/https:\/\/github\.com\/[^#]+?\/issues\/\d+/g, '')
+  expect(await line(/Merge client/)).toMatch(/☐ Merge client #565\s+T1 · app-client#541/)
+  expect(await line(/98 GB/)).toMatch(/ℹ Staging disk at 98 GB free\s+T2 · coordinator/)
   expect(await ui.find({ type: 'Text', text: /T3/ })).toBeUndefined()
 
   await ui.press({ key: 'tick-t1' })
-  expect(await ui.find({ type: 'Text', text: /Merge client #565/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Merge client/ })).toBeUndefined()
   await clock.advance(BATCH_MS)
   expect(submitted.at(-1)).toMatch(/<herdr-owner-done id="T1" from="app-client#541">\nThe owner ticked off: Merge client #565/)
 
