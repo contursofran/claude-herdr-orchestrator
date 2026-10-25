@@ -1,0 +1,13 @@
+{
+  "number": 1,
+  "title": "Members get 5% off their order total",
+  "body": "Members of the shop get 5% off their order total.\n\nThe bulk discount (10% off a subtotal of 100.00 or more) is in `shop/cart.py`. The member discount goes in the same pricing.",
+  "state": "OPEN",
+  "labels": [],
+  "comments": [],
+  "url": "https://github.com/hrd-eval/decision-rule/issues/1",
+  "author": {
+    "login": "owner"
+  },
+  "createdAt": "2026-10-20T09:00:00Z"
+}

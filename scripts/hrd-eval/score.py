@@ -9,9 +9,10 @@ its scenario.json, and its expected.json (the tests of the reference run). See t
 
 score_run(run_dir) -> dict   one run: pass, invalid (a leak), status, reasons (why it failed), hidden, own_tests,
                              fix_rounds, blockers, decision, pr_opened, plan_decisions, outside, roles, cost,
-                             wall, leak, shim_bypassed, unpriced
+                             wall, leak, shim_bypassed, unpriced, review_unparsed
 aggregate(scores, matrix=None) -> dict   {"matrix", "runs", "cells", "arms", "roles", "disagreements"}
 print_text(agg)              the table, in the style of hrd-metrics.py's print_text
+ExpectedMissing              a graded scenario has no expected.json (a ValueError; main() prints it as one line)
 
 Pass rule. A scenario with expect.decision passes when some DECISION in the run's decisions matches its regex
 (DECISION lines only in PLAN.md are not counted). Otherwise the run passes when every slice has a PR, the grade
@@ -25,6 +26,7 @@ calls.jsonl keeps both. A resumed call's values are already differences from its
 
 import argparse
 import collections
+import fractions
 import glob
 import importlib.util
 import json
@@ -36,6 +38,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("hrd_metrics", os.path.join(HERE, "..", "hrd-metrics.py"))
 hm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hm)
+
+
+class ExpectedMissing(ValueError):
+    """A graded scenario has no expected.json: the message is the one line main() prints."""
+
 
 ROLES = ("planner", "builder", "reviewer")
 TOKEN_KEYS = ("inp", "out", "cr", "cw")
@@ -62,16 +69,25 @@ def parse_plugin_test(text):
     return out
 
 
+def unittest_name(name):
+    """`test_x (mod.Class.test_x)`, which Python 3.11+ prints, is the name `test_x (mod.Class)` that Python 3.9 prints:
+    the same test, so one name whichever Python ran it (expected.json is written by one and checked by the other)."""
+    m = re.match(r"^(\w+) \(([\w.]+)\)$", name)
+    if m and m.group(2).endswith("." + m.group(1)):
+        return f"{m.group(1)} ({m.group(2)[: -len(m.group(1)) - 1]})"
+    return name
+
+
 def parse_unittest(text):
     """{name: "pass"|"fail"|"skip"} from `python3 -m unittest -v` output: `test_x (mod.Class) ... ok|FAIL|ERROR|skipped`.
-    The name is the text before " ... ". A test with a docstring prints the docstring instead of its name; it is
-    not matched, so it counts as missing."""
+    The name is the text before " ... ", as unittest_name() gives it. A test with a docstring prints the docstring
+    instead of its name; it is not matched, so it counts as missing."""
     out = {}
     for line in text.splitlines():
         m = UNITTEST_ROW.match(line)
         if m:
             status = m.group(2)
-            out[m.group(1)] = "skip" if status.startswith("skipped") else UNITTEST_STATUS[status]
+            out[unittest_name(m.group(1))] = "skip" if status.startswith("skipped") else UNITTEST_STATUS[status]
     return out
 
 
@@ -122,7 +138,10 @@ def load_expected(scen_dir, scenario):
     if os.path.exists(path):
         exp = load_json(path)
     elif "grade" in scenario:
-        raise ValueError(f"{path} is missing: run scripts/hrd-eval.py --check-scenarios --update-expected")
+        sid = os.path.basename(os.path.normpath(scen_dir))
+        raise ExpectedMissing(
+            f"{sid}: no expected.json; run scripts/hrd-eval.py --check-scenarios --scenarios {sid} --update-expected"
+        )
     else:
         exp = {}
     return {"tests": exp.get("tests", []), "discriminating": exp.get("discriminating", [])}
@@ -268,6 +287,7 @@ def score_run(run_dir):
         "leak": leaks,
         "shim_bypassed": shim_bypassed,
         "unpriced": sorted({m for c in calls for m in c.get("unpriced") or []}),
+        "review_unparsed": any(bool(s.get("review_unparsed")) for s in slices),
     }
 
 
@@ -292,10 +312,12 @@ def cell(scenario, arm, runs):
 
 
 def disagreements(cells, scores):
+    """Scenarios whose pass RATES differ between arms: pass / valid runs, so 2/3 and 2/2 differ and 1/1 and 2/2 do not.
+    An arm with no valid run has no rate and is not compared."""
     out = []
     for scenario in sorted({c["scenario"] for c in cells}):
-        mine = [c for c in cells if c["scenario"] == scenario]
-        if len({c["pass"] for c in mine}) < 2:
+        mine = [c for c in cells if c["scenario"] == scenario and c["valid"]]
+        if len({fractions.Fraction(c["pass"], c["valid"]) for c in mine}) < 2:
             continue
         failing = [
             {"folder": s["folder"], "arm": s["arm"], "reason": "; ".join(s["reasons"])}
@@ -390,6 +412,12 @@ def print_text(agg):
         print(f"   {d['scenario']}: " + ", ".join(f"{arm} {v['pass']}/{v['valid']}" for arm, v in d["arms"].items()))
         for f in d["failing"]:
             print(f"      {f['arm']} {f['folder']}: {f['reason']}")
+    unparsed = [s for s in runs if s["review_unparsed"]]
+    if unparsed:
+        print(f"\n   {len(unparsed)} runs had a review with no VERDICT line and no blocker count; the fix loop counted"
+              " it as no blockers:")
+        for s in unparsed:
+            print(f"      {s['folder']}")
     unpriced = sorted({m for s in runs for m in s["unpriced"]})
     if unpriced:
         print(f"\n   no price for {', '.join(unpriced)}: cost counted as 0")
@@ -399,18 +427,22 @@ def print_text(agg):
             print(f"      {s['folder']}: " + ", ".join(f"{h['tool']} {h['pattern']}" for h in s["leak"]))
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="Scores the runs of an hrd-eval results folder and prints the table.")
     ap.add_argument("results", metavar="RESULTS_DIR", help="the folder scripts/hrd-eval.py wrote")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the table")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     run_dirs = sorted(os.path.dirname(p) for p in glob.glob(os.path.join(args.results, "*", "*", "r*", "run.json")))
     if not run_dirs:
         print(f"no run.json under {args.results}", file=sys.stderr)
         return 1
     matrix_path = os.path.join(args.results, "matrix.json")
     matrix = load_json(matrix_path) if os.path.exists(matrix_path) else None
-    agg = aggregate([score_run(d) for d in run_dirs], matrix)
+    try:
+        agg = aggregate([score_run(d) for d in run_dirs], matrix)
+    except ExpectedMissing as e:
+        print(f"score.py: {e}", file=sys.stderr)
+        return 1
     if args.json:
         print(json.dumps(agg, indent=2))
     else:
