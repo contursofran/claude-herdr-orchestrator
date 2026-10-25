@@ -30,9 +30,18 @@ const STATUS_WORDS = new Map<string, 'done' | 'blocked' | 'failed'>([
   ['error', 'failed'],
 ])
 
-// The PR numbers a `pr:` value names: `42`, `#42`, a pull request link, several of them.
+// One item of a `pr:` list: `42`, `#42` or a pull request link.
+const PR_ITEM = /^(?:#?(\d+)|https?:\/\/\S*?\/pull\/(\d+)\b\S*)$/
+// The PR numbers a `pr:` value names, read from its leading list (items separated by `,` or spaces).
+// The list ends at the first item that is not a PR, so `42 (merged 2026-10-24)` names 42 only.
 function prNumbers(value: string): number[] {
-  const found = [...value.matchAll(/\/pull\/(\d+)|#(\d+)|\b(\d+)\b/g)].map(m => Number(m[1] ?? m[2] ?? m[3]))
+  const found: number[] = []
+  for (const item of value.split(/[\s,]+/)) {
+    if (!item) continue
+    const m = PR_ITEM.exec(item)
+    if (!m) break
+    found.push(Number(m[1] ?? m[2]))
+  }
   return [...new Set(found)].slice(0, 5)
 }
 

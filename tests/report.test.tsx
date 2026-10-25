@@ -54,6 +54,16 @@ test('pr takes several numbers or none, and prs is its alias', () => {
   expect(parseHeader('status: done\nprs: 12, 13\nsummary: x')?.prs).toEqual([12, 13])
 })
 
+test('pr reads the PR numbers of its leading list, not the digits of a date or note after it', () => {
+  expect(parseHeader('status: done\npr: 42 (merged 2026-10-24)\nsummary: x')?.prs).toEqual([42])
+  expect(parseHeader('status: done\npr: #1006, #1007 (merged 2026-10-24)\nsummary: x')?.prs).toEqual([1006, 1007])
+  expect(parseHeader('status: done\npr: https://github.com/o/r/pull/42 (merged 2026-10-24)\nsummary: x')?.prs).toEqual([42])
+  expect(parseHeader('status: done\npr: none (no PR, 2026-10-24)\nsummary: x')?.prs).toEqual([])
+  expect(parseHeader('status: done\npr: 2026-10-24\nsummary: x')?.prs).toEqual([])
+  // The list ends at the first word, so a number after it is not a PR.
+  expect(parseHeader('status: done\npr: 42 merged 24 Oct\nsummary: x')?.prs).toEqual([42])
+})
+
 test('a header that starts past line 12 is not read, one that starts within it is', () => {
   const preface = Array.from({ length: 12 }, () => 'Intro.').join('\n')
   expect(parseHeader(`${preface}\nstatus: done\nsummary: x`)).toBeUndefined()

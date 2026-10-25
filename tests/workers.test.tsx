@@ -656,3 +656,32 @@ test('the full report rule goes in the first prompt only; follow-ups and wake-up
   expect(typed.filter(t => t.includes('Right below that line'))).toHaveLength(1)
   await stopAll($, clock, ['w-busy'])
 })
+
+test('a worker spawned again with the same name in the same folder gets the full rule in its first prompt', async ($, on) => {
+  const { clock, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${firstToken} -->\nDone.`
+  await finish('w-busy')
+  // The job folder outlives the job: the same name spawned again finds the old REPORTING.md there.
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it again.' })
+  const again = typed.at(-1) ?? ''
+  expect(again).toContain('Your task is in /repo/wt/.herdr-agents/w-busy/TASK.md')
+  expect(again).toContain('Right below that line, put this header')
+  expect(again).not.toContain('report as before')
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('the report rule says to write RESULT.md in one write, as the last step, in the full rule and the reminder', async ($, on) => {
+  const { clock, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  expect(typed[0]).toContain('write your final report to /repo/wt/.herdr-agents/w-busy/RESULT.md in one write, as your last step')
+  expect(files['/repo/wt/.herdr-agents/w-busy/REPORTING.md']).toContain('in one write, as your last step')
+  const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${firstToken} -->\nDone.`
+  await finish('w-busy')
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'One more thing.' })
+  expect(typed.at(-1)).toContain('in one write, as your last step')
+  await stopAll($, clock, ['w-busy'])
+})

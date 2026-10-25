@@ -48,11 +48,11 @@ const chains = new Map<string, Promise<void>>()
 
 // Each prompt gets a fresh token the worker puts on RESULT.md's first line, so a
 // report the worker writes late for an earlier prompt is never taken as this one's.
-// The full rule goes in the first prompt to a job folder, and in REPORTING.md, which
-// the later prompts name (see prompt).
+// The full rule goes in a spawn's first prompt, and in REPORTING.md, which the later
+// prompts name (see prompt).
 export function reportRule(job: Job, token = job.token) {
   return [
-    `When you are completely finished, write your final report to ${job.dir}/RESULT.md. Its first line must be exactly: <!-- report ${token} -->`,
+    `When you are completely finished, write your final report to ${job.dir}/RESULT.md in one write, as your last step. Its first line must be exactly: <!-- report ${token} -->`,
     'Right below that line, put this header, fences included, with your own values:',
     '```report',
     'status: done',
@@ -72,21 +72,23 @@ export function reportRule(job: Job, token = job.token) {
 
 // The one-line reminder that later prompts carry instead of the full rule (see prompt).
 export function reportReminder(job: Job) {
-  return `When you are finished, report as before: write ${job.dir}/RESULT.md with the first line exactly <!-- report ${job.token} -->, then the \`\`\`report header (status, pr, summary, ask) and your report. DECISION lines and WAIT.json work as in ${job.dir}/REPORTING.md.`
+  return `When you are finished, report as before: write ${job.dir}/RESULT.md in one write, as your last step, with the first line exactly <!-- report ${job.token} -->, then the \`\`\`report header (status, pr, summary, ask) and your report. DECISION lines and WAIT.json work as in ${job.dir}/REPORTING.md.`
 }
 
 // Sends `text` to the worker and, once herdr sees it working, arms the wait for its turn
 // to end, which delivers its report.
-export async function prompt($: EngineInterface, job: Job, lead: string) {
+export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false) {
   const token = crypto.randomUUID().slice(0, 8)
   const next: Job = { ...job, token, status: 'running', endedAt: undefined }
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   await saveJob($, next)
-  // The full rule goes in the first prompt to the folder and in REPORTING.md; later prompts get the reminder.
+  // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
+  // A job folder outlives its job, so a spawn cannot rely on that file. REPORTING.md keeps the full rule
+  // for the prompts after it, which get the reminder.
   const rules = `${job.dir}/REPORTING.md`
-  const first = !(await $.fs.exists(rules))
-  if (first) await $.fs.write(rules, `TOKEN below is the token in the latest prompt you got.\n\n${reportRule(next, 'TOKEN')}`)
-  const lost = await send($, job.name, `${lead} ${first ? reportRule(next) : reportReminder(next)}`)
+  const full = spawned || !(await $.fs.exists(rules))
+  if (full) await $.fs.write(rules, `TOKEN below is the token in the latest prompt you got.\n\n${reportRule(next, 'TOKEN')}`)
+  const lost = await send($, job.name, `${lead} ${full ? reportRule(next) : reportReminder(next)}`)
   if (lost === undefined) {
     // Only once the worker works is its turn's end the one to wait for: herdr answers a wait at
     // once for a state the worker is already in, and the last turn's 'done' may still be there.
@@ -509,7 +511,7 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
       }
     }
     const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'running', ...briefRefs(task, worker) }
-    await prompt($, job, `Your task is in ${dir}/TASK.md. Read it and do it.`)
+    await prompt($, job, `Your task is in ${dir}/TASK.md. Read it and do it.`, true)
     void refresh($)
     return {
       result: `Started ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}" (pane ${pane}). Its report will arrive as a <herdr-agent> message.`,
