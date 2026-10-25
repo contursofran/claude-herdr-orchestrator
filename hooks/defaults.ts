@@ -38,6 +38,9 @@ export const SWEEP_MS = 60_000
 export const GONE_MISSES = 2
 // How long a prompt that never arrived waits before its worker is reported blocked.
 export const LOST_REPORT_MS = 10_000
+// Prompts for the coordinator (reports, owner answers) wait this long after the last one,
+// and after its turn ends, so the ones that arrive together go out as one prompt (see outbox.ts).
+export const BATCH_MS = 3000
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
 
@@ -72,6 +75,8 @@ export const WRAP_UP = 'wrapUp'
 // A session's jobs, under this prefix and its id (see state.ts), kept this long after their last change.
 export const JOBS_PREFIX = 'jobs:'
 export const JOBS_KEEP_MS = 3 * 24 * 60 * 60_000
+// The outbox's copy in $.store (see outbox.ts), under this prefix and the session's id.
+export const OUTBOX_PREFIX = 'outbox:'
 
 // The board for apps outside Claude Code (see bridge.ts), under the home folder, and how
 // many of their last actions the snapshot reports.

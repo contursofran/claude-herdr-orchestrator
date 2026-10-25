@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { BATCH_MS } from '../hooks/defaults'
 import { briefRefs, groupTasks } from '../hooks/tasks'
 import type { Job } from '../types'
 import { BAND, command, start, stopAll } from './harness'
@@ -49,6 +50,7 @@ test('workers on one issue share a row, and an answer stays in its slot until cl
 
   // The recommended answer comes first; answering keeps the box on D1 and its row in place.
   await ui.press({ key: 'opt-1-0' })
+  await clock.advance(BATCH_MS)
   expect(submitted.at(-1)).toMatch(/<herdr-decision id="D1" from="w-busy">[\s\S]*The owner chose: By type/)
   expect((await ui.find({ key: 'item-D1' }))?.text).toMatch(/✓ D1 +Bag sort order/)
   expect(await ui.find({ type: 'Text', text: '✓ By type' })).toBeDefined()
@@ -199,6 +201,7 @@ test('the box shows every answer at the same height, and a closed item keeps its
   await ui.press({ key: 'item-T1' })
   expect((await ui.find({ key: 'url-1' }))?.text).toBe('open')
   await ui.press({ key: 'tick-1' })
+  await clock.advance(BATCH_MS)
   expect(submitted.at(-1)).toMatch(/herdr-owner-done/)
   expect(await ui.find({ type: 'Text', text: '✓ done' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'T1 done · sent' })).toBeDefined()

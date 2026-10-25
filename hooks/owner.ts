@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { Decision, Settled, Todo } from '../types'
 import { SETTLED_MS } from './defaults'
 import { notify } from './herdr'
+import { post } from './outbox'
 
 // What waits on the person: questions (ask_owner, workers' DECISION: lines) and
 // to-dos (pin_for_owner), pinned on the band until answered or ticked off.
@@ -86,15 +87,16 @@ export async function pingQuiet($: EngineInterface, pick: (d: Decision) => boole
 export async function choose($: EngineInterface, d: Decision, answer: string) {
   await update($, decisions, list => list.filter(x => x.id !== d.id))
   $.ui.toast(`D${d.id}: ${answer}`)
-  await $.prompt.submit({
-    text: [
+  await post(
+    $,
+    [
       `<herdr-decision id="D${d.id}" from="${d.from}">`,
       `Question: ${d.question}`,
       `The owner chose: ${answer}`,
       'It is already unpinned. Act on it now (tell the worker with message, record it in the state file).',
       '</herdr-decision>',
     ].join('\n'),
-  })
+  )
 }
 
 // Pins one line for the person at the top of the band. The same text already
@@ -116,14 +118,15 @@ export async function pin($: EngineInterface, text: string, kind: Todo['kind'], 
 export async function tick($: EngineInterface, t: Todo) {
   await update($, todos, list => list.filter(x => x.id !== t.id))
   if (t.kind !== 'do') return
-  await $.prompt.submit({
-    text: [
+  await post(
+    $,
+    [
       `<herdr-owner-done id="T${t.id}" from="${t.from.replace(/"/g, "'")}">`,
       `The owner ticked off: ${t.text}`,
       'It is already unpinned. Carry on from it (check it, tell the worker with message, record it in the state file).',
       '</herdr-owner-done>',
     ].join('\n'),
-  })
+  )
 }
 
 // The items pinned for the person, for the compaction summary to keep.

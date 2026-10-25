@@ -16,6 +16,7 @@ import {
 } from './defaults'
 import { acceptFolderTrust, herdr, type HerdrAgent, lastStatus, notify } from './herdr'
 import { ask, openQuestions } from './owner'
+import { post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd } from './session'
 import { jobs, saveJob } from './state'
@@ -440,12 +441,13 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     )
     body += `\n\n[The ${queued.length} message(s) queued for it were sent now; its next report follows.]`
   }
-  body += await belowTarget($)
   // The header's result and PRs, when it has them (see report.ts).
   const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}`
-  await $.prompt.submit({
-    text: `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}"${attrs}>\n${body.trim()}\n</herdr-agent>`,
-  })
+  await post(
+    $,
+    `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}"${attrs}>\n${body.trim()}\n</herdr-agent>`,
+    true,
+  )
 }
 
 // session.start: each running worker gets its wait back, since a reload killed the children.

@@ -1,11 +1,12 @@
 import { expect, test } from 'claude-code/testing'
+import { BATCH_MS } from '../hooks/defaults'
 import { BAND, row, spawn, start, stopAll } from './harness'
 
 // The band above the prompt: what pin_for_owner pins at the top, the workers, and #123 links.
 // Run with `claude plugin test .`.
 
 test('a pinned to-do shows at the top, and Done unpins it and tells the coordinator', async ($, on) => {
-  const { submitted } = await start($, on)
+  const { clock, submitted } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Merge client #565', from: 'app-client#541' })
   await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Staging disk at 98 GB free', kind: 'know' })
   // The same text again keeps its id.
@@ -18,6 +19,7 @@ test('a pinned to-do shows at the top, and Done unpins it and tells the coordina
 
   await ui.press({ key: 'tick-t1' })
   expect(await ui.find({ type: 'Text', text: /Merge client #565/ })).toBeUndefined()
+  await clock.advance(BATCH_MS)
   expect(submitted.at(-1)).toMatch(/<herdr-owner-done id="T1" from="app-client#541">\nThe owner ticked off: Merge client #565/)
 
   // A news item is dismissed without a prompt.

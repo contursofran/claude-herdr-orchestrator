@@ -6,6 +6,7 @@ import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS } from './defaults'
+import { restoreOutbox, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
@@ -37,6 +38,7 @@ export const register: Register = on => {
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
+    await restoreOutbox($)
     if (isWorker) {
       // A worker's own session sweeps the workers it started, but only while one of them runs:
       // with no running job it makes no herdr call. Its report check does nothing with no running
@@ -100,14 +102,21 @@ export const register: Register = on => {
   })
 
   // A worker's DECISION: questions ping the person once the coordinator's turn
-  // reading that report ends, unless it settled them itself.
+  // reading that report ends, unless it settled them itself. The prompts held in the
+  // outbox (see outbox.ts) wait for the turn's end too.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) noteReports(e.turnId, e.text)
+    if (e.agentId === undefined) {
+      noteReports(e.turnId, e.text)
+      turnStarted()
+    }
     return next(e)
   })
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
-    if (e.agentId === undefined) await pingAfterReports($, e.turnId)
+    if (e.agentId === undefined) {
+      await pingAfterReports($, e.turnId)
+      await turnEnded($)
+    }
     return out
   })
 

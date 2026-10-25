@@ -109,3 +109,17 @@ test('the view draws a header report with its result and PRs, and a report witho
   const plain = '<herdr-agent name="w-x" profile="builder" status="done">\nDone.\n</herdr-agent>'
   expect(oneLine(plain)).toBe('⇠ w-x done: Done.')
 })
+
+test('the view draws a batch as one line: each element, and the worker count once after them', () => {
+  const reports = [
+    '<herdr-agent name="w-a" profile="builder" status="done">\nDone: approve.\n</herdr-agent>',
+    '<herdr-agent name="w-b" profile="builder" status="blocked" result="blocked">\nStuck on CI.\n</herdr-agent>',
+    "[0 of 4 workers working (waiting ones don't count). Start 4 more now from the Ready list in the state file.]",
+  ]
+  expect(oneLine(reports.join('\n\n'))).toBe('⇠ 2 updates: w-a done: Done: approve. · w-b blocked: Stuck on CI. · 0/4 working')
+  // An owner's answer in the same batch keeps its own line.
+  const answer = '<herdr-decision id="D3" from="w-a">\nQuestion: Ship it?\nThe owner chose: Yes\nIt is already unpinned.\n</herdr-decision>'
+  expect(oneLine([reports[0], answer, reports[2]].join('\n\n'))).toBe(
+    '⇠ 2 updates: w-a done: Done: approve. · ◆ D3 owner chose: Yes · Ship it? · 0/4 working',
+  )
+})
