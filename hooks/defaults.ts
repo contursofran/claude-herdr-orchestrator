@@ -14,9 +14,13 @@ export const CLOSE_IDLE_MINUTES = 30
 
 // A worker's name: also its herdr tab's label.
 export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
-// A report longer than this goes to the coordinator as its first line and its file's path.
+// A report without a header (see report.ts) longer than this goes to the coordinator as its first line and its file's path.
 export const INLINE_LINES = 6
 export const INLINE_CHARS = 700
+// A report's header (see report.ts): the lines it may start within, and the summary's size.
+export const HEADER_SCAN_LINES = 12
+export const SUMMARY_LINES = 3
+export const SUMMARY_LINE_CHARS = 240
 // A follow-up to a worker up to this long is typed into its prompt as well as saved to a file.
 export const MESSAGE_CHARS = 4000
 // How long a worker may sit with an unchanged screen, not working and without
@@ -34,6 +38,9 @@ export const SWEEP_MS = 60_000
 export const GONE_MISSES = 2
 // How long a prompt that never arrived waits before its worker is reported blocked.
 export const LOST_REPORT_MS = 10_000
+// Prompts for the coordinator (reports, owner answers) wait this long after the last one,
+// and after its turn ends, so the ones that arrive together go out as one prompt (see outbox.ts).
+export const BATCH_MS = 3000
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
 
@@ -68,6 +75,8 @@ export const WRAP_UP = 'wrapUp'
 // A session's jobs, under this prefix and its id (see state.ts), kept this long after their last change.
 export const JOBS_PREFIX = 'jobs:'
 export const JOBS_KEEP_MS = 3 * 24 * 60 * 60_000
+// The outbox's copy in $.store (see outbox.ts), under this prefix and the session's id.
+export const OUTBOX_PREFIX = 'outbox:'
 
 // The board for apps outside Claude Code (see bridge.ts), under the home folder, and how
 // many of their last actions the snapshot reports.

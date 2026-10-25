@@ -56,6 +56,10 @@ export type Settled = {
 // pinned at the top of the band until the coordinator unpins it or the person ticks it off.
 export type Todo = { id: number; kind: 'do' | 'know'; text: string; from: string; at: number }
 
+// A prompt for the coordinator held until its batch goes out (see outbox.ts). `report` marks a
+// worker's report: a batch with one ends with the worker count.
+export type OutboxItem = { text: string; report?: true }
+
 // The band's open tab and, on the decisions tab, the decision shown.
 // `workers: 'list'` (Details) shows every worker; compact shows the first few.
 export type View = { tab: 'workers' | 'decisions'; selected: number | null; workers?: 'list' }
@@ -157,6 +161,7 @@ declare module 'claude-code' {
       lastId: number
       todos: Todo[]
       lastTodo: number
+      outbox: OutboxItem[]
       links: Links
       orchestrating: boolean
       settings: SettingsView

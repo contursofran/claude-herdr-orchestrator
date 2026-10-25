@@ -47,6 +47,8 @@ export async function start(
   const prs: Record<string, unknown> = {}
   // How many more `agent prompt --wait` calls fail with agent_prompt_stalled, by worker; the test sets it.
   const stalls: Record<string, number> = {}
+  // How many more prompts this session refuses (its `$.prompt.submit` throws); the test sets it.
+  const refuse = { next: 0 }
   // Every herdr call the mod makes, in order: the CLI's process.run argv and the process.spawn ones.
   const calls: string[][] = []
   // herdr's status for each worker it knows: the stored jobs' workers from the start, then each
@@ -75,7 +77,22 @@ export async function start(
   for (const [key, value] of Object.entries(stored))
     if (key.startsWith('jobs:'))
       for (const name of Object.keys((value as { jobs?: object }).jobs ?? {})) status[name] = STATUS[name] ?? 'idle'
-  mock.store(on, stored)
+  // $.store, answered here rather than by mock.store, so the test can read what the mod kept in it.
+  // Values go in and come out as JSON, as the engine keeps them.
+  const store = new Map<string, unknown>(Object.entries(stored).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]))
+  on('store.get', (_, e) => ({ value: store.has(e.key) ? JSON.parse(JSON.stringify(store.get(e.key))) : undefined }))
+  on('store.set', (_, e) => {
+    store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+    return { value: undefined }
+  })
+  on('store.delete', (_, e) => {
+    store.delete(e.key)
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: [...store.keys()] }))
+  // A turn the test starts or ends with $.turn: the plugin's hooks see it, and these answer it.
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock', ...env })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.register', (_, e) => ({ value: { tool: e.name } }))
@@ -214,6 +231,10 @@ export async function start(
     return { value: { code: reply.code, signal: null } }
   })
   on('prompt.submit', (_, e) => {
+    if (refuse.next > 0) {
+      refuse.next--
+      throw new Error('the session refused the prompt')
+    }
     submitted.push(e.text)
     return { text: e.text }
   })
@@ -234,7 +255,26 @@ export async function start(
     await clock.settle()
   }
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  return { clock, submitted, typed, closed, screens, files, prs, panes, stalls, calls, status, fail, gone, emit, finish, kill }
+  return {
+    clock,
+    submitted,
+    typed,
+    closed,
+    screens,
+    files,
+    prs,
+    panes,
+    stalls,
+    refuse,
+    store,
+    calls,
+    status,
+    fail,
+    gone,
+    emit,
+    finish,
+    kill,
+  }
 }
 
 // A row is one Text per column; its name is padded.

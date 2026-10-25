@@ -2,9 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Reset } from '../types'
 import { refresh } from './board'
-import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath, wrappingUp } from './config'
+import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
 import { SAVE_WAIT_MS, WRAP_UP } from './defaults'
-import { notify } from './herdr'
 import { pinned } from './owner'
 import { cmd, session } from './session'
 import { jobs } from './state'
@@ -55,6 +54,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     'You coordinate worker agents for the repo(s) in this folder: you plan, start and check them and land their PRs; you write little code yourself.',
     '- Rules: read AGENTS.md or CLAUDE.md first. They name the base branch, the checks, the PR format, who merges and what needs the owner; workers read them too.',
     `- State: keep ${statePath} current, updated after every report: Running (worker, profile, worktree, issue or PR, what it does), Ready (planned items that can start now, at least 3), Waiting (CI, review, merge), Decisions, Next. A fresh context carries on from it alone.`,
+    "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report.",
     '- Worktrees: each worker gets its own git worktree off the base branch, next to the repo (`git worktree add -b <branch> ../<repo>-<slug> origin/<base>`); never two writers in one.',
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
     `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
@@ -81,23 +81,6 @@ export async function toggleWrapUp($: EngineInterface, on: boolean) {
   return on
     ? `Wrapping up: no new herdr workers start. ${live.length ? `${live.length} still running finish: ${names}.` : 'None are running.'} ${cmd('wrap-up')} off ends it.`
     : 'Wrap-up off: workers start again.'
-}
-
-// A line for the coordinator: while wrapping up, how many workers are still out;
-// otherwise, when fewer work than the target, how many to start.
-export async function belowTarget($: EngineInterface) {
-  const all = Object.values(await jobs($))
-  if (await wrappingUp($)) {
-    const left = all.filter(j => j.status === 'running').length
-    if (left > 0)
-      return `\n\n[Wrapping up: ${left} worker${left === 1 ? '' : 's'} still out. The owner stopped new work: start no new workers (a reviewer for an open PR is allowed); send fixes with message and finish their PRs.]`
-    await notify($, 'herdr workers all finished', `Every worker has finished; none start until ${cmd('wrap-up')} off.`)
-    return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand, then stop. The owner ends it with ${cmd('wrap-up')} off.]`
-  }
-  const want = await target($)
-  const running = all.filter(j => j.status === 'running' && !j.wait).length
-  if (running >= want) return ''
-  return `\n\n[${running} of ${want} workers working (waiting ones don't count). Start ${want - running} more now from the Ready list in the state file; if it has fewer than 3 items, also start a planner on the next backlog issue.]`
 }
 
 // The live workers, for the compaction summary to keep.
