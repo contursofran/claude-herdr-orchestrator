@@ -6,6 +6,7 @@ import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS } from './defaults'
+import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
@@ -37,6 +38,7 @@ export const register: Register = on => {
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
+    await restoreOutbox($)
     if (isWorker) {
       // A worker's own session sweeps the workers it started, but only while one of them runs:
       // with no running job it makes no herdr call. Its report check does nothing with no running
@@ -45,7 +47,10 @@ export const register: Register = on => {
         if (Object.values(await jobs($)).some(j => j.status === 'running')) await sweep($, closeMinutes)
       }
       void sweepIfRunning().catch(() => {})
-      $.clock.every(SWEEP_MS, () => void sweepIfRunning().catch(() => {}))
+      $.clock.every(SWEEP_MS, () => {
+        void sweepIfRunning().catch(() => {})
+        retry($)
+      })
       $.clock.every(3000, () => void checkReports($).catch(() => {}))
       return started
     }
@@ -71,7 +76,10 @@ export const register: Register = on => {
     if (pruneMinutes > 0) $.clock.every(pruneMinutes * 60_000, () => void pruneMerged($))
     // The sweep always runs: it is what catches a worker whose wait child died. Only its
     // closeIdle step depends on closeIdleMinutes.
-    $.clock.every(SWEEP_MS, () => void sweep($, closeMinutes).catch(() => {}))
+    $.clock.every(SWEEP_MS, () => {
+      void sweep($, closeMinutes).catch(() => {})
+      retry($)
+    })
     return started
   })
   on('session.end', async ($, e, next) => {
@@ -100,14 +108,25 @@ export const register: Register = on => {
   })
 
   // A worker's DECISION: questions ping the person once the coordinator's turn
-  // reading that report ends, unless it settled them itself.
+  // reading that report ends, unless it settled them itself. The prompts held in the
+  // outbox (see outbox.ts) wait for the turn's end too.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) noteReports(e.turnId, e.text)
+    if (e.agentId === undefined) {
+      noteReports(e.turnId, e.text)
+      turnStarted()
+    }
     return next(e)
   })
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
-    if (e.agentId === undefined) await pingAfterReports($, e.turnId)
+    if (e.agentId === undefined) {
+      // turnEnded runs even when the ping throws: a busy flag left set would hold the outbox until a turn ends.
+      try {
+        await pingAfterReports($, e.turnId)
+      } finally {
+        await turnEnded($)
+      }
+    }
     return out
   })
 

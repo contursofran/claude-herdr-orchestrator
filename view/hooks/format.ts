@@ -9,11 +9,17 @@ function attr(tag: string, name: string): string | undefined {
   return tag.match(new RegExp(`${name}="([^"]*)"`))?.[1]
 }
 
-// One line for a herdr-agents prompt, or undefined to keep the engine's row.
-export function oneLine(text: string): string | undefined {
-  const body = payload(text)
-  if (!body) return undefined
-  const lines = body.split('\n')
+// The worker count, or the wrap-up note, that a prompt with a worker's report ends with.
+function workerNote(body: string): string {
+  const count = body.match(/\[(\d+) of (\d+) workers working/)
+  const wrap = body.match(/\[Wrapping up: (?:(\d+) workers? still out|every worker has finished)/)
+  return wrap ? ` · wrapping up, ${wrap[1] ?? 0} left` : count ? ` · ${count[1]}/${count[2]} working` : ''
+}
+
+// One element's line, from its tag (its first line) on, or undefined for a tag it doesn't know.
+// `note` is the worker note; a worker's line shows it.
+function element(part: string, note: string): string | undefined {
+  const lines = part.split('\n')
   const tag = lines[0]!
   const inner = lines
     .slice(1)
@@ -22,12 +28,9 @@ export function oneLine(text: string): string | undefined {
   if (tag.startsWith('<herdr-agent ')) {
     const first = inner.find(l => !l.startsWith('[')) ?? ''
     const full = inner.some(l => l.startsWith('[Full report')) ? ' · full report in file' : ''
-    const count = body.match(/\[(\d+) of (\d+) workers working/)
-    const wrap = body.match(/\[Wrapping up: (?:(\d+) workers? still out|every worker has finished)/)
-    const workers = wrap ? ` · wrapping up, ${wrap[1] ?? 0} left` : count ? ` · ${count[1]}/${count[2]} working` : ''
     const pr = attr(tag, 'pr')
     const prs = pr ? ` · PR #${pr.split(',').join(', #')}` : ''
-    return `⇠ ${attr(tag, 'name') ?? 'worker'} ${attr(tag, 'result') ?? attr(tag, 'status') ?? ''}: ${first}${full}${prs}${workers}`
+    return `⇠ ${attr(tag, 'name') ?? 'worker'} ${attr(tag, 'result') ?? attr(tag, 'status') ?? ''}: ${first}${full}${prs}${note}`
   }
   // Single-line forms: <herdr-decision ...>text</herdr-decision>, <herdr-context ...>text...
   const text1 =
@@ -57,4 +60,16 @@ export function oneLine(text: string): string | undefined {
   }
   if (tag.startsWith('<herdr-context')) return `↻ herdr-agents: ${text1}`
   return undefined
+}
+
+// One line for a herdr-agents prompt, or undefined to keep the engine's row. A batch (see
+// outbox.ts) is several elements: one line for each, and the worker note once after them.
+export function oneLine(text: string): string | undefined {
+  const body = payload(text)
+  if (!body) return undefined
+  const parts = body.split(/\n(?=<herdr-)/)
+  const note = workerNote(body)
+  if (parts.length === 1) return element(body, note)
+  const lines = parts.map(part => (element(part, '') ?? part.split('\n')[0]!).replace(/^⇠ /, ''))
+  return `⇠ ${parts.length} updates: ${lines.join(' · ')}${note}`
 }

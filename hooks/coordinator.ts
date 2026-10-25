@@ -2,9 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Reset } from '../types'
 import { refresh } from './board'
-import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath, wrappingUp } from './config'
+import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
 import { SAVE_WAIT_MS, WRAP_UP } from './defaults'
-import { notify } from './herdr'
 import { pinned } from './owner'
 import { cmd, session } from './session'
 import { jobs } from './state'
@@ -82,23 +81,6 @@ export async function toggleWrapUp($: EngineInterface, on: boolean) {
   return on
     ? `Wrapping up: no new herdr workers start. ${live.length ? `${live.length} still running finish: ${names}.` : 'None are running.'} ${cmd('wrap-up')} off ends it.`
     : 'Wrap-up off: workers start again.'
-}
-
-// A line for the coordinator: while wrapping up, how many workers are still out;
-// otherwise, when fewer work than the target, how many to start.
-export async function belowTarget($: EngineInterface) {
-  const all = Object.values(await jobs($))
-  if (await wrappingUp($)) {
-    const left = all.filter(j => j.status === 'running').length
-    if (left > 0)
-      return `\n\n[Wrapping up: ${left} worker${left === 1 ? '' : 's'} still out. The owner stopped new work: start no new workers (a reviewer for an open PR is allowed); send fixes with message and finish their PRs.]`
-    await notify($, 'herdr workers all finished', `Every worker has finished; none start until ${cmd('wrap-up')} off.`)
-    return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand, then stop. The owner ends it with ${cmd('wrap-up')} off.]`
-  }
-  const want = await target($)
-  const running = all.filter(j => j.status === 'running' && !j.wait).length
-  if (running >= want) return ''
-  return `\n\n[${running} of ${want} workers working (waiting ones don't count). Start ${want - running} more now from the Ready list in the state file; if it has fewer than 3 items, also start a planner on the next backlog issue.]`
 }
 
 // The live workers, for the compaction summary to keep.

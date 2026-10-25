@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import { BATCH_MS } from '../hooks/defaults'
 import { spawn, start, stopAll } from './harness'
 
 // The board for apps outside Claude Code: a snapshot file per session, and action files
@@ -35,11 +36,11 @@ test('the board is written for outside apps, and their action files answer and t
   files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'By type' })
   files[`${INBOX}/2-done.json`] = JSON.stringify({ action: 'done', key: 'T1' })
   files[`${INBOX}/3-stale.json`] = JSON.stringify({ action: 'answer', key: 'D9', answer: 'x' })
-  await clock.advance(3000)
+  await clock.advance(3000 + BATCH_MS)
 
   // The coordinator gets the same prompts as from the sidebar.
-  expect(submitted.some(t => t.startsWith('<herdr-decision id="D1"') && t.includes('The owner chose: By type'))).toBe(true)
-  expect(submitted.some(t => t.startsWith('<herdr-owner-done id="T1"'))).toBe(true)
+  expect(submitted.some(t => t.includes('<herdr-decision id="D1"') && t.includes('The owner chose: By type'))).toBe(true)
+  expect(submitted.some(t => t.includes('<herdr-owner-done id="T1"'))).toBe(true)
   const after = JSON.parse(files[FILE] ?? '{}')
   expect(after.needs.find((n: { key: string }) => n.key === 'D1')).toMatchObject({ isOpen: false, end: 'By type' })
   expect(after.needs.find((n: { key: string }) => n.key === 'T1')).toMatchObject({ isOpen: false, end: 'done' })
