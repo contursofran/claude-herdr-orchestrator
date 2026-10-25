@@ -69,16 +69,25 @@ def parse_plugin_test(text):
     return out
 
 
+def unittest_name(name):
+    """`test_x (mod.Class.test_x)`, which Python 3.11+ prints, is the name `test_x (mod.Class)` that Python 3.9 prints:
+    the same test, so one name whichever Python ran it (expected.json is written by one and checked by the other)."""
+    m = re.match(r"^(\w+) \(([\w.]+)\)$", name)
+    if m and m.group(2).endswith("." + m.group(1)):
+        return f"{m.group(1)} ({m.group(2)[: -len(m.group(1)) - 1]})"
+    return name
+
+
 def parse_unittest(text):
     """{name: "pass"|"fail"|"skip"} from `python3 -m unittest -v` output: `test_x (mod.Class) ... ok|FAIL|ERROR|skipped`.
-    The name is the text before " ... ". A test with a docstring prints the docstring instead of its name; it is
-    not matched, so it counts as missing."""
+    The name is the text before " ... ", as unittest_name() gives it. A test with a docstring prints the docstring
+    instead of its name; it is not matched, so it counts as missing."""
     out = {}
     for line in text.splitlines():
         m = UNITTEST_ROW.match(line)
         if m:
             status = m.group(2)
-            out[m.group(1)] = "skip" if status.startswith("skipped") else UNITTEST_STATUS[status]
+            out[unittest_name(m.group(1))] = "skip" if status.startswith("skipped") else UNITTEST_STATUS[status]
     return out
 
 

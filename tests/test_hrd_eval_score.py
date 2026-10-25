@@ -183,6 +183,14 @@ class UnittestParser(unittest.TestCase):
         # unittest -v prints a test's docstring instead of its name; such a test counts as missing.
         self.assertEqual(sc.parse_unittest("Adds two prices ... ok\n"), {})
 
+    def test_python_3_11_names_with_the_method_are_the_same_tests(self):
+        # Python 3.11+ prints test_x (mod.Class.test_x); 3.9 prints test_x (mod.Class). One name for both.
+        text = "test_add (test_cart.TestCart.test_add) ... ok\ntest_bulk (test_cart.TestCart.test_bulk) ... FAIL\n"
+        self.assertEqual(sc.parse_unittest(text), {"test_add (test_cart.TestCart)": "pass", "test_bulk (test_cart.TestCart)": "fail"})
+
+    def test_a_name_whose_last_part_is_not_the_method_is_kept_as_it_is(self):
+        self.assertEqual(sc.unittest_name("test_add (mod.Other)"), "test_add (mod.Other)")
+
 
 class Globs(unittest.TestCase):
     def test_double_star_crosses_slashes(self):
