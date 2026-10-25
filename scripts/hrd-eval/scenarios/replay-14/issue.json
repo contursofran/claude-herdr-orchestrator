@@ -1,0 +1,42 @@
+{
+  "number": 10,
+  "title": "spawn: the first prompt is sometimes lost, so the worker waits at an empty input box",
+  "body": "## Problem\n\nSometimes `spawn` starts a worker, but the worker does not get its first prompt. The tab opens, and Claude Code shows an empty input box. The session cost stays at `$0.00`. After 5 minutes, the watch loop reports the worker as `idle` with no RESULT.md. Then the coordinator must stop the worker and spawn it again.\n\n## Observed\n\n- 2026-10-23: this happened 2 times in about 1 hour, once to a `builder` and once to a `reviewer`.\n- At those times, about 7 worker tabs were open, and new workers started a short time after other workers.\n- The job folder has only `TASK.md` and `SCREEN-*.txt`. The screen file shows the empty input box with a placeholder, and `$0.00 session`.\n- A spawn again with a new worker name, and the same task, worked.\n- Versions: herdr 0.9.3, Claude Code 2.1.309.\n\n## Cause (probable)\n\n`spawnWorker` (`hooks/workers.ts`) runs `herdr agent start ... --timeout 60000`, and then `prompt()`. `prompt()` runs `herdr agent prompt <name> <text>` **without `--wait`** (`hooks/workers.ts:49`). So the mod does not check that the agent accepted the submission.\n\n`agent start` returns when herdr detects the agent as ready for input. When many sessions start at the same time, Claude Code can still be busy with its own startup at that moment. Then it loses the typed text. Nothing detects this, and the worker waits at an empty prompt.\n\n## Proposed fix\n\n1. In `prompt()`, run `herdr agent prompt <name> <text> --wait --until working --until blocked --timeout 15000`. herdr returns `agent_prompt_stalled` when it does not see `working` or `blocked` within 5 s after the submission.\n2. On `agent_prompt_stalled`, read the pane. If the input box is empty, send the prompt again. Try a maximum of 3 times, with a short sleep between the tries.\n3. If all tries fail, report the worker as `blocked`, with the text \"prompt not delivered\", not as `idle` after 5 minutes.\n4. Add a test: a fake `herdr` that fails the first `agent prompt --wait` with `agent_prompt_stalled`. The test checks that the prompt is sent again, and that the job continues.\n\nNote: only the first prompt after `agent start` is at risk. But the same check also helps `message` and the wake from `WAIT.json`, because these also use `prompt()`.\n\n\n## Acceptance details\n\n- A prompt that starts no work is sent again, with the same text. Three tries in all; a try that starts work ends the retries.\n- When no work starts after 3 tries, the worker is reported blocked, and its report reads: `The worker stopped (its prompt was not delivered: no work started after 3 tries)`.\n- That blocked report comes within 10 s of the spawn, not after the five-minute idle wait.\n- A worker whose later try starts work reports as usual, and its RESULT.md reaches the coordinator within 10 s.",
+  "state": "CLOSED",
+  "labels": [],
+  "comments": [
+    {
+      "author": {
+        "login": "contursofran"
+      },
+      "body": "A third case on 2026-10-23: a `planner` (Opus) worker. Same signs: empty input box, `$0.00 session`, and an `idle` report after 5 min with no RESULT.md. At that time, about 6 worker tabs were open. So far, 3 lost prompts in about 2 hours, on all three profiles (builder, reviewer and planner).",
+      "createdAt": "2026-10-23T19:37:20Z"
+    },
+    {
+      "author": {
+        "login": "contursofran"
+      },
+      "body": "4th case: builder b-12s1 started with an empty prompt ($0.00 session), idle after 5 min, no RESULT.md. Stopped and started again under a new name.",
+      "createdAt": "2026-10-23T19:50:04Z"
+    },
+    {
+      "author": {
+        "login": "contursofran"
+      },
+      "body": "Another case (5th): reviewer r-4s6 started with an empty prompt, stayed idle, and wrote no RESULT.md. A respawn under a new name worked.",
+      "createdAt": "2026-10-23T21:32:07Z"
+    },
+    {
+      "author": {
+        "login": "contursofran"
+      },
+      "body": "Case 6 (2026-10-23): reviewer r-53. The prompt was typed into the input box but not submitted. The worker stayed idle for 5 min with no RESULT.md. The idle report came correctly. Fix: stop and spawn again under a new name.",
+      "createdAt": "2026-10-23T21:43:01Z"
+    }
+  ],
+  "url": "https://github.com/contursofran/claude-herdr-orchestrator/issues/10",
+  "author": {
+    "login": "contursofran"
+  },
+  "createdAt": "2026-10-23T19:29:52Z"
+}

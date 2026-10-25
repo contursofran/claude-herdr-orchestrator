@@ -1,0 +1,32 @@
+{
+  "title": "Replay of #15: a session whose state lost its jobs gets them back from the store (issue #11)",
+  "kind": "replay",
+  "issue": {
+    "number": 11,
+    "file": "issue.json"
+  },
+  "source": {
+    "commit": "1bc830eb55d0b79f055e289ae12ca36d36b92048"
+  },
+  "hidden": {
+    "commit": "faa02a8bb5ae210721c153529397528a829eb7ae",
+    "paths": ["tests"]
+  },
+  "setup": [
+    ["npm", "ci", "--no-audit", "--no-fund", "--prefer-offline"],
+    ["bash", "scripts/types.sh"]
+  ],
+  "grade": {
+    "cmd": ["claude", "plugin", "test", "."],
+    "parser": "plugin-test",
+    "timeout": 300
+  },
+  "allowed": ["hooks/defaults.ts", "hooks/register.tsx", "hooks/state.ts", "tests/**"],
+  "expect": {
+    "decision": null,
+    "testsChanged": true
+  },
+  "onDecision": "recommended",
+  "estimateScale": 1,
+  "notes": "Source 1bc830e (the parent of PR #15), hidden tests from its merge faa02a8 (tests/ replaced whole). testsChanged is true: PR #15 changed tests/workers.test.tsx. The issue is the real one; both comments were posted before the PR. Not in the issue, but the reference test checks it: the test seeds $.store under the key jobs:<session id> (the value is {at, jobs}, and each job has name, profile, cwd, dir, startedAt, status and token). The issue does not give that layout, so a fix that keeps the jobs under another key fails the test. Left out of the issue on purpose, per the plan's rule for replays."
+}

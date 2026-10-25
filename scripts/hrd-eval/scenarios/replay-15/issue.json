@@ -1,0 +1,28 @@
+{
+  "number": 11,
+  "title": "/reload-plugins drops the worker list: stop, message and the sidebar lose all running workers",
+  "body": "## Expected\nAfter `/reload-plugins`, the coordinator keeps its running workers. `hooks/state.ts` and the comment in `hooks/workers.ts` (\"the jobs live in $.state, so session.start re-attaches a watcher to each running one\") say that a reload keeps the jobs.\n\n## Actual\nAfter `/reload-plugins` (then `/hrd-side`, `/hrd-orchestrate`), the jobs list is empty:\n- `stop` and `message` return `no worker <name>` for each of the 9 workers that ran.\n- The sidebar shows `0 busy` and \"No workers yet.\", but the worker tabs are still open and working in herdr.\n- No watcher runs, so no report arrives: one worker wrote RESULT.md, and three wrote WAIT.json for CI. The mod picked up none of these.\n\n## Effect\nThe coordinator cannot reach its workers. Recovery: close each worker tab with `herdr tab close`, then spawn new workers in the same worktrees to continue the work.\n\n## Repro\n1. Spawn some workers with `spawn`.\n2. Run `/reload-plugins` while they work.\n3. Call `stop` on one worker: the result is `no worker <name>`. The sidebar shows no workers.\n\n## Possible directions\n- Check that `$.state` atoms persist over a plugin reload, or save the jobs to a file in the session dir.\n- Optionally, add a re-adopt step: on `session.start`, find herdr tabs with a known worker name and a job folder, and rebuild their jobs.\n\nVersion: mod at f9f3201.\n",
+  "state": "CLOSED",
+  "labels": [],
+  "comments": [
+    {
+      "author": {
+        "login": "contursofran"
+      },
+      "body": "Related, same session after the reload: `spawn` and `stop` work again, but `message` fails with: \"herdr-agents registered the tool message but no tool.call hook answered this call: add on(\\\"tool.call\\\", { tool: \\\"mcp__herdr-agents__message\\\" }, ...) to the plugin.\" Workaround: `herdr agent prompt <pane> \"<text>\"`.",
+      "createdAt": "2026-10-23T20:12:41Z"
+    },
+    {
+      "author": {
+        "login": "contursofran"
+      },
+      "body": "Case 2026-10-23: the gh token became invalid, and all 7 worker Claude sessions ended (the panes showed a bare shell). After that, stop said \"no worker <name>\" for all 7. The mod had lost the jobs, and no idle or done report came. Recovery: I closed the panes with herdr pane close and spawned new workers under new names.",
+      "createdAt": "2026-10-23T22:09:01Z"
+    }
+  ],
+  "url": "https://github.com/contursofran/claude-herdr-orchestrator/issues/11",
+  "author": {
+    "login": "contursofran"
+  },
+  "createdAt": "2026-10-23T20:09:23Z"
+}
