@@ -126,6 +126,7 @@ All start with `hrd-` (`commandPrefix` changes it).
 | `/hrd-decisions` | List the questions and to-dos waiting for you. Answer on the panel: `1`–`4` from an empty prompt, or alt+d then arrows and Enter. |
 | `/hrd-workers` | List this session's workers. |
 | `/hrd-prune` | Remove worktrees whose PR is merged (also runs every `pruneMinutes`). |
+| `/hrd-update` | Pull the clone this mod was installed from (`git pull --ff-only`), then run its `install.sh` again. It answers with the commits and version; running sessions reload the new version by themselves. |
 | `/hrd-config` | The settings, laid out like `/config`, in the panel above the prompt: alt+d to move into them, ↑↓ to move, Enter to change (a switch flips, a choice steps on, a text opens a field), Done or `/hrd-config` again to close. The first row picks the file: all folders or this folder. Profiles are edited in the file. |
 | `/hrd-help`, `/hrd-h` | A short guide: the commands, the panel's keys, and the profiles and settings in effect for this folder. |
 
