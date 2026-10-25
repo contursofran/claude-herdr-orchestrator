@@ -296,6 +296,8 @@ class RunnerCase(unittest.TestCase):
         if slices:
             sc["slices"] = slices
         write_json(os.path.join(folder, "scenario.json"), sc)
+        # A graded scenario needs its expected.json before a run starts; these runs grade no particular test names.
+        write_json(os.path.join(folder, "expected.json"), {"tests": [], "discriminating": []})
 
     def matrix(self, *extra, arms="A", arms_dir=ARMS, scenarios="replay-test", source=None):
         argv = [
@@ -758,16 +760,13 @@ class CostTest(unittest.TestCase):
         self.assertEqual(HR.call_cost(None)["cost_transcript"], 0)
 
 
-class PluginRowsTest(unittest.TestCase):
-    def test_rows_are_tests_and_the_summary_is_not(self):
-        text = (
-            "tests/side.test.tsx:\n(pass) workers join through shared numbers [0.84ms]\n"
-            "(fail) a row that failed\n(pass) the file ran to its end\n 2 pass\n 1 fail\nRan 3 tests across 1 files. [1.0s]\n"
-        )
-        self.assertEqual(
-            HR.plugin_rows(text),
-            {"workers join through shared numbers": "pass", "a row that failed": "fail", "the file ran to its end": "pass"},
-        )
+class GradeParsersTest(unittest.TestCase):
+    def test_the_runner_has_no_copy_of_the_plugin_row_parser(self):
+        # Grade rows are read by score.py's parse_plugin_test (its rows are tested in test_hrd_eval_score.py); a second
+        # copy here could drift from it. CheckScenariosTest reads the rows through the runner's check.
+        self.assertFalse(hasattr(HR, "plugin_rows"))
+        self.assertFalse(hasattr(HR, "PLUGIN_ROW"))
+        self.assertFalse(hasattr(HR, "PLUGIN_MS"))
 
 
 class SetupTest(RunnerCase):
@@ -1170,7 +1169,7 @@ class MatrixTest(RunnerCase):
         self.assertFalse(os.path.exists(self.results))
 
     def test_a_budget_reached_mid_run_stops_the_run_with_status_budget(self):
-        # plan (opus, estimate 0.60) then build (haiku, 0.08) fit under 1.63; the plan really cost 1.5, so review (0.60) does not
+        # plan (opus, estimate 0.30) then build (haiku, 0.06) fit under 1.63; the plan really cost 1.5, so review (0.30) does not
         self.behave(plan={"cost": 1.5}, build={"cost": 0.01})
         code, _, _ = self.matrix("--max-cost", "1.63")
         self.assertEqual(code, 2)
@@ -1337,6 +1336,7 @@ class CheckScenariosTest(RunnerCase):
 
     def test_base_fails_and_reference_passes_then_expected_json_is_written_and_matches(self):
         self.stub_scenario()
+        os.remove(os.path.join(self.scen, "replay-test", "expected.json"))  # make_scenario wrote an empty one
         code, out = self.check()
         self.assertEqual(code, 1)
         self.assertIn("drift: no expected.json", out)
@@ -1391,6 +1391,135 @@ class CheckScenariosTest(RunnerCase):
             read_json(os.path.join(folder, "expected.json")),
             {"tests": ["hidden test", "own test"], "discriminating": ["hidden test"]},
         )
+
+
+class ScoreTableTest(RunnerCase):
+    def test_a_real_run_ends_with_the_score_table_of_its_results(self):
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        self.assertIn("== hrd-eval: 1 runs, 1 scenarios, 1 arms, repeats 1, started ", out)
+        self.assertIn("== per arm", out)
+        self.assertLess(out.index("fix rounds"), out.index("== hrd-eval:"))  # the run's line comes before the table
+
+    def test_json_prints_the_aggregate_with_its_six_keys(self):
+        code, out, _ = self.matrix("--json")
+        self.assertEqual(code, 0, out)
+        data = json.loads(out)
+        self.assertEqual(set(data), {"matrix", "runs", "cells", "arms", "roles", "disagreements"})
+        self.assertEqual(data["matrix"]["repeats"], 1)
+        self.assertEqual([(r["scenario"], r["arm"]) for r in data["runs"]], [("replay-test", "A")])
+
+    def test_a_graded_scenario_without_expected_json_is_refused_before_any_call(self):
+        os.remove(os.path.join(self.scen, "replay-test", "expected.json"))
+        code, _, err = self.matrix()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+        self.assertIn("replay-test: no expected.json", err)
+        self.assertEqual(self.fake_calls(), [])
+        self.assertFalse(os.path.exists(self.results))
+
+
+class FixtureRunTest(RunnerCase):
+    def test_a_fixture_run_works_in_a_copy_of_its_folder_and_needs_no_expected_json(self):
+        fixture = os.path.join(self.tmp, "fixture")
+        write(fixture, "shop.py", "TOTAL = 0\n")
+        write(fixture, "AGENTS.md", "# Rules\n")
+        self.make_scenario(sid="fixture-test", hidden=False)
+        path = os.path.join(self.scen, "fixture-test", "scenario.json")
+        sc = read_json(path)
+        sc.pop("grade")
+        sc.update(kind="fixture", source={"dir": fixture})
+        write_json(path, sc)
+        os.remove(os.path.join(self.scen, "fixture-test", "expected.json"))
+        code, out, err = self.matrix(scenarios="fixture-test")
+        self.assertEqual(code, 0, out + err)
+        plan = self.fake_calls()[0]
+        self.assertEqual(plan["files"], ["AGENTS.md", "shop.py"])  # the worker's repo: the folder's files, and nothing else
+        run = read_json(os.path.join(self.results, "fixture-test", "A", "r1", "run.json"))
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(run["changed_files"], ["shop.py"])  # the build's commit, merged into main for the record
+
+
+class SshAgentTest(unittest.TestCase):
+    PROFILE = {"kind": "claude", "args": ["--agent", "builder", "--model", "haiku", "--effort", "xhigh"]}
+
+    def setUp(self):
+        self.run = tempfile.mkdtemp(prefix="hrd-eval-ssh-")
+        self.addCleanup(shutil.rmtree, self.run, True)
+        owner = os.path.join(self.run, "owner.gitconfig")
+        write(self.run, "owner.gitconfig", "")
+        patcher = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": owner, "SSH_AUTH_SOCK": "/private/tmp/agent.sock"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_worker_call_gets_no_ssh_agent_socket(self):
+        self.assertIn("SSH_AUTH_SOCK", os.environ)  # the owner's shell has one; the worker's env must not
+        self.assertNotIn("SSH_AUTH_SOCK", HR.run_env(self.run, self.PROFILE))
+
+    def test_setup_and_grade_get_no_ssh_agent_socket_either(self):
+        self.assertNotIn("SSH_AUTH_SOCK", HR.clean_env(self.run))
+
+
+class EstimateTest(unittest.TestCase):
+    # The smoke run's calls (replay-13 x A x 1, calls.jsonl): opus plan 0.5213, opus answer 0.1542, opus review 0.1874 and
+    # haiku build 0.0591. A model's per-call estimate must cover the mean of its calls and stay within 1.25 times it.
+    SMOKE = {"opus": [0.5213, 0.1542, 0.1874], "haiku": [0.0591]}
+
+    def test_each_model_estimate_covers_its_smoke_mean_and_stays_close_to_it(self):
+        for model, costs in self.SMOKE.items():
+            mean = sum(costs) / len(costs)
+            est = HR.estimate({"args": ["--model", model]})
+            self.assertGreaterEqual(est, mean, model)
+            self.assertLessEqual(est, 1.25 * mean, model)
+
+
+class CheckUngradedTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="hrd-eval-ungraded-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        write(os.path.join(self.tmp, "fixture"), "shop.py", "TOTAL = 0\n")
+
+    def scenario(self, **changes):
+        folder = os.path.join(self.tmp, "scenarios", "ungraded")
+        write_json(os.path.join(folder, "issue.json"), {"number": 3, "title": "t", "body": "b"})
+        sc = {
+            "title": "ungraded",
+            "kind": "fixture",
+            "issue": {"number": 3, "file": "issue.json"},
+            "source": {"dir": os.path.join(self.tmp, "fixture")},
+            "expect": {"decision": {"match": "(?i)stack"}, "testsChanged": False},
+        }
+        sc.update(changes)
+        write_json(os.path.join(folder, "scenario.json"), sc)
+        return HR.load_scenario(folder)
+
+    def test_a_scenario_with_no_grade_checks_out_and_writes_no_expected_json(self):
+        sc = self.scenario()
+        r = HR.check_scenario(sc, None, True)
+        self.assertTrue(r["ungraded"])
+        self.assertEqual(r["problems"], [])
+        self.assertFalse(os.path.exists(os.path.join(sc["dir"], "expected.json")))
+
+    def test_a_decision_regex_that_does_not_compile_is_a_problem(self):
+        r = HR.check_scenario(self.scenario(expect={"decision": {"match": "(stack"}, "testsChanged": False}), None, False)
+        self.assertEqual(len(r["problems"]), 1)
+        self.assertIn("does not compile", r["problems"][0])
+
+    def test_a_setup_that_fails_is_a_problem(self):
+        r = HR.check_scenario(self.scenario(setup=[["false"]]), None, False)
+        self.assertEqual(len(r["problems"]), 1)
+        self.assertIn("setup", r["problems"][0])
+
+
+class CiScenarioCheck(unittest.TestCase):
+    """The Python-only check CI runs (the plan's Q13): the fixture scenarios decision-rule and contract, whose grades run
+    python3 only and make no model call. The replays are checked by hand, since their setup needs npm."""
+
+    def test_decision_rule_and_contract_check_out_against_their_expected_json(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = HR.main(["--check-scenarios", "--scenarios", "decision-rule,contract"])
+        self.assertEqual(code, 0, out.getvalue() + err.getvalue())
 
 
 if __name__ == "__main__":

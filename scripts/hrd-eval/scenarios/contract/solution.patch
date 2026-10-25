@@ -1,0 +1,40 @@
+diff --git a/shop/client.py b/shop/client.py
+index f60e40b..14abce1 100644
+--- a/shop/client.py
++++ b/shop/client.py
+@@ -7,3 +7,10 @@ class Client:
+ 
+     def ping(self):
+         return self.transport.send({"type": "ping"}).get("type") == "pong"
++
++    def quote(self, items):
++        reply = self.transport.send({"type": "quote", "items": items})
++        if reply.get("type") == "error":
++            raise ValueError(reply["error"])
++        cents = reply["total"]
++        return f"Total: ${cents // 100}.{cents % 100:02d}"
+diff --git a/shop/server.py b/shop/server.py
+index 5fb523b..a206c8b 100644
+--- a/shop/server.py
++++ b/shop/server.py
+@@ -1,5 +1,7 @@
+ """The shop's server. handle() takes a request dict and returns a reply dict; the request's "type" picks what it does."""
+ 
++from shop.cart import total
++
+ PRICES = {"mug": 1200, "pen": 150, "book": 2500}  # sku -> price in cents
+ 
+ 
+@@ -7,4 +9,12 @@ def handle(request):
+     kind = request.get("type")
+     if kind == "ping":
+         return {"type": "pong"}
++    if kind == "quote":
++        items = []
++        for line in request.get("items", []):
++            sku = line.get("sku")
++            if sku not in PRICES:
++                return {"type": "error", "error": f"unknown sku {sku}"}
++            items.append({"price": PRICES[sku], "qty": line.get("qty", 0)})
++        return {"type": "quote", "total": total(items)}
+     return {"type": "error", "error": f"unknown request type {kind!r}"}
