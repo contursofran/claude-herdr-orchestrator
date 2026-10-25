@@ -1,0 +1,32 @@
+{
+  "title": "Replay of #13: a DECISION line that says none is not pinned (issue #12)",
+  "kind": "replay",
+  "issue": {
+    "number": 12,
+    "file": "issue.json"
+  },
+  "source": {
+    "commit": "f9f3201f7c32e3b34eac901fcaf0850983e679cc"
+  },
+  "hidden": {
+    "commit": "a3bcb63bcf0414ca143789178d391be0dd14ace4",
+    "paths": ["tests"]
+  },
+  "setup": [
+    ["npm", "ci", "--no-audit", "--no-fund", "--prefer-offline"],
+    ["bash", "scripts/types.sh"]
+  ],
+  "grade": {
+    "cmd": ["claude", "plugin", "test", "."],
+    "parser": "plugin-test",
+    "timeout": 300
+  },
+  "allowed": ["hooks/workers.ts", "tests/**", "README.md", ".claude-plugin/plugin.json"],
+  "expect": {
+    "decision": null,
+    "testsChanged": true
+  },
+  "onDecision": "recommended",
+  "estimateScale": 1,
+  "notes": "Source, hidden tests and allowed files are PR #13 (merged as a3bcb63). testsChanged is true: PR #13 changed tests/workers.test.tsx."
+}
