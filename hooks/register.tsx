@@ -13,7 +13,7 @@ import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
 import { jobs, restoreJobs } from './state'
 import { registerTools } from './tools'
-import { messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
+import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
 import type { SpawnArgs } from './workers'
 import { pruneMerged } from './worktrees'
 
@@ -25,8 +25,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     // The mod loads in every worker's own Claude session too (same plugin dirs); spawn marks
-    // those tabs, and they run none of the coordinator's timers, only the sweep for the
-    // workers they started while one of them runs.
+    // those tabs, and they run none of the coordinator's timers, only the sweep and the report
+    // check for the workers they started while one of them runs.
     const isWorker = (await $.env.get('HERDR_AGENTS_ROLE')) === 'worker'
     session.cwd = started.cwd
     const settings = await config($)
@@ -39,12 +39,14 @@ export const register: Register = on => {
     resumeWatching($, Object.values(await jobs($)))
     if (isWorker) {
       // A worker's own session sweeps the workers it started, but only while one of them runs:
-      // with no running job it makes no herdr call. The other timers stay with the coordinator.
+      // with no running job it makes no herdr call. Its report check does nothing with no running
+      // job either. The other timers stay with the coordinator.
       const sweepIfRunning = async () => {
         if (Object.values(await jobs($)).some(j => j.status === 'running')) await sweep($, closeMinutes)
       }
       void sweepIfRunning().catch(() => {})
       $.clock.every(SWEEP_MS, () => void sweepIfRunning().catch(() => {}))
+      $.clock.every(3000, () => void checkReports($).catch(() => {}))
       return started
     }
     void sweep($, closeMinutes).catch(() => {})
@@ -52,11 +54,14 @@ export const register: Register = on => {
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
     // The band, the sidebar and the bridge's inbox, every 3 s with no herdr calls: refresh
-    // reads the states the waits and the sweep last saw.
+    // reads the states the waits and the sweep last saw. The report check comes first, so a
+    // RESULT.md that landed is delivered at this tick.
     $.clock.every(
       3000,
       () =>
-        void refresh($)
+        void checkReports($)
+          .catch(() => {})
+          .then(() => refresh($))
           .then(() => syncSide($))
           .then(() => publishBoard($))
           .catch(() => {}),

@@ -27,8 +27,9 @@ import { excludeFromGit } from './worktrees'
 //
 // herdr tells the mod when a worker settles: arm starts a `herdr agent wait` for it in
 // a child process, and the sweep (every SWEEP_MS, one `herdr agent list` for all
-// workers) catches what the waits miss. Everything that may deliver, prompt or check a
-// job goes through serial, so a wait and a sweep never act on the same job twice.
+// workers) catches what the waits miss. checkReports (every 3 s) delivers a RESULT.md as
+// soon as it lands. Everything that may deliver, prompt or check a job goes through
+// serial, so a wait, a sweep and the report check never act on the same job twice.
 
 // The module's own variables start over on every reload; the jobs live in $.state, so
 // session.start arms a wait for each running one (resumeWatching).
@@ -175,6 +176,23 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
   // A WAIT.json that woke the worker prompted it again, and that prompt armed its own wait.
   if ((await jobs($))[job.name]?.token !== job.token) return
   arm($, current, 'resume')
+}
+
+// Every 3 s (register): a running worker whose RESULT.md carries its token is delivered as
+// soon as the file is there, though the worker may still be finishing its turn. The wait
+// and the sweep stay for a blocked worker and for a turn that ends with no report. It makes
+// no herdr call: one exists check, and a read once the file is there. Not awaited, so a
+// step queued behind a slow one does not hold up the band's tick.
+export async function checkReports($: EngineInterface) {
+  for (const job of Object.values(await jobs($))) {
+    if (job.status !== 'running' || !(await reported($, job))) continue
+    void serial(job.name, async () => {
+      const current = (await jobs($))[job.name]
+      // A worker with messages held for it is left to its turn's end: deliver sends them then.
+      if (!current || current.status !== 'running' || current.queued?.length) return
+      if (await reported($, current)) await deliver($, current, 'done')
+    })
+  }
 }
 
 // RESULT.md is the completion signal: herdr's lifecycle state alone is not

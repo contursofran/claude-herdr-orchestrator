@@ -123,6 +123,8 @@ test(
     // No `agent get` per worker any more: one `agent list` a minute is all the herdr calls there are.
     expect(calls.filter(c => c[2] === 'get')).toEqual([])
     expect(calls.length / (names.length * 10)).toBeLessThan(3)
+    // Exactly the sweep's list each minute: the 3 s ticks, the band and the report check add no call.
+    expect(calls.map(c => c.join(' '))).toEqual(Array(10).fill('herdr agent list'))
 
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     const shown = [(await ui.find({ key: 'col0' }))?.text, (await ui.find({ key: 'col1' }))?.text].join('\n')
