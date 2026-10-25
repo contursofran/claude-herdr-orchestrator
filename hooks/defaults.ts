@@ -14,9 +14,13 @@ export const CLOSE_IDLE_MINUTES = 30
 
 // A worker's name: also its herdr tab's label.
 export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
-// A report longer than this goes to the coordinator as its first line and its file's path.
+// A report without a header (see report.ts) longer than this goes to the coordinator as its first line and its file's path.
 export const INLINE_LINES = 6
 export const INLINE_CHARS = 700
+// A report's header (see report.ts): the lines it may start within, and the summary's size.
+export const HEADER_SCAN_LINES = 12
+export const SUMMARY_LINES = 3
+export const SUMMARY_LINE_CHARS = 240
 // A follow-up to a worker up to this long is typed into its prompt as well as saved to a file.
 export const MESSAGE_CHARS = 4000
 // How long a worker may sit with an unchanged screen, not working and without

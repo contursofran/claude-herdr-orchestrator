@@ -231,3 +231,24 @@ test('workers join through shared numbers, and only a role name gives a number',
     ['acme/app#3', 'd'],
   ])
 })
+
+test("a report's PR goes to its worker's row on the sidebar: the header's, else the link in a report without one", async ($, on) => {
+  const { clock, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-link', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  const tokens = [typed[0], typed[1]].map(t => t?.match(/<!-- report (\S+) -->/)?.[1])
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
+    `<!-- report ${tokens[0]} -->\n\`\`\`report\nstatus: done\npr: 12\nsummary: Opened PR #12.\n\`\`\``
+  files['/repo/wt2/.herdr-agents/w-link/RESULT.md'] = `<!-- report ${tokens[1]} -->\nOpened https://github.com/acme/app-client/pull/77.`
+  await finish('w-busy')
+  await finish('w-link')
+  expect((await command($, 'hrd-side')).text).toMatch(/Sidebar open/)
+  await clock.advance(3000)
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  // Each worker's row is keyed by the PR its report names: the header's, or the link in a report without one.
+  expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/^#12 /)
+  expect((await ui.find({ key: 'task-acme/app-client#77' }))?.text).toMatch(/^#77 /)
+  await ui.unmount()
+  await stopAll($, clock, ['w-busy', 'w-link'])
+})

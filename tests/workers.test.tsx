@@ -527,3 +527,161 @@ test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profil
   expect(create.slice(-4)).toEqual(['--env', 'A=1', '--env', 'HERDR_AGENTS_ROLE=worker'])
   await stopAll($, clock, ['w-env'])
 })
+
+// A report's header (report.ts) is what the coordinator reads first: its summary, its question, the
+// questions pinned from its DECISION lines, and the file's path.
+test('a report with a header reaches the coordinator as its summary, pinned questions and the file path', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  const body = [
+    '```report',
+    'status: blocked',
+    'pr: 42',
+    'summary: Opened PR #42; the checks pass.',
+    'The reviewer has not run yet.',
+    'ask: Base or develop?',
+    '```',
+    ...Array.from({ length: 10 }, (_, i) => `Body line ${i + 1}.`),
+    'DECISION: [Edit scope] May I edit CI? | Yes (recommended) | No',
+  ]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\n${body.join('\n')}`
+  await finish('w-busy')
+  const report = submitted.at(-1) ?? ''
+  expect(report).toMatch(/^<herdr-agent name="w-busy" profile="builder" status="done" result="blocked" pr="42">\n/)
+  expect(report).toContain(
+    'Opened PR #42; the checks pass.\nThe reviewer has not run yet.\nAsk: Base or develop?\nD1 [Edit scope] May I edit CI? | Yes (recommended) | No\n' +
+      `[Full report, 18 lines: /repo/wt/.herdr-agents/w-busy/RESULT-${token}.md. Read it only when this summary is not enough.]`,
+  )
+  expect(report).toContain('[Pinned for the owner as D1. The owner is pinged')
+  expect(report).not.toContain('Body line 5.')
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a header report pins its questions inline, in report order, with the title of each that has one', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = [
+    `<!-- report ${token} -->`,
+    '```report',
+    'status: done',
+    'summary: Two questions for you.',
+    '```',
+    'DECISION: [Port] Which port? | 5173 (recommended) | 8080',
+    'DECISION: Ship it today? | Yes | No',
+  ].join('\n')
+  await finish('w-busy')
+  expect(submitted.at(-1)).toMatch(
+    /\nTwo questions for you\.\nD1 \[Port\] Which port\? \| 5173 \(recommended\) \| 8080\nD2 Ship it today\? \| Yes \| No\n\[Full report, 6 lines: .+\]\n\n\[Pinned for the owner as D1, D2\./,
+  )
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a header with nothing after it has no pointer to the file, and an unknown status is no result attribute', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
+    `<!-- report ${token} -->\n\`\`\`report\nstatus: Maybe\nsummary: Nothing to add.\n\`\`\``
+  await finish('w-busy')
+  expect(submitted.at(-1)).toMatch(/^<herdr-agent name="w-busy" profile="builder" status="done">\nNothing to add\.\n/)
+  expect(submitted.at(-1)).not.toContain('Full report')
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a header names the PRs a report opens, on the prompt tag; a report without a header is delivered with no pr', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
+    `<!-- report ${token} -->\n\`\`\`report\nstatus: done\npr: #12, 13\nsummary: Two PRs.\n\`\`\``
+  await finish('w-busy')
+  expect(submitted.at(-1)).toMatch(/^<herdr-agent name="w-busy" profile="builder" status="done" result="done" pr="12,13">\n/)
+
+  await spawn($, ['w-link'])
+  const linkToken = typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-link/.herdr-agents/w-link/RESULT.md'] =
+    `<!-- report ${linkToken} -->\nReviewed: approve.\nhttps://github.com/acme/app/pull/77`
+  await finish('w-link')
+  expect(submitted.at(-1)).toMatch(/^<herdr-agent name="w-link" profile="reviewer" status="done">\nReviewed: approve\.\n/)
+  await stopAll($, clock, ['w-busy', 'w-link'])
+})
+
+test('a report without a header is delivered as before: a long one as a pointer to its file, a short one inline', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const longToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-short', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  const shortToken = typed[1]?.match(/<!-- report (\S+) -->/)?.[1]
+  const lines = Array.from({ length: 9 }, (_, i) => `Line ${i + 2}.`)
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${longToken} -->\nReviewed the change.\n${lines.join('\n')}`
+  files['/repo/wt2/.herdr-agents/w-short/RESULT.md'] = `<!-- report ${shortToken} -->\nReviewed the small change.\nAll green.`
+  await finish('w-busy')
+  await finish('w-short')
+  const long = submitted.find(t => t.startsWith('<herdr-agent name="w-busy"')) ?? ''
+  expect(long).toMatch(
+    /^<herdr-agent name="w-busy" profile="builder" status="done">\nReviewed the change\.\n\[Full report, 10 lines: \/repo\/wt\/\.herdr-agents\/w-busy\/RESULT-\w+\.md\. Read it before acting on it\.\]/,
+  )
+  expect(long).not.toContain('Line 5.')
+  const short = submitted.find(t => t.startsWith('<herdr-agent name="w-short"')) ?? ''
+  expect(short).toMatch(/^<herdr-agent name="w-short" profile="builder" status="done">\nReviewed the small change\.\nAll green\.\n/)
+  expect(short).not.toContain('Full report')
+  await stopAll($, clock, ['w-busy', 'w-short'])
+})
+
+test('the full report rule goes in the first prompt only; follow-ups and wake-ups get a one-line reminder', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  expect(typed[0]).toContain('Right below that line, put this header')
+  expect(files['/repo/wt/.herdr-agents/w-busy/REPORTING.md']).toContain('<!-- report TOKEN -->')
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${firstToken} -->\nReviewed: approve.`
+  await finish('w-busy')
+  expect(submitted.filter(t => t.startsWith('<herdr-agent name="w-busy"'))).toHaveLength(1)
+
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'One more thing.' })
+  const secondToken = typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]
+  expect(secondToken).not.toBe(firstToken)
+  expect(typed.at(-1)).toContain(`<!-- report ${secondToken} -->`)
+  expect(typed.at(-1)).toContain('report as before')
+  expect(typed.at(-1)).not.toContain('Right below that line')
+
+  // A WAIT.json check that times out wakes the worker with the reminder, not the full rule.
+  files['/repo/wt/.herdr-agents/w-busy/WAIT.json'] = '{"for":"ci","check":"false","every":1,"max":5}'
+  await clock.advance(8 * 60_000)
+  expect(typed.at(-1)).toContain('Your wait is over')
+  expect(typed.at(-1)).toContain('report as before')
+  expect(typed.at(-1)).not.toContain('Right below that line')
+  expect(typed.filter(t => t.includes('Right below that line'))).toHaveLength(1)
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a worker spawned again with the same name in the same folder gets the full rule in its first prompt', async ($, on) => {
+  const { clock, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${firstToken} -->\nDone.`
+  await finish('w-busy')
+  // The job folder outlives the job: the same name spawned again finds the old REPORTING.md there.
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it again.' })
+  const again = typed.at(-1) ?? ''
+  expect(again).toContain('Your task is in /repo/wt/.herdr-agents/w-busy/TASK.md')
+  expect(again).toContain('Right below that line, put this header')
+  expect(again).not.toContain('report as before')
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('the report rule says to write RESULT.md in one write, as the last step, in the full rule and the reminder', async ($, on) => {
+  const { clock, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  expect(typed[0]).toContain('write your final report to /repo/wt/.herdr-agents/w-busy/RESULT.md in one write, as your last step')
+  expect(files['/repo/wt/.herdr-agents/w-busy/REPORTING.md']).toContain('in one write, as your last step')
+  const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${firstToken} -->\nDone.`
+  await finish('w-busy')
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'One more thing.' })
+  expect(typed.at(-1)).toContain('in one write, as your last step')
+  await stopAll($, clock, ['w-busy'])
+})

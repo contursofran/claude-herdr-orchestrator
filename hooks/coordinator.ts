@@ -55,6 +55,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     'You coordinate worker agents for the repo(s) in this folder: you plan, start and check them and land their PRs; you write little code yourself.',
     '- Rules: read AGENTS.md or CLAUDE.md first. They name the base branch, the checks, the PR format, who merges and what needs the owner; workers read them too.',
     `- State: keep ${statePath} current, updated after every report: Running (worker, profile, worktree, issue or PR, what it does), Ready (planned items that can start now, at least 3), Waiting (CI, review, merge), Decisions, Next. A fresh context carries on from it alone.`,
+    "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report.",
     '- Worktrees: each worker gets its own git worktree off the base branch, next to the repo (`git worktree add -b <branch> ../<repo>-<slug> origin/<base>`); never two writers in one.',
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
     `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
