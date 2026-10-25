@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
 import { briefRefs, groupTasks } from '../hooks/tasks'
 import type { Job } from '../types'
-import { BAND, command, start, stopAll } from './harness'
+import { BAND, command, start, stopAll, until } from './harness'
 
 // The sidebar (/hrd-side): work by issue or PR, what needs the person, and the answer box.
 
@@ -98,8 +98,11 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
   await clock.advance(3000)
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const row12 = async () => (await ui.find({ key: 'task-acme/app-client#12' }))?.text ?? ''
+  // The PR poll that opening the sidebar starts answers in the background.
+  await until(clock, async () => /◐ +◐/.test(await row12()))
   // No planner, the build reported, the review runs and so do the PR's checks.
-  expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/#12 +hotbar keys +· +✓ +◐ +◐ +· +r-15 now/)
+  expect(await row12()).toMatch(/#12 +hotbar keys +· +✓ +◐ +◐ +· +r-15 now/)
   expect(await ui.find({ key: 'task-acme/app-client#15' })).toBeUndefined()
 
   // The # opens the PR, and nothing waits for the person, so the box stays empty.
@@ -113,7 +116,9 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
     statusCheckRollup: [{ __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' }],
   }
   await clock.advance(2 * 60_000)
-  expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/· +✓ +✓ +✓ +· +merged/)
+  // So does the poll at the 2-minute tick.
+  await until(clock, async () => /merged/.test(await row12()))
+  expect(await row12()).toMatch(/· +✓ +✓ +✓ +· +merged/)
   await ui.press({ key: 'clear-tasks' })
   expect(await ui.find({ key: 'task-acme/app-client#12' })).toBeUndefined()
 
