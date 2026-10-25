@@ -3,9 +3,9 @@
 
 For each scenario and arm it plays the coordinator: a planner (unless the arm disables it), one builder per slice in
 its own worktree, a reviewer, and fix rounds until the review has no blockers. Every role is a `claude -p` call built
-from the arm's profile (herdr-agents.json format); each prompt carries the mod's report rule (hooks/workers.ts).
-Results go to --results, outside this repo. Hidden tests are copied into the grade folder only after the last worker
-call has ended.
+from the arm's profile (herdr-agents.json format); each prompt carries the mod's report rule (hooks/workers.ts), and
+each job folder keeps the full rule in REPORTING.md. Results go to --results, outside this repo. Hidden tests are copied
+into the grade folder only after the last worker call has ended.
 
   scripts/hrd-eval.py --dry-run [--scenarios a] [--arms A,C]   print the matrix and each role's command; calls nothing
   scripts/hrd-eval.py --check-scenarios --scenarios replay-13 [--update-expected]
@@ -77,6 +77,15 @@ REPORT_RULE_PARTS = [
     'If you need a decision only the owner can make, write each question on its own line as "DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short; if you cannot go on without the answer, stop there.',
     "If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.",
 ]
+# The one-line reminder a resumed session gets instead of the full rule: reportReminder() in workers.ts, minus its
+# WAIT.json words. A test checks it against workers.ts.
+REPORT_REMINDER = (
+    "When you are finished, report as before: write ${job.dir}/RESULT.md in one write, as your last step, with the first "
+    "line exactly <!-- report ${job.token} -->, then the ```report header (status, pr, summary, ask) and your report. "
+    "DECISION lines work as in ${job.dir}/REPORTING.md."
+)
+# The answer to an ask: the header's ask line has no options, so it is answered with this (see questions()).
+NO_OWNER_ANSWER = "No owner answer; use your best judgement, say in the report what you chose."
 VERDICT_LINE = "End the report with one line: `VERDICT: approve` or `VERDICT: changes needed, <n> blockers`."
 # The same regexes as hooks/workers.ts deliver() (DECISION) and the verdict rule of this runner.
 DECISION_SRC = r"^\s*(?:[-*]\s*)?\**DECISION:?\**:?\s*(.+)$"
@@ -86,10 +95,11 @@ NONE_RE = re.compile(NONE_SRC, re.I)
 VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(approve|changes needed)(?:,\s*(\d+)\s+blockers?)?")
 MARKED = re.compile(r"\s*\((?:recommended|rec\.?)\)\s*", re.I)
 REPORT_MARK = re.compile(r"^\s*<!-- report (\S+) -->\s*")
-# The report's header (reportRule in workers.ts, parseHeader in report.ts): read here for its pr field only.
+# The report's header (reportRule in workers.ts, parseHeader in report.ts): read here for its pr and ask fields only.
 FENCE_LINE = re.compile(r"^\s*```")
 HEADER_KEY = re.compile(r"^\s*(?:[-*]\s+)?\**[A-Za-z][\w-]*\**\s*:")
 HEADER_PR = re.compile(r"^\s*(?:[-*]\s+)?\**(?:pr|prs)\**\s*:\s*\**\s*(.*?)\s*$", re.I)
+HEADER_ASK = re.compile(r"^\s*(?:[-*]\s+)?\**ask\**\s*:\s*\**\s*(.*?)\s*$", re.I)
 PR_ITEM = re.compile(r"^(?:#?(\d+)|https?://\S*?/pull/(\d+)\b\S*)$")
 PLUGIN_ROW = re.compile(r"^\s*\((pass|fail|skip)\)\s+(.+?)\s*$")
 PLUGIN_MS = re.compile(r"\s+\[\d+(?:\.\d+)?\s*ms\]$")
@@ -508,6 +518,10 @@ def report_rule(job_dir, token):
     return text.replace("${job.dir}", job_dir).replace("${token}", token)
 
 
+def report_reminder(job_dir, token):
+    return REPORT_REMINDER.replace("${job.dir}", job_dir).replace("${job.token}", token)
+
+
 def header_lines(report):
     """The lines of a report's header, its token line already gone: what a fenced ```report block holds (none if the
     fence is never closed), else the key lines from the first non-blank line on. [] when the report has no header."""
@@ -542,6 +556,30 @@ def header_prs(report):
                 found.append(int(pm.group(1) or pm.group(2)))
             return list(dict.fromkeys(found))[:5]
     return []
+
+
+def header_ask(report):
+    """The value of a report header's ask line, read like a DECISION line; None when there is no ask line, or its value
+    is empty or says none or n/a. (The mod shows an ask as an `Ask:` line of the summary; here it is answered.)"""
+    for line in header_lines(report):
+        m = HEADER_ASK.match(line)
+        if m:
+            value = m.group(1)
+            return None if not value or NONE_RE.match(value) else value
+    return None
+
+
+def questions(report):
+    """What a report asks the coordinator, as (text, question, recommended): the header's ask first, with no options so
+    it gets NO_OWNER_ANSWER, then the DECISION lines (see split_decision). text is the line as the report wrote it."""
+    out = []
+    ask = header_ask(report)
+    if ask:
+        out.append((ask, ask, NO_OWNER_ANSWER))
+    for raw in decisions(report):
+        question, _, rec = split_decision(raw)
+        out.append((raw, question, rec))
+    return out
 
 
 def numbered_blockers(text):
@@ -911,25 +949,26 @@ class Run:
         return {"blockers": blockers, "report": c["report"], "sha": sha, "path": os.path.join(c["job"], "report.md")}
 
     def settle(self, c):
-        """Answers the DECISION lines in a call's report. onDecision "stop" ends the run with status decision;
-        "recommended" resumes the asker with the recommended options, at most MAX_ANSWERS times a run."""
+        """Answers what a call's report asks: the header's ask and the DECISION lines (see questions()). onDecision
+        "stop" ends the run with status decision; "recommended" resumes the asker with the answers, at most MAX_ANSWERS
+        times a run."""
         while True:
-            asked = decisions(c["report"])
+            asked = questions(c["report"])
             if not asked:
                 return c
+            raw = [text for text, _, _ in asked]
             if self.sc["onDecision"] == "stop":
-                self.note(c, asked, [None] * len(asked))
-                self.stop("decision", f"{c['role']} asked: {asked[0]}")
+                self.note(c, raw, [None] * len(raw))
+                self.stop("decision", f"{c['role']} asked: {raw[0]}")
             with self.lock:
                 full = self.answers >= MAX_ANSWERS
                 if not full:
                     self.answers += 1
             if full:
-                self.note(c, asked, [None] * len(asked))
-                self.stop("decision", f"{MAX_ANSWERS} answers given already; {c['role']} asked again: {asked[0]}")
-            parts = [split_decision(q) for q in asked]
-            self.note(c, asked, [rec for _, _, rec in parts])
-            text = "; ".join(f"{q} -> {rec}" for q, _, rec in parts)
+                self.note(c, raw, [None] * len(raw))
+                self.stop("decision", f"{MAX_ANSWERS} answers given already; {c['role']} asked again: {raw[0]}")
+            self.note(c, raw, [rec for _, _, rec in asked])
+            text = "; ".join(f"{q} -> {rec}" for _, q, rec in asked)
             c = self.call(
                 c["role"],
                 "answer",
@@ -960,7 +999,10 @@ class Run:
         job = os.path.join(self.dir, "jobs", name)
         os.makedirs(job)
         token = uuid.uuid4().hex[:8]
-        prompt = text(report_rule(job, token))
+        # The full rule is kept in the job folder's REPORTING.md, as the mod keeps it in the worker's folder. A resumed
+        # session has the rule already, so its prompt only reminds it of the file.
+        write_text(os.path.join(job, "REPORTING.md"), report_rule(job, token))
+        prompt = text(report_reminder(job, token) if resume else report_rule(job, token))
         write_text(os.path.join(job, "prompt.txt"), prompt)
         if not resume:
             sid = str(uuid.uuid4())

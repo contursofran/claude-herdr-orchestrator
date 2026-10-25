@@ -75,7 +75,7 @@ state["counts"][kind] = count + 1
 cwd = os.getcwd()
 by_dir = script.get("by_dir", {}).get(os.path.basename(cwd), {}).get(kind)
 beh = by_dir if by_dir is not None else script[kind][min(count, len(script[kind]) - 1)]
-job = re.search(r"write your final report to (\S+)/RESULT\.md", prompt).group(1)
+job = re.search(r"write (?:your final report to )?(\S+)/RESULT\.md", prompt).group(1)  # the full rule or the reminder
 token = re.search(r"<!-- report (\w+) -->", prompt).group(1)
 files = []
 for root, dirs, names in os.walk(cwd):
@@ -165,6 +165,15 @@ def read_json(path):
 def read_text(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def reporting_token(folder):
+    """The token in a job folder's REPORTING.md (its report line)."""
+    return re.search(r"<!-- report (\w+) -->", read_text(os.path.join(folder, "REPORTING.md"))).group(1)
+
+
+# The answer a question gets when the owner does not answer (HR.NO_OWNER_ANSWER), written out so a wording change shows.
+NO_OWNER = "No owner answer; use your best judgement, say in the report what you chose."
 
 
 def make_source(tmp):
@@ -545,6 +554,21 @@ class ReportRuleTest(unittest.TestCase):
     def test_the_wait_json_sentences_are_left_out(self):
         self.assertFalse(any("WAIT.json" in part or "sleep or poll" in part for part in HR.REPORT_RULE_PARTS))
 
+    def test_the_reminder_is_word_for_word_in_workers_ts_minus_its_wait_json_words(self):
+        # reportReminder() is a template literal in workers.ts, so its backticks are escaped there.
+        line = next(line for line in self.ts.splitlines() if "report as before:" in line)
+        literal = line.split("return `", 1)[1].rsplit("`", 1)[0].replace("\\`", "`")
+        self.assertIn("DECISION lines and WAIT.json work as in", literal)
+        self.assertIn(HR.REPORT_REMINDER, literal.replace("and WAIT.json work", "work"))
+        self.assertNotIn("WAIT.json", HR.REPORT_REMINDER)
+
+    def test_report_reminder_fills_in_the_job_folder_and_the_token(self):
+        reminder = HR.report_reminder("/run/jobs/02-builder-S1", "abcd1234")
+        self.assertIn("write /run/jobs/02-builder-S1/RESULT.md in one write, as your last step", reminder)
+        self.assertIn("with the first line exactly <!-- report abcd1234 -->", reminder)
+        self.assertIn("DECISION lines work as in /run/jobs/02-builder-S1/REPORTING.md.", reminder)
+        self.assertNotIn("${", reminder)
+
     def test_report_rule_fills_in_the_job_folder_and_the_token(self):
         rule = HR.report_rule("/run/jobs/01-planner", "abcd1234")
         self.assertIn("write your final report to /run/jobs/01-planner/RESULT.md in one write, as your last step.", rule)
@@ -626,6 +650,35 @@ class ReadReportTest(unittest.TestCase):
     def test_a_result_md_with_another_token_is_not_this_prompts_report(self):
         write(self.job, "RESULT.md", "<!-- report zzzz9999 -->\n```report\npr: 12\n```\n")
         self.assertEqual(HR.read_report(self.job, "abcd1234", "json result"), ("json result", "result"))
+
+
+class AskTest(unittest.TestCase):
+    def test_the_ask_line_of_a_fenced_header_is_read(self):
+        report = "```report\nstatus: done\nsummary: Built.\nask: Stack member and bulk discounts?\n```\n\nBody."
+        self.assertEqual(HR.header_ask(report), "Stack member and bulk discounts?")
+
+    def test_an_ask_in_bold_or_as_a_bullet_is_read(self):
+        self.assertEqual(HR.header_ask("**Status:** done\n- **Ask:** Stack?"), "Stack?")
+
+    def test_an_ask_of_none_n_a_or_nothing_is_no_question(self):
+        for value in ("none", "None.", "n/a", "N/A", ""):
+            with self.subTest(value=value):
+                self.assertIsNone(HR.header_ask(f"```report\nstatus: done\nask: {value}\n```"))
+
+    def test_a_report_without_an_ask_line_has_none(self):
+        self.assertIsNone(HR.header_ask("```report\nstatus: done\nsummary: Built.\n```\n\nBody."))
+        self.assertIsNone(HR.header_ask("Plain report, no header."))
+
+    def test_an_ask_line_below_the_header_is_not_read(self):
+        self.assertIsNone(HR.header_ask("```report\nstatus: done\n```\n\nask: Stack?"))
+        self.assertIsNone(HR.header_ask("status: done\n\nask: Stack?"))
+
+    def test_questions_list_the_ask_first_then_the_decisions_as_written(self):
+        report = "```report\nstatus: done\nask: Which base?\n```\n\nDECISION: [Stack] Stack? | Yes (recommended) | No"
+        self.assertEqual(
+            HR.questions(report),
+            [("Which base?", "Which base?", NO_OWNER), ("[Stack] Stack? | Yes (recommended) | No", "Stack?", "Yes")],
+        )
 
 
 class FindPrTest(RunnerCase):
@@ -959,6 +1012,105 @@ class MatrixTest(RunnerCase):
         run = self.run_json()
         self.assertEqual(run["status"], "no_pr")
         self.assertIsNone(run["slices"][0]["pr"])
+
+    def test_every_job_folder_keeps_the_full_rule_in_reporting_md(self):
+        self.behave(build={"report": "Built.\nDECISION: Stack? | Yes (recommended) | No"})
+        self.matrix()
+        calls = self.calls()
+        self.assertEqual([c["kind"] for c in calls], ["plan", "build", "answer", "review"])
+        for call in calls:
+            folder = os.path.join(self.run_dir(), call["job"])
+            rules = read_text(os.path.join(folder, "REPORTING.md"))
+            token = reporting_token(folder)
+            self.assertEqual(rules, HR.report_rule(folder, token), call["job"])
+            self.assertNotIn("WAIT.json", rules)
+            prompt = read_text(os.path.join(folder, "prompt.txt"))
+            if call["resumed"]:
+                self.assertTrue(prompt.endswith(HR.report_reminder(folder, token)), call["job"])
+            else:
+                self.assertIn(rules, prompt, call["job"])
+
+    def test_arm_c_fix_carries_the_short_reminder_and_its_folder_keeps_the_full_rule(self):
+        self.behave(review=[{"report": "VERDICT: changes needed, 1 blocker"}, {"report": "VERDICT: approve"}])
+        self.matrix(arms="C", arms_dir=ARMS)
+        call = next(c for c in self.calls("C") if c["kind"] == "fix")
+        folder = os.path.join(self.run_dir("C"), call["job"])
+        token = reporting_token(folder)
+        fix = next(e for e in self.fake_calls() if e["kind"] == "fix")
+        self.assertTrue(fix["resumed"])
+        self.assertTrue(fix["prompt"].endswith(HR.report_reminder(folder, token)))
+        self.assertNotIn("When you are completely finished", fix["prompt"])
+        self.assertEqual(read_text(os.path.join(folder, "REPORTING.md")), HR.report_rule(folder, token))
+
+    def test_an_answer_call_carries_the_short_reminder_not_the_full_rule(self):
+        self.behave(build={"report": "Built.\nDECISION: Stack? | Yes (recommended) | No"})
+        self.matrix()
+        call = next(c for c in self.calls() if c["kind"] == "answer")
+        folder = os.path.join(self.run_dir(), call["job"])
+        answer = next(e for e in self.fake_calls() if e["kind"] == "answer")
+        self.assertTrue(answer["prompt"].endswith("Carry on. " + HR.report_reminder(folder, reporting_token(folder))))
+        self.assertNotIn("When you are completely finished", answer["prompt"])
+
+    def test_an_ask_header_with_onDecision_stop_ends_the_run_with_status_decision(self):
+        self.make_scenario(on_decision="stop")
+        report = "```report\nstatus: done\nsummary: Built.\nask: Do member and bulk discounts stack?\n```"
+        self.behave(build={"report": report})
+        self.matrix()
+        self.assertEqual(self.kinds(), ["plan", "build"])
+        run = self.run_json()
+        self.assertEqual(run["status"], "decision")
+        build = next(c for c in self.calls() if c["kind"] == "build")
+        self.assertEqual(
+            run["decisions"],
+            [{"call": build["n"], "role": "builder", "text": "Do member and bulk discounts stack?", "answered": None}],
+        )
+
+    def test_an_ask_header_is_answered_with_no_owner_answer_under_recommended(self):
+        report = "```report\nstatus: done\nsummary: Built.\nask: Do member and bulk discounts stack?\n```"
+        self.behave(build={"report": report})
+        self.matrix()
+        self.assertEqual(self.kinds(), ["plan", "build", "answer", "review"])
+        prompt = next(e["prompt"] for e in self.fake_calls() if e["kind"] == "answer")
+        self.assertIn(
+            f"Answers to your DECISION questions: Do member and bulk discounts stack? -> {NO_OWNER}. Carry on.", prompt
+        )
+        build = next(c for c in self.calls() if c["kind"] == "build")
+        run = self.run_json()
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(
+            run["decisions"],
+            [{"call": build["n"], "role": "builder", "text": "Do member and bulk discounts stack?", "answered": NO_OWNER}],
+        )
+
+    def test_an_ask_and_a_decision_in_one_report_share_one_answer_call(self):
+        report = "```report\nstatus: done\nsummary: Built.\nask: Which base branch?\n```\n\nDECISION: Stack? | Yes (recommended) | No"
+        self.behave(build={"report": report})
+        self.matrix()
+        self.assertEqual(self.kinds(), ["plan", "build", "answer", "review"])
+        prompt = next(e["prompt"] for e in self.fake_calls() if e["kind"] == "answer")
+        self.assertIn(f"Answers to your DECISION questions: Which base branch? -> {NO_OWNER}; Stack? -> Yes. Carry on.", prompt)
+        run = self.run_json()
+        self.assertEqual([d["text"] for d in run["decisions"]], ["Which base branch?", "Stack? | Yes (recommended) | No"])
+        self.assertEqual([d["answered"] for d in run["decisions"]], [NO_OWNER, "Yes"])
+
+    def test_an_ask_counts_toward_the_two_answers_a_run_gets(self):
+        ask = "```report\nstatus: done\nsummary: Carry on.\nask: {}\n```"
+        self.behave(build={"report": ask.format("First?")}, answer=[{"report": ask.format("Second?")}, {"report": ask.format("Third?")}])
+        self.matrix()
+        self.assertEqual(self.kinds(), ["plan", "build", "answer", "answer"])
+        run = self.run_json()
+        self.assertEqual(run["status"], "decision")
+        self.assertEqual([d["text"] for d in run["decisions"]], ["First?", "Second?", "Third?"])
+        self.assertEqual([d["answered"] for d in run["decisions"]], [NO_OWNER, NO_OWNER, None])
+
+    def test_an_ask_of_none_n_a_or_nothing_is_no_question(self):
+        for value in ("none", "N/A", ""):
+            with self.subTest(value=value):
+                shutil.rmtree(self.results, ignore_errors=True)
+                self.behave(build={"report": f"```report\nstatus: done\nsummary: Built.\nask: {value}\n```"})
+                self.matrix()
+                self.assertEqual(self.kinds(), ["plan", "build", "review"])
+                self.assertEqual(self.run_json()["decisions"], [])
 
     def test_review_that_never_clears_ends_as_rounds_exhausted(self):
         arms = os.path.join(self.tmp, "arms")
