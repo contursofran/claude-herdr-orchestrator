@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timezone
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "..", "scripts", "hrd-metrics.py")
@@ -723,6 +724,41 @@ class ResultFiles(unittest.TestCase):
         a.result_writes = [("f", "t", 5.0), ("f", "t", 3.0)]
         b.result_writes = [("f", "t", 4.0), ("f", "u", 9.0)]
         self.assertEqual(hm.write_index([a, b]), {("f", "t"): 3.0, ("f", "u"): 9.0})
+
+
+
+class TranscriptsPath(unittest.TestCase):
+    """The footer's "transcripts from" path: under the home folder it reads ~/..., elsewhere it is printed in full."""
+
+    def footer(self, root):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hm.print_text("last 7 days", [], hm.totals([], []), [], {}, set(), root)
+        return out.getvalue().splitlines()[-1]
+
+    def test_a_root_under_the_home_folder_reads_with_a_tilde(self):
+        with mock.patch.dict(os.environ, {"HOME": "/Users/t"}):
+            self.assertEqual(self.footer("/Users/t/.claude/projects"), "   transcripts from ~/.claude/projects")
+
+    def test_the_home_folder_itself_reads_as_a_tilde(self):
+        with mock.patch.dict(os.environ, {"HOME": "/Users/t"}):
+            self.assertEqual(self.footer("/Users/t"), "   transcripts from ~")
+
+    def test_a_folder_that_only_starts_with_the_home_name_is_printed_in_full(self):
+        with mock.patch.dict(os.environ, {"HOME": "/Users/t"}):
+            self.assertEqual(self.footer("/Users/tt/.claude/projects"), "   transcripts from /Users/tt/.claude/projects")
+
+    def test_a_root_outside_the_home_folder_is_printed_in_full(self):
+        with mock.patch.dict(os.environ, {"HOME": "/Users/t"}):
+            self.assertEqual(self.footer("/srv/claude/projects"), "   transcripts from /srv/claude/projects")
+
+    def test_the_script_prints_its_default_root_with_a_tilde(self):
+        home = tempfile.mkdtemp(prefix="hrd-metrics-home-")
+        self.addCleanup(shutil.rmtree, home, True)
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+        env["HOME"] = home
+        proc = subprocess.run([sys.executable, SCRIPT], capture_output=True, text=True, env=env, check=True)
+        self.assertEqual(proc.stdout.splitlines()[-1], "   transcripts from ~/.claude/projects")
 
 
 if __name__ == "__main__":

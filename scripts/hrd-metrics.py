@@ -594,6 +594,14 @@ def missing_text(missing):
     return ", ".join(f"{n} {why}" for why, n in sorted(missing.items(), key=lambda kv: -kv[1])) or "none"
 
 
+def tilde(path):
+    """The path with the home folder shown as ~ when it is under it, so pasted output does not carry the user name."""
+    home = os.path.expanduser("~").rstrip("/")
+    if home and (path == home or path.startswith(home + "/")):
+        return "~" + path[len(home):]
+    return path
+
+
 def print_text(label, rows, tot, workers, by_model, unpriced, root):
     print(f"== coordinator sessions, {label}: {len(rows)} with {tot['reports']} reports")
     if not rows:
@@ -646,7 +654,7 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
     print("   not counted: subagent transcripts (<session>/subagents/)")
     if unpriced:
         print(f"   no price for {', '.join(sorted(unpriced))}: cost counted as 0")
-    print(f"   transcripts from {root}")
+    print(f"   transcripts from {tilde(root)}")
 
 
 def main():

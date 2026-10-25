@@ -12,6 +12,10 @@ export const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 140, scroll: { offset: 0, bodyRows: 29 }, view: {} },
 } as const
 
+// What a test answers for one command the mod runs (process.run): its exit code and output, or a
+// rejection (a command that cannot start).
+export type Answer = { exitCode: number; stdout?: string; stderr?: string; reject?: string }
+
 // herdr's state for the workers the tests name; a worker that starts without one is idle.
 const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 'w-stuck': 'blocked' }
 
@@ -51,6 +55,10 @@ export async function start(
   const refuse = { next: 0 }
   // Every herdr call the mod makes, in order: the CLI's process.run argv and the process.spawn ones.
   const calls: string[][] = []
+  // The commands the mod runs that are not herdr's (git, install.sh, the bridge's file moves), joined by spaces, in order;
+  // `runs` answers the ones a test names.
+  const shell: string[] = []
+  const runs = new Map<string, Answer[]>()
   // herdr's status for each worker it knows: the stored jobs' workers from the start, then each
   // `agent start`, then what emit sets.
   const status: Record<string, string> = {}
@@ -96,12 +104,19 @@ export async function start(
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock', ...env })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.register', (_, e) => ({ value: { tool: e.name } }))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  // The names the mod registered as slash commands, in order.
+  const registered: string[] = []
+  on('command.register', (_, e) => {
+    registered.push(e.name)
+    return { value: { command: e.name } }
+  })
   on('ui.toast', () => ({ value: undefined }))
   on('session.id', () => ({ value: 'session-1234' }))
   // The config names one short repo name; /repo and /srv are GitHub checkouts.
   const CONFIG = '/home/t/.claude/herdr-agents.json'
   const files: Record<string, string> = { [CONFIG]: JSON.stringify({ repos: { web: 'acme/website' }, ...config }) }
+  // The clone install.sh recorded in the mod's folder (its `clone` file, read by /hrd-update); '' for none.
+  const recorded = { clone: '/src/herdr' }
   // A folder exists while a file is in it.
   on('fs.exists', (_, e) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
   on('fs.list', (_, e) => ({
@@ -109,7 +124,8 @@ export async function start(
       .filter(f => f.startsWith(`${e.path}/`) && !f.slice(e.path!.length + 1).includes('/'))
       .map(f => ({ name: f.slice(e.path!.length + 1), kind: 'file' as const, size: files[f]!.length, mtimeMs: 0, isLink: false })),
   }))
-  on('fs.read', (_, e) => ({ value: files[e.path] ?? '' }))
+  // The mod's `clone` file is read from wherever the test loads the mod, so any path ending in /clone is it.
+  on('fs.read', (_, e) => ({ value: e.path.endsWith('/clone') ? recorded.clone : (files[e.path] ?? '') }))
   on('fs.write', (_, e) => {
     files[e.path] = e.text
     return { value: undefined }
@@ -135,6 +151,22 @@ export async function start(
   on('process.run', (_, e) => {
     const [cmd, sub, verb, name = ''] = e.argv
     if (cmd === 'herdr') calls.push([...e.argv])
+    if (cmd !== 'herdr') shell.push(e.argv.join(' '))
+    // The commands the test answers, in order: the last answer repeats.
+    const told = runs.get(e.argv.join(' '))
+    if (told) {
+      const reply = told.length > 1 ? told.shift()! : told[0]!
+      if (reply.reject) return { deny: reply.reject }
+      return {
+        value: {
+          exitCode: reply.exitCode,
+          stdout: reply.stdout ?? '',
+          stderr: reply.stderr ?? '',
+          isStdoutTruncated: false,
+          isStderrTruncated: false,
+        },
+      }
+    }
     const exit = (exitCode: number, stdout = '') => ({
       value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
@@ -268,6 +300,10 @@ export async function start(
     refuse,
     store,
     calls,
+    shell,
+    runs,
+    recorded,
+    registered,
     status,
     fail,
     gone,

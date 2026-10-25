@@ -28,6 +28,8 @@ install_mod() {
 }
 install_mod "$here" "$mods/herdr-agents"
 install_mod "$here/view" "$mods/herdr-agents-view"
+# The clone this ran from, at the top of the installed mod (not in a folder rsync clears): /hrd-update pulls it.
+printf '%s\n' "$here" > "$mods/herdr-agents/clone"
 
 [[ -f "$claude/herdr-agents.json" ]] || cp "$here/herdr-agents.example.json" "$claude/herdr-agents.json"
 
@@ -61,4 +63,4 @@ edit('keybindings.json', k => {
 })
 EOF
 
-echo "Installed herdr-agents into $claude. Restart Claude Code sessions to load it."
+echo "Installed herdr-agents into $claude. A first install loads in sessions started from now on; running sessions reload updates by themselves."

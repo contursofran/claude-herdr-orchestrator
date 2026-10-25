@@ -26,6 +26,7 @@ export async function registerCommands($: EngineInterface) {
   await $.command.register({ name: `${prefix}workers`, description: 'List the herdr workers of this session.' })
   await $.command.register({ name: `${prefix}decisions`, description: 'List the questions and to-dos waiting for you.' })
   await $.command.register({ name: `${prefix}prune`, description: 'Remove worktrees whose PR is merged.' })
+  await $.command.register({ name: `${prefix}update`, description: 'Pull the clone this mod was installed from and install it again.' })
   await $.command.register({
     name: `${prefix}orchestrate`,
     description: 'Make this session the coordinator of worker agents for this folder, with a goal.',
@@ -53,6 +54,8 @@ export async function runCommand($: EngineInterface, command: string, args: stri
       return { text: await toggleSide($) }
     case 'prune':
       return prune($)
+    case 'update':
+      return update($)
     case 'decisions':
       return listDecisions($)
     case 'workers':
@@ -75,6 +78,34 @@ export async function runCommand($: EngineInterface, command: string, args: stri
 async function prune($: EngineInterface) {
   const done = await pruneMerged($)
   return { text: done.length ? `Removed ${done.length} merged worktree(s):\n${done.join('\n')}` : 'No merged, clean worktrees to remove.' }
+}
+
+// `/hrd-update`: pulls the clone install.sh ran from (recorded in the mod's `clone` file) and runs its
+// install.sh again. Running sessions reload the mod by themselves, so the answer says only what changed.
+async function update($: EngineInterface) {
+  const clone = (await $.fs.read(`${$.plugin.root}/clone`).catch(() => '')).trim()
+  if (!clone) return { text: 'Nothing updated: no clone is recorded for herdr-agents. Run ./install.sh from your clone once.' }
+  const before = (await run($, ['git', '-C', clone, 'rev-parse', '--short', 'HEAD'])).stdout.trim()
+  const pull = await run($, ['git', '-C', clone, 'pull', '--ff-only'], 120_000)
+  if (pull.exitCode !== 0)
+    return { text: `Update stopped: git pull --ff-only failed in ${clone}, install.sh did not run: ${lastLines(pull.stderr)}` }
+  const after = (await run($, ['git', '-C', clone, 'rev-parse', '--short', 'HEAD'])).stdout.trim()
+  const install = await run($, [`${clone}/install.sh`], 120_000)
+  if (install.exitCode !== 0) return { text: `Update stopped: install.sh failed in ${clone}: ${lastLines(install.stderr)}` }
+  const version = JSON.parse(await $.fs.read(`${clone}/.claude-plugin/plugin.json`)).version
+  const reload = 'running sessions reload it by themselves.'
+  if (before === after) return { text: `herdr-agents is up to date at ${after}, version ${version}. install.sh ran again; ${reload}` }
+  return { text: `herdr-agents updated from ${before} to ${after}, version ${version}. Installed; ${reload}` }
+}
+
+// Runs a command. One that cannot start, or runs past its timeout, reads as failed, its error as stderr.
+async function run($: EngineInterface, argv: string[], timeoutMs = 30_000) {
+  return $.process.run(argv, { timeoutMs }).catch((err: unknown) => ({ exitCode: 1, stdout: '', stderr: String(err) }))
+}
+
+// The last three lines of a command's stderr, on one line.
+function lastLines(stderr: string) {
+  return stderr.trim().split('\n').slice(-3).join(' / ') || 'no output on stderr'
 }
 
 async function listDecisions($: EngineInterface) {
@@ -126,6 +157,7 @@ async function help($: EngineInterface) {
         [cmd('decisions'), 'the questions and to-dos waiting for you'],
         [cmd('workers'), "this session's workers"],
         [cmd('prune'), 'remove worktrees whose PR is merged'],
+        [cmd('update'), 'pull the clone this mod was installed from, and install it again'],
         [cmd('config'), 'change these settings, in the panel above the prompt'],
         [`${cmd('help')}, ${cmd('h')}`, 'this guide'],
       ]),
