@@ -63,4 +63,4 @@ edit('keybindings.json', k => {
 })
 EOF
 
-echo "Installed herdr-agents into $claude."
+echo "Installed herdr-agents into $claude. A first install loads in sessions started from now on; running sessions reload updates by themselves."

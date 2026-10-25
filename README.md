@@ -180,7 +180,7 @@ cd claude-herdr-orchestrator && npm install
 npm run check                   # formatting, type check, both manifests, tests
 ```
 
-`install.sh` copies both mods to `~/.claude/mods/`, creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` and `keybindings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`), allows their tools and binds alt+d. Restart Claude Code sessions afterwards; `/reload-plugins` does not pick up new plugin folders.
+`install.sh` copies both mods to `~/.claude/mods/`, creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` and `keybindings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`), allows their tools and binds alt+d. After the first install, start new Claude Code sessions: `/reload-plugins` does not pick up new plugin folders. From then on, running sessions reload each update by themselves, and `/hrd-update` pulls and installs from inside a session.
 
 `npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. CI runs the same on every pull request except `typecheck`, which needs the API types a local Claude Code writes. `main` takes changes only through pull requests, and only once CI passes. After a change, run `./install.sh` again and bump `version` in `.claude-plugin/plugin.json` so running sessions reload the mod and marketplace users get the update. For a version worth announcing, tag it and publish a GitHub release saying what changed (`gh release create v<version>`).
 

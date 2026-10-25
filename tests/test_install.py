@@ -37,9 +37,13 @@ class Install(unittest.TestCase):
         self.install()
         self.assertEqual(self.recorded(), CLONE + "\n")
 
-    def test_the_last_line_no_longer_asks_for_a_restart(self):
+    def test_the_last_line_asks_only_new_sessions_to_load_a_first_install(self):
         last = self.install().stdout.strip().splitlines()[-1]
-        self.assertEqual(last, f"Installed herdr-agents into {self.config}.")
+        self.assertEqual(
+            last,
+            f"Installed herdr-agents into {self.config}. A first install loads in sessions started from now on;"
+            " running sessions reload updates by themselves.",
+        )
 
 
 if __name__ == "__main__":
