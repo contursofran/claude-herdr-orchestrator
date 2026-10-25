@@ -28,7 +28,7 @@ DEFAULT_HIDDEN = "(pass) t1 [5.10ms]\n(pass) t2 [6ms]\n"
 GREEN = {"ran": True, "kind": "plugin-test", "merged": True, "merge_error": None, "exit": 1, "own_exit": 0}
 DEFAULT_CHANGED = ["hooks/workers.ts", "tests/test_x.py"]
 LEAKS = ["scripts/hrd-eval", "plan-18"]
-DECISION_MATCH = r"(?i)stack|combin|both|bulk|additive|compound|order"
+DECISION_MATCH = r"(?i)stack|combin|both|additive|compound|on top|instead of|larger|greater|higher|bigger|max|together"
 
 
 def write(path, text):

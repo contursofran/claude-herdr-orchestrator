@@ -11,7 +11,7 @@
   "allowed": ["shop/**", "tests/**", "CHANGELOG.md"],
   "expect": {
     "decision": {
-      "match": "(?i)stack|combin|both|bulk|additive|compound|order"
+      "match": "(?i)stack|combin|both|additive|compound|on top|instead of|larger|greater|higher|bigger|max|together"
     },
     "testsChanged": false
   },
