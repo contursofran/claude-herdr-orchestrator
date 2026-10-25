@@ -41,7 +41,11 @@ EVAL_DIR = os.path.join(HERE, "hrd-eval")
 SHIM_BIN = os.path.join(EVAL_DIR, "bin")
 DEFAULT_SCENARIOS = os.path.join(EVAL_DIR, "scenarios")
 DEFAULT_ARMS = os.path.join(EVAL_DIR, "arms")
-IDENT = ["-c", "user.name=hrd-eval", "-c", "user.email=hrd-eval@localhost"]
+FALLBACK_NAME, FALLBACK_EMAIL = "hrd-eval", "hrd-eval@localhost"  # the identity when the owner has none
+IDENT = ["-c", f"user.name={FALLBACK_NAME}", "-c", f"user.email={FALLBACK_EMAIL}"]
+# Every github.com remote is rewritten to a path under /dev/null, which is not a repository, so git fails at once.
+BLOCKED_BASE = "file:///dev/null/blocked/"
+BLOCKED_PREFIXES = ["https://github.com/", "http://github.com/", "ssh://git@github.com/", "git@github.com:"]
 
 # Dollars per call by the profile's --model, and the factor a run's fix rounds add.
 ESTIMATE = {"opus": 0.60, "sonnet": 0.30, "haiku": 0.08}
@@ -185,22 +189,55 @@ def apply_hidden(sc, source, grade_dir):
         shutil.copytree(os.path.join(sc["dir"], h["dir"]), target, dirs_exist_ok=True)
 
 
-def clean_env():
-    """The environment a setup, grade or claude call starts from: the runner's, minus what marks a coordinator."""
-    return {k: v for k, v in os.environ.items() if k not in ENV_DROP and not k.startswith("HERDR_")}
+def owner_identity():
+    """The owner's global user.name and user.email; None where unset."""
+    out = {}
+    for key in ("name", "email"):
+        p = subprocess.run(["git", "config", "--global", "--get", f"user.{key}"], capture_output=True, text=True)
+        out[key] = (p.stdout.strip() if p.returncode == 0 else "") or None
+    return out
 
 
-def run_setup(cmds, cwd):
+def write_git_config(folder):
+    """Writes folder/gitconfig, the only git config a run's processes read: the owner's user.name and user.email (or
+    the fallback identity) and the github.com rewrites. No credential helper. Written under a temp name and renamed, so
+    a git process never reads half of it."""
+    ident = owner_identity()
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".gitconfig-")
+    os.close(fd)
+    try:
+        git("config", "--file", tmp, "user.name", ident["name"] or FALLBACK_NAME)
+        git("config", "--file", tmp, "user.email", ident["email"] or FALLBACK_EMAIL)
+        for prefix in BLOCKED_PREFIXES:
+            git("config", "--file", tmp, "--add", f"url.{BLOCKED_BASE}.insteadOf", prefix)
+        os.replace(tmp, os.path.join(folder, "gitconfig"))
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def clean_env(folder):
+    """The environment a setup, grade or claude call in run folder `folder` starts from: the runner's, minus what marks
+    a coordinator and any GIT_CONFIG_* variable. git reads only folder/gitconfig, never the system config, and never
+    prompts. The file is written on every call, so no call can start without it."""
+    folder = os.path.abspath(folder)
+    env = {k: v for k, v in os.environ.items() if k not in ENV_DROP and not k.startswith(("HERDR_", "GIT_CONFIG_"))}
+    write_git_config(folder)
+    env.update(GIT_CONFIG_GLOBAL=os.path.join(folder, "gitconfig"), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    return env
+
+
+def run_setup(cmds, cwd, env):
     for argv in cmds:
-        p = subprocess.run(argv, cwd=cwd, env=clean_env(), capture_output=True, text=True)
+        p = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
         if p.returncode != 0:
             tail = (p.stderr or p.stdout).strip()[-300:]
             raise RunnerError(f"setup {shlex.join(argv)} failed in {cwd} (exit {p.returncode}): {tail}")
 
 
-def run_grade(cmd, cwd, timeout_s):
+def run_grade(cmd, cwd, timeout_s, env):
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=clean_env(), capture_output=True, text=True, timeout=timeout_s)
+        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout_s)
     except subprocess.TimeoutExpired:
         return 124, f"timed out after {timeout_s} s\n"
     return p.returncode, p.stdout + p.stderr
@@ -446,8 +483,9 @@ def role_argv(profile, sid, resume, cap):
 
 
 def run_env(run, profile):
-    """The environment of one role call in run folder `run`: the profile's env, the shim first on PATH, the gh state."""
-    env = clean_env()
+    """The environment of one role call in run folder `run`: the profile's env, the shim first on PATH, the gh state,
+    and the run's git config (clean_env)."""
+    env = clean_env(run)
     env.update({str(k): str(v) for k, v in (profile.get("env") or {}).items()})
     env["PATH"] = SHIM_BIN + os.pathsep + env.get("PATH", "")
     env["CLAUDE_ENV_FILE"] = os.path.join(run, "env.sh")
@@ -704,7 +742,15 @@ class Run:
                     "wt": os.path.join(self.dir, f"wt-{sl['id']}"),
                     "builder_sid": None,
                     "exhausted": False,
-                    "rec": {"id": sl["id"], "branch": branch, "pr": None, "head": None, "fix_rounds": 0, "reviews": []},
+                    "rec": {
+                        "id": sl["id"],
+                        "branch": branch,
+                        "pr": None,
+                        "head": None,
+                        "fix_rounds": 0,
+                        "reviews": [],
+                        "review_unparsed": False,
+                    },
                 }
             )
 
@@ -754,10 +800,11 @@ class Run:
         os.makedirs(os.path.join(gh, "issues"), exist_ok=True)
         write_json(os.path.join(gh, "repo.json"), {"remote": self.remote, "name": sc["id"], "owner": "hrd-eval"})
         write_json(os.path.join(gh, "issues", f"{sc['issue']['number']}.json"), self.issue)
-        run_setup(sc["setup"], self.work)
+        env = clean_env(self.dir)
+        run_setup(sc["setup"], self.work, env)
         for s in self.slices:
             git("worktree", "add", "-q", "-b", s["branch"], s["wt"], "origin/main", cwd=self.work)
-            run_setup(sc["setup"], s["wt"])
+            run_setup(sc["setup"], s["wt"], env)
         self.ready = True
 
     # The pipeline
@@ -813,6 +860,8 @@ class Run:
         verdict, blockers, how = parse_verdict(c["report"])
         with self.lock:
             s["rec"]["reviews"].append({"call": c["n"], "sha": sha, "verdict": verdict, "blockers": blockers, "how": how})
+            if how == "none":  # no blockers counted, so the fix loop ends; the run says so
+                s["rec"]["review_unparsed"] = True
         return {"blockers": blockers, "report": c["report"], "sha": sha, "path": os.path.join(c["job"], "report.md")}
 
     def settle(self, c):
@@ -1059,6 +1108,7 @@ class Run:
         for s in self.slices:
             s["rec"]["head"] = self.head(s["branch"])
         grade_dir = os.path.join(self.dir, "grade")
+        env = clean_env(self.dir)
         git("clone", "-q", self.remote, grade_dir)
         merged, error = True, None
         for s in self.slices:
@@ -1074,13 +1124,13 @@ class Run:
         grade = sc.get("grade")
         if merged and grade:
             cmd, timeout = grade["cmd"], grade["timeout"]
-            own_code, own_out = run_grade(cmd, grade_dir, timeout)
+            own_code, own_out = run_grade(cmd, grade_dir, timeout, env)
             write_text(os.path.join(self.dir, "grade", "own.txt"), own_out)
             write_text(os.path.join(self.dir, "grade", "own.exit"), str(own_code))
             hid_code, hid_out = own_code, own_out
             if sc.get("hidden"):
                 apply_hidden(sc, self.ctx.source, grade_dir)
-                hid_code, hid_out = run_grade(cmd, grade_dir, timeout)
+                hid_code, hid_out = run_grade(cmd, grade_dir, timeout, env)
             write_text(os.path.join(self.dir, "grade", "hidden.txt"), hid_out)
             write_text(os.path.join(self.dir, "grade", "hidden.exit"), str(hid_code))
             rec.update(ran=True, kind=grade["parser"], exit=hid_code, own_exit=own_code)
@@ -1136,6 +1186,7 @@ def run_one(ctx, sc, arm, k):
         "status": rec["status"],
         "error": rec["error"],
         "fix_rounds": sum(s["rec"]["fix_rounds"] for s in run.slices),
+        "review_unparsed": any(s["rec"]["review_unparsed"] for s in run.slices),
         "cost": round(run.cost, 4),
         "wall": round(rec["ended"] - rec["started"], 1),
     }
@@ -1153,6 +1204,7 @@ def run_matrix(ctx, scenarios, arms, repeats, parallel, quiet):
                 print(
                     f"{row['scenario']:<14} {row['arm']:<4} r{row['repeat']:<2} {row['status']:<16} "
                     f"fix rounds {row['fix_rounds']}  ${row['cost']:.2f}  {row['wall']:.0f} s"
+                    + ("  unparsed review" if row["review_unparsed"] else "")
                     + (f"  ({row['error']})" if row["error"] else "")
                 )
     return sorted(rows, key=lambda r: (r["scenario"], r["arm"], r["repeat"]))
@@ -1161,9 +1213,9 @@ def run_matrix(ctx, scenarios, arms, repeats, parallel, quiet):
 # --check-scenarios
 
 
-def overlay_and_grade(sc, source, folder):
+def overlay_and_grade(sc, source, folder, env):
     apply_hidden(sc, source, folder)
-    return run_grade(sc["grade"]["cmd"], folder, sc["grade"]["timeout"])
+    return run_grade(sc["grade"]["cmd"], folder, sc["grade"]["timeout"], env)
 
 
 def check_scenario(sc, source, update):
@@ -1185,10 +1237,11 @@ def check_scenario(sc, source, update):
             git("apply", os.path.join(sc["dir"], "solution.patch"), cwd=ref)
         else:
             raise RunnerError(f"{sc['id']}: a replay has no reference without hidden.commit")
+        env = clean_env(tmp)
         for folder in (base, ref):
-            run_setup(sc["setup"], folder)
-        base_code, base_out = overlay_and_grade(sc, source, base)
-        ref_code, ref_out = overlay_and_grade(sc, source, ref)
+            run_setup(sc["setup"], folder, env)
+        base_code, base_out = overlay_and_grade(sc, source, base, env)
+        ref_code, ref_out = overlay_and_grade(sc, source, ref, env)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     base_rows, ref_rows = plugin_rows(base_out), plugin_rows(ref_out)

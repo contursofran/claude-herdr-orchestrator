@@ -83,7 +83,7 @@ for root, dirs, names in os.walk(cwd):
     files += [os.path.relpath(os.path.join(root, n), cwd) for n in names]
 with open(os.environ["FAKE_CLAUDE_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps({"kind": kind, "sid": sid, "resumed": resumed, "argv": argv, "cwd": cwd, "files": sorted(files),
-                        "gh": shutil.which("gh"), "prompt": prompt}) + "\n")
+                        "gh": shutil.which("gh"), "git_config": os.environ.get("GIT_CONFIG_GLOBAL"), "prompt": prompt}) + "\n")
 if beh.get("sleep"):
     time.sleep(beh["sleep"])
 if beh.get("plan") is not None:
@@ -386,6 +386,15 @@ class ArmsTest(RunnerCase):
 class ArgvEnvTest(unittest.TestCase):
     PROFILE = {"kind": "claude", "args": ["--agent", "builder", "--model", "haiku", "--effort", "xhigh"], "env": {"X_EXTRA": "1"}}
 
+    def setUp(self):
+        self.run = tempfile.mkdtemp(prefix="hrd-eval-env-")
+        self.addCleanup(shutil.rmtree, self.run, True)
+        owner = os.path.join(self.run, "owner.gitconfig")
+        write(self.run, "owner.gitconfig", "")
+        patcher = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": owner})  # keeps the test off the owner's config
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_role_argv_has_the_plugin_settings_the_permissions_and_the_webfetch_denial(self):
         argv = HR.role_argv(self.PROFILE, "sid-1", False, 2.5)
         self.assertEqual(argv[0], "claude")
@@ -406,15 +415,122 @@ class ArgvEnvTest(unittest.TestCase):
     def test_run_env_puts_the_shim_first_and_sets_the_gh_state(self):
         env_patch = {"GH_TOKEN": "t", "GITHUB_TOKEN": "t", "CLAUDECODE": "1", "HERDR_SOCKET": "s", "KEEP_ME": "k"}
         with mock.patch.dict(os.environ, env_patch):
-            env = HR.run_env("/run/r1", self.PROFILE)
+            env = HR.run_env(self.run, self.PROFILE)
         self.assertTrue(env["PATH"].startswith(SHIM_BIN + os.pathsep))
-        self.assertEqual(env["HRD_EVAL_GH_STATE"], "/run/r1/gh")
-        self.assertEqual(env["GH_CONFIG_DIR"], "/run/r1/gh-config")
-        self.assertEqual(env["CLAUDE_ENV_FILE"], "/run/r1/env.sh")
+        self.assertEqual(env["HRD_EVAL_GH_STATE"], os.path.join(self.run, "gh"))
+        self.assertEqual(env["GH_CONFIG_DIR"], os.path.join(self.run, "gh-config"))
+        self.assertEqual(env["CLAUDE_ENV_FILE"], os.path.join(self.run, "env.sh"))
         self.assertEqual(env["X_EXTRA"], "1")
         for dropped in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "HERDR_SOCKET"):
             self.assertNotIn(dropped, env)
         self.assertEqual(env["KEEP_ME"], "k")
+
+    def test_run_env_points_git_at_the_run_gitconfig(self):
+        env = HR.run_env(self.run, self.PROFILE)
+        self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.path.join(self.run, "gitconfig"))
+        self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertTrue(os.path.exists(os.path.join(self.run, "gitconfig")))
+
+
+# The owner's global and system git config in the tests: a credential helper in each, which a run must not see.
+OWNER_CONFIG = "[user]\n\tname = Owner Name\n\temail = owner@example.com\n[credential]\n\thelper = osxkeychain\n"
+SYSTEM_CONFIG = "[credential]\n\thelper = system-helper\n"
+
+
+class GitConfigTest(unittest.TestCase):
+    """A run's git reads only folder/gitconfig: the owner's name and email, no credential helper, and every github.com
+    URL rewritten to a path under /dev/null, so a push or clone fails at once with no network call."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="hrd-eval-git-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.run = os.path.join(self.tmp, "r1")
+        os.makedirs(self.run)
+        self.owner = os.path.join(self.tmp, "owner.gitconfig")
+        self.system = os.path.join(self.tmp, "system.gitconfig")
+        write(self.tmp, "owner.gitconfig", OWNER_CONFIG)
+        write(self.tmp, "system.gitconfig", SYSTEM_CONFIG)
+        # Ambient git config variables a worker's env could carry: a helper injected through GIT_CONFIG_COUNT, and more.
+        ambient = {
+            "GIT_CONFIG_GLOBAL": self.owner,
+            "GIT_CONFIG_SYSTEM": self.system,
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "credential.helper",
+            "GIT_CONFIG_VALUE_0": "env-helper",
+        }
+        patcher = mock.patch.dict(os.environ, ambient)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def git_in(self, env, cwd, *args):
+        return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True, timeout=60)
+
+    def test_the_run_env_points_git_at_the_run_config_and_drops_the_ambient_git_config(self):
+        env = HR.clean_env(self.run)
+        self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.path.join(self.run, "gitconfig"))
+        self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        for key in ("GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+            self.assertNotIn(key, env)
+
+    def test_the_run_config_keeps_only_the_identity_and_the_github_rewrites(self):
+        HR.clean_env(self.run)
+        cfg = os.path.join(self.run, "gitconfig")
+        listed = self.git_in(None, self.tmp, "config", "--file", cfg, "--list").stdout.splitlines()
+        keys = {line.split("=", 1)[0] for line in listed}
+        self.assertEqual(keys, {"user.name", "user.email", f"url.{HR.BLOCKED_BASE}.insteadof"})
+        self.assertIn("user.name=Owner Name", listed)
+        self.assertIn("user.email=owner@example.com", listed)
+        rewrites = [line.split("=", 1)[1] for line in listed if ".insteadof=" in line]
+        self.assertEqual(rewrites, HR.BLOCKED_PREFIXES)
+
+    def test_github_urls_are_rewritten_to_the_blocked_path_and_fail_at_once(self):
+        env = HR.clean_env(self.run)
+        for url in ("https://github.com/x/y", "http://github.com/x/y", "ssh://git@github.com/x/y", "git@github.com:x/y"):
+            with self.subTest(url=url):
+                got = self.git_in(env, self.run, "ls-remote", "--get-url", url)
+                self.assertEqual(got.stdout.strip(), HR.BLOCKED_BASE + "x/y")
+                p = self.git_in(env, self.run, "ls-remote", url)
+                self.assertNotEqual(p.returncode, 0)
+                self.assertIn("'/dev/null/blocked/x/y' does not appear to be a git repository", p.stderr)
+
+    def test_no_credential_helper_is_seen_from_the_run_env(self):
+        # The owner's helper is there to be seen without the run's env, so the empty answer below is the run's doing.
+        owner_helper = subprocess.run(["git", "config", "--global", "--get", "credential.helper"], capture_output=True, text=True)
+        self.assertEqual(owner_helper.stdout.strip(), "osxkeychain")
+        env = HR.clean_env(self.run)
+        p = self.git_in(env, self.run, "config", "credential.helper")
+        self.assertEqual((p.returncode, p.stdout), (1, ""))
+
+    def test_worker_commits_have_the_owners_identity(self):
+        env = HR.clean_env(self.run)
+        repo = os.path.join(self.run, "repo")
+        os.makedirs(repo)
+        self.assertEqual(self.git_in(env, repo, "init", "-q", "-b", "main").returncode, 0)
+        p = self.git_in(env, repo, "commit", "-q", "--allow-empty", "-m", "Work")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.git_in(env, repo, "log", "-1", "--format=%an <%ae>").stdout.strip(), "Owner Name <owner@example.com>")
+
+    def test_worker_commits_have_the_fallback_identity_when_the_owner_has_none(self):
+        empty = os.path.join(self.tmp, "empty.gitconfig")
+        write(self.tmp, "empty.gitconfig", "")
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": empty}):
+            env = HR.clean_env(self.run)
+        repo = os.path.join(self.run, "repo")
+        os.makedirs(repo)
+        self.assertEqual(self.git_in(env, repo, "init", "-q", "-b", "main").returncode, 0)
+        p = self.git_in(env, repo, "commit", "-q", "--allow-empty", "-m", "Work")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self.git_in(env, repo, "log", "-1", "--format=%an <%ae>").stdout.strip(), "hrd-eval <hrd-eval@localhost>")
+
+    def test_the_run_config_is_written_again_on_every_call_and_no_temp_file_is_left(self):
+        HR.clean_env(self.run)
+        cfg = os.path.join(self.run, "gitconfig")
+        os.remove(cfg)
+        HR.clean_env(self.run)
+        self.assertTrue(os.path.exists(cfg))
+        self.assertEqual([n for n in os.listdir(self.run) if n.startswith(".gitconfig-")], [])
 
 
 class ReportRuleTest(unittest.TestCase):
@@ -536,6 +652,18 @@ class SetupTest(RunnerCase):
         with open(os.path.join(run.dir, "env.sh"), encoding="utf-8") as f:
             self.assertIn(SHIM_BIN, f.read())
 
+    def test_setup_commands_run_with_the_run_git_config(self):
+        self.make_scenario(setup=[["sh", "-c", 'printf %s "$GIT_CONFIG_GLOBAL" > global.txt']])
+        sc = HR.load_scenario(os.path.join(self.scen, "replay-test"))
+        arm = HR.load_arms(ARMS, ["A"], self.config)["A"]
+        ctx = HR.Ctx(self.results, self.fake, 60, HR.Budget(30, 5), self.src)
+        run = HR.Run(ctx, sc, arm, 1)
+        os.makedirs(run.dir)
+        run.setup()
+        wt = run.slices[0]["wt"]
+        for folder_path in (run.work, wt):
+            self.assertEqual(read_text(os.path.join(folder_path, "global.txt")), os.path.join(run.dir, "gitconfig"))
+
 
 class MatrixTest(RunnerCase):
     def test_arm_a_runs_plan_build_review_fix_and_rereview_with_the_hidden_tests_only_in_the_grade(self):
@@ -553,6 +681,8 @@ class MatrixTest(RunnerCase):
         self.assertEqual(
             [(r["verdict"], r["blockers"], r["how"]) for r in slice_rec["reviews"]], [("changes", 1, "line"), ("approve", 0, "line")]
         )
+        self.assertFalse(slice_rec["review_unparsed"])
+        self.assertNotIn("unparsed review", out)
         remote = os.path.join(self.run_dir(), "remote.git")
         self.assertEqual(slice_rec["head"], git(self.run_dir(), "--git-dir", remote, "rev-parse", "refs/heads/issue-12-eval"))
         self.assertEqual(git(os.path.join(self.run_dir(), "work"), "log", "-1", "--format=%s", run["base"]), "Base")
@@ -564,12 +694,47 @@ class MatrixTest(RunnerCase):
         self.assertIn("shop.py", run["changed_files"])
         self.assertIn(self.merge, run["leak_patterns"])
         self.assertIn(self.src, run["leak_patterns"])
-        # no worker folder ever held the hidden test
+        # no worker folder ever held the hidden test; every worker call reads the run's git config
         for entry in self.fake_calls():
             self.assertNotIn("tests/test_hidden.py", entry["files"], entry["kind"])
+            self.assertEqual(entry["git_config"], os.path.join(self.run_dir(), "gitconfig"), entry["kind"])
         # the builder's gh resolves to the shim
         builder = [e for e in self.fake_calls() if e["kind"] == "build"][0]
         self.assertTrue(builder["gh"].startswith(SHIM_BIN))
+
+    def test_the_grade_command_runs_with_the_run_git_config(self):
+        # the grade runs twice (own tests, then with the hidden tests), so the probe appends one line per run
+        probe = os.path.join(self.run_dir(), "grade-config.txt")
+        cmd = ["sh", "-c", f'printf "%s\\n" "$GIT_CONFIG_GLOBAL" >> "{probe}"']
+        self.make_scenario(grade={"cmd": cmd, "parser": "unittest", "timeout": 60})
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        config = os.path.join(self.run_dir(), "gitconfig")
+        self.assertEqual(read_text(probe).splitlines(), [config, config])
+
+    def test_a_review_with_no_verdict_ends_the_loop_and_is_recorded_as_unparsed(self):
+        self.behave(review={"report": "I looked at it."})
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.kinds(), ["plan", "build", "review"])
+        run = self.run_json()
+        self.assertEqual(run["status"], "done")
+        slice_rec = run["slices"][0]
+        self.assertEqual(slice_rec["fix_rounds"], 0)
+        self.assertEqual([(r["verdict"], r["blockers"], r["how"]) for r in slice_rec["reviews"]], [(None, None, "none")])
+        self.assertTrue(slice_rec["review_unparsed"])
+        self.assertIn("unparsed review", out)
+
+    def test_a_rereview_with_no_verdict_is_recorded_as_unparsed_too(self):
+        self.behave(review={"report": "VERDICT: changes needed, 1 blocker"}, rereview={"report": "Fixed, I think."})
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.kinds(), ["plan", "build", "review", "fix", "rereview"])
+        slice_rec = self.run_json()["slices"][0]
+        self.assertEqual(slice_rec["fix_rounds"], 1)
+        self.assertEqual(slice_rec["reviews"][-1]["how"], "none")
+        self.assertTrue(slice_rec["review_unparsed"])
+        self.assertIn("unparsed review", out)
 
     def test_calls_jsonl_and_run_json_have_the_contract_fields(self):
         self.behave(review=[{"report": "VERDICT: changes needed, 1 blocker"}, {"report": "VERDICT: approve"}])
