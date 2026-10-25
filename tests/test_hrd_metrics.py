@@ -4,7 +4,10 @@ Every expected number below is worked out by hand from the timeline in build(); 
 the script's output. Run: python3 -m unittest discover -s tests -p 'test_*.py'
 """
 
+import argparse
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -331,6 +334,7 @@ class Totals(Fixtures):
         self.assertEqual(t["reads"], {"read": 1, "bash": 2})
         self.assertEqual(t["edits_per_report"], 0.25)
         self.assertEqual(t["det"], {"n": 2, "median": 2.5, "p90": 3.0, "max": 3.0})  # [3, 2]
+        self.assertEqual(t["det_est"], {"n": 0, "median": None, "p90": None, "max": None})  # no pointer report lost its queue here
         self.assertEqual(t["det_missing"], {"no report file": 1, "folder gone": 1})
         self.assertEqual(t["queue"], {"n": 2, "median": 1.5, "p90": 2.0, "max": 2.0})  # [2, 1]
         self.assertEqual(t["queue_by"], {"token": 1, "text": 1, "missing": {"no report file": 1, "folder gone": 1}})
@@ -356,9 +360,30 @@ class Totals(Fixtures):
         self.assertIn("queue found for 2 of 4 reports (by token 1, by text 1); the rest: 1 no report file, 1 folder gone", text_out)
         self.assertIn("reads of RESULT files: 1 Read calls and 2 Bash reads", text_out)
         self.assertIn("no price for claude-mystery-9", text_out)
+        self.assertIn("det s: the worker's earliest RESULT.md write", text_out)
 
     def test_no_transcripts_in_the_window_prints_none(self):
         self.assertIn("none: no transcript in the window", self.run_text(days=0))
+
+    def test_with_no_arguments_the_window_is_the_last_7_days(self):
+        self.assertIn("== coordinator sessions, last 7 days: 1 with 4 reports", self.run_script([]))
+
+    def test_since_sets_the_header_and_a_window_after_every_transcript_prints_none(self):
+        text_out = self.run_script(["--since", "2100-01-01 00:00"])
+        self.assertIn("== coordinator sessions, since 2100-01-01 00:00: 0 with 0 reports", text_out)
+        self.assertIn("none: no transcript in the window", text_out)
+
+    def test_days_and_since_together_use_the_later_start(self):
+        # --since 2000 is older than 7 days, so the 7 days decide: the same coordinator as with --days alone.
+        self.assertIn("1 with 4 reports", self.run_script(["--days", "7", "--since", "2000-01-01 00:00"]))
+        # --days 0 starts now, which is later than --since 2000: nothing is in the window.
+        self.assertIn("none: no transcript in the window", self.run_script(["--days", "0", "--since", "2000-01-01 00:00"]))
+
+    def test_a_since_in_another_format_is_a_usage_error(self):
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.paths["claude"])
+        proc = subprocess.run([sys.executable, SCRIPT, "--since", "2026-10-24T11:53"], capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn('expected YYYY-MM-DD HH:MM (local time), got', proc.stderr)
 
     def run_json(self):
         return json.loads(self.run_script(["--json"]))
@@ -370,6 +395,153 @@ class Totals(Fixtures):
         env = dict(os.environ, CLAUDE_CONFIG_DIR=self.paths["claude"])
         proc = subprocess.run([sys.executable, SCRIPT] + args, capture_output=True, text=True, env=env, check=True)
         return proc.stdout
+
+
+class Window(unittest.TestCase):
+    def test_since_is_local_time_to_the_minute(self):
+        self.assertEqual(hm.since_arg("2026-10-24 11:53"), datetime(2026, 10, 24, 11, 53).timestamp())
+
+    def test_since_rejects_any_other_format(self):
+        for bad in ("2026-10-24T11:53", "2026-10-24", "2026-13-01 00:00", "24/10/2026 11:53"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
+                hm.since_arg(bad)
+
+    def test_the_window_starts_at_the_later_of_days_and_since(self):
+        now, day = 1_800_000_000.0, 86400
+        self.assertEqual(hm.window_start(7, None, now), now - 7 * day)
+        self.assertEqual(hm.window_start(None, now - 3 * day, now), now - 3 * day)
+        self.assertEqual(hm.window_start(1, now - 3 * day, now), now - day)  # --days is the later start
+        self.assertEqual(hm.window_start(1, now - day / 2, now), now - day / 2)  # --since is the later start
+        self.assertEqual(hm.window_start(None, None, now), now - 7 * day)  # neither: the default 7 days
+        self.assertEqual(hm.window_start(0, None, now), now)
+
+
+class SinceCut(Fixtures):
+    """--since: a report counts when its prompt is at or after the cut, whatever its session's start."""
+
+    def cut(self, off):
+        coords, _ = hm.collect(self.paths["proj"], self.at(off))
+        return next(s for s in coords if s.sid == "coord-1")
+
+    def test_a_report_before_the_cut_is_left_out_though_its_session_started_earlier(self):
+        s = self.cut(131)  # report 2 is at 130, report 3 at 150, report 4 at 170
+        self.assertEqual([r.ts for r in s.reports], [self.at(150), self.at(170)])
+        self.assertEqual(s.start, self.at(131))  # the session's first record in the window, not its first ever
+
+    def test_a_prompt_exactly_at_the_cut_counts(self):
+        self.assertEqual([r.ts for r in self.cut(130).reports], [self.at(130), self.at(150), self.at(170)])
+
+    def test_turns_and_cost_count_from_the_cut(self):
+        t = self.cut(120).tot  # records from 130 on: n1, n2, k1, ra, rb, p1 (the <synthetic> one is not counted)
+        self.assertEqual(t["turns"], 6)
+        self.assertEqual((t["inp"], t["out"], t["cr"], t["cw"]), (100, 50, 500, 100))
+        # opus, per request in micro-dollars: n1 240, n2 940 (1 h cache write), k1 140, ra 280, rb 280, p1 420
+        self.assertAlmostEqual(t["cost"], 2300 / 1e6, places=12)
+
+
+class DetEstimate(unittest.TestCase):
+    """det_est: with no queue lag (the folder is gone, or the token file is missing), the prompt minus the worker's write."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="hrd-det-est-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_a_gone_folder_takes_the_prompt_minus_the_worker_write(self):
+        s, folder = gone_report(self.tmp)  # the prompt at 1000
+        hm.resolve(s, 0, {(folder, "cafe0001"): 990.0})
+        r = s.reports[0]
+        self.assertIsNone(r.queue)
+        self.assertEqual(r.queue_miss, "folder gone")
+        self.assertIsNone(r.det)
+        self.assertEqual(r.det_est, 10.0)
+        self.assertEqual(hm.det_missing([r]), {})
+
+    def test_a_missing_token_file_takes_the_same_estimate(self):
+        s, folder = gone_report(self.tmp)
+        os.makedirs(folder)  # the folder is there, the RESULT file is not
+        hm.resolve(s, 0, {(folder, "cafe0001"): 990.0})
+        self.assertEqual(s.reports[0].queue_miss, "token file missing")
+        self.assertEqual(s.reports[0].det_est, 10.0)
+
+    def test_a_present_file_keeps_its_exact_det_and_no_estimate(self):
+        s, folder = gone_report(self.tmp)
+        os.makedirs(folder)
+        path = os.path.join(folder, "RESULT-cafe0001.md")
+        with open(path, "w") as fh:
+            fh.write("<!-- report cafe0001 -->\nDone.\n")
+        set_mtime(path, 990.0)  # delivered 10 s before the prompt; written 3 s before that
+        hm.resolve(s, 0, {(folder, "cafe0001"): 987.0})
+        r = s.reports[0]
+        self.assertEqual((r.queue, r.det), (10.0, 3.0))
+        self.assertIsNone(r.det_est)
+
+    def test_without_a_write_there_is_no_estimate_and_the_reason_is_no_worker_write(self):
+        s, _ = gone_report(self.tmp)
+        hm.resolve(s, 0, {})
+        self.assertIsNone(s.reports[0].det_est)
+        self.assertEqual(hm.det_missing(s.reports), {"no worker write": 1})
+
+    def test_a_short_report_has_no_token_to_match_so_no_estimate(self):
+        s, folder = gone_report(self.tmp, body="Done: all green.")
+        hm.resolve(s, 0, {(folder, "cafe0001"): 990.0})
+        r = s.reports[0]
+        self.assertIsNone(r.token)
+        self.assertIsNone(r.det_est)
+        self.assertEqual(hm.det_missing([r]), {"folder gone": 1})
+
+    def test_a_write_of_another_token_or_folder_is_not_this_report(self):
+        s, folder = gone_report(self.tmp)
+        hm.resolve(s, 0, {(folder, "other000"): 990.0, (folder + "x", "cafe0001"): 990.0})
+        self.assertIsNone(s.reports[0].det_est)
+
+    def test_the_transcripts_of_a_gone_worker_give_the_estimate(self):
+        base = 1_790_000_000
+        wt = os.path.join(self.tmp, "wt")  # the worktree was pruned: never created
+        proj = os.path.join(self.tmp, "claude", "projects")
+        c = Transcript(base, os.path.join(self.tmp, "coord"))
+        c.assistant(10, "a1", OPUS, usage(inp=1), [call("s1", hm.SPAWN, worker="b7", cwd=wt, profile="builder")])
+        c.herdr(100, "b7", "builder", "done", f"[Full report, 3 lines: {wt}/.herdr-agents/b7/RESULT-tok777.md. Read it before acting on it.]")
+        c.write(os.path.join(proj, "-coord", "coord-1.jsonl"))
+        w = Transcript(base, wt)
+        w.human(0, f"Your task is in {wt}/.herdr-agents/b7/TASK.md. Read it and do it.")
+        w.assistant(50, "w1", SONNET, usage(inp=1), [call("q1", "Write", file_path=f"{wt}/.herdr-agents/b7/RESULT.md", content="<!-- report tok777 -->\n# Done\n")])
+        w.write(os.path.join(proj, "-wt", "w1.jsonl"))
+        coords, workers = hm.collect(proj, base - 10)
+        r = next(s for s in coords if s.sid == "coord-1").reports[0]
+        self.assertEqual((r.ts, r.token, r.queue_miss), (base + 100, "tok777", "folder gone"))
+        self.assertEqual(r.det_est, 50.0)  # written at 50, prompted at 100
+        self.assertIsNone(r.det)
+        self.assertEqual(len(workers), 1)
+
+    def test_the_footer_counts_the_estimates_and_says_the_queue_lag_is_in_them(self):
+        s, folder = gone_report(self.tmp)
+        s.start = 1000.0
+        hm.resolve(s, 0, {(folder, "cafe0001"): 990.0})
+        rows = [hm.coordinator_row(s)]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hm.print_text("since 2026-10-24 11:53", rows, hm.totals(rows, [s]), [], {}, set(), "/x")
+        text_out = out.getvalue()
+        self.assertIn("== coordinator sessions, since 2026-10-24 11:53: 1 with 1 reports", text_out)
+        self.assertIn("== det found for 0 of 1 reports; prompt minus write, no queue lag known, for 1 more "
+                      "(median 10 s, p90 10 s, max 10 s; queue lag included); the rest: none", text_out)
+        self.assertIn("det s: the worker's earliest RESULT.md write", text_out)
+
+
+def gone_report(tmp, body=None):
+    """A report at 1000 from worker b1 whose folder is gone (its worktree was pruned). Its prompt is a pointer by default."""
+    wt = os.path.join(tmp, "wt")  # never created
+    folder = os.path.join(wt, ".herdr-agents", "b1")
+    if body is None:
+        body = f"[Full report, 9 lines: {folder}/RESULT-cafe0001.md. Read it before acting on it.]"
+    s = hm.Session(os.path.join(tmp, "s.jsonl"))
+    s.cwd = tmp
+    s.spawn_cwd["b1"] = wt
+    prompt = PREAMBLE + f'<herdr-agent name="b1" profile="builder" status="done">\n{body}\n</herdr-agent>'
+    s.report(1000.0, hm.PROMPT_TAG.match(prompt), prompt)
+    return s, folder
 
 
 class Join(unittest.TestCase):
