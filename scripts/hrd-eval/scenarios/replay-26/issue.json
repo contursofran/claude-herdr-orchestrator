@@ -1,0 +1,26 @@
+{
+  "number": 18,
+  "title": "v2 step 1: push detection with herdr agent wait; no timers in worker sessions",
+  "body": "Part of #23. Needs the baseline (step 0) merged first.\n\n## Why\nEach running worker costs ~32 herdr CLI calls a minute: the 10 s `watch` loop (`herdr agent get` + `herdr pane read` of the whole screen + file checks, `hooks/workers.ts`) plus the 3 s board refresh (`hooks/board.ts`). A report waits ~5 s on average (up to 10 s) before delivery, and state partly comes from screen scraping (`inBackground()`, `QUIET_MS`).\n\n## Change\nItems 1, 2 and 5 are merged in #25. Items 3 and 4 are open:\n\n3. **Board refresh** driven by the same events + the 60 s sweep instead of every 3 s; the band's clock text may tick from `now` without re-querying herdr.\n4. **No timers in worker sessions**: the mod loads in every Claude worker (same `CLAUDE_CODE_PLUGIN_DIRS`). Spawn sets `HERDR_AGENTS_ROLE=worker` in the tab env; `session.start` skips timers, sidebar auto-open and refresh when it is set.\n\n## Prerequisite (owner, local)\nherdr hook integrations up to date (`herdr integration status` showed claude v7<v11, codex v6<v10, opencode v7<v13). Without them herdr's own state falls back to heuristics.\n\n## Answered question\n- **Q4 Band after a blocked report.** A: the row shows Reported, as today after the 10 s pass (recommended).\n\n## Acceptance\n- Tests in `tests/workers.test.tsx` cover: wait returns done with report → delivered once; blocked; idle without report → quiet path; wait child dies → sweep still delivers; a CLI error doesn't finalise.\n- `hrd-metrics.py` after a day of use: delivery lag median < 2 s (baseline in step 0's PR), herdr calls per worker-minute < 3.\n\n## Acceptance details\n- The `tab create` argv of a spawn ends with `--env HERDR_AGENTS_ROLE=worker`, after the profile's `--env` pairs.\n- During an outage of `herdr agent list` and `herdr agent get`, the band row keeps its last label (Working) and shows no `Tab gone`.\n- A wait that ends on `done` before any report shows on the band row within 3 s, as `Done · report pending`.\n- A worker that the sweep sees `blocked`, with no wait ending on it, is reported blocked at that sweep (within 60 s), and its row reads `Reported`.\n- A worker's own session (`HERDR_AGENTS_ROLE=worker`) sweeps the workers it started. At start-up, with running jobs restored from its state, it calls `herdr agent list` at once, not a minute later. After that it sweeps every 60 s while one of its jobs runs.\n- If herdr ends a worker's wait with an error and the wait child is gone, the worker's report still reaches the coordinator. The report in its `RESULT.md` is sent once, at the sweep 60 s later.\n- A worker's own session makes no herdr call once none of its jobs runs: after the report of its last running job is delivered, and at start-up when every restored job is already reported. The check is 10 minutes of clock time in each case.\n- A worker's own session with no running job makes no herdr call, opens no sidebar pane (even with the side view on) and writes no file under `~/.herdr-agents/board/` in 10 minutes.\n",
+  "state": "CLOSED",
+  "labels": [
+    {
+      "color": "a2eeef",
+      "description": "New feature or request",
+      "id": "LA_kwDOVTup0c8AAAAC-r8qEA",
+      "name": "enhancement"
+    },
+    {
+      "color": "5319e7",
+      "description": "Event-driven, fewer coordinator turns",
+      "id": "LA_kwDOVTup0c8AAAAC-8tJcA",
+      "name": "v2"
+    }
+  ],
+  "comments": [],
+  "url": "https://github.com/contursofran/claude-herdr-orchestrator/issues/18",
+  "author": {
+    "login": "contursofran"
+  },
+  "createdAt": "2026-10-24T01:09:21Z"
+}

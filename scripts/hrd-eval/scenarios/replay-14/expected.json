@@ -1,0 +1,25 @@
+{
+  "tests": [
+    "a #123 links to the issue or PR of the repo named before it",
+    "a DECISION line that says none is not pinned for the owner",
+    "a configured commandPrefix names the commands",
+    "a message after a report with DECISION lines reaches the worker as new text, not TASK.md again",
+    "a pinned to-do shows at the top, and Done unpins it and tells the coordinator",
+    "a prompt that starts no work is typed again, and a worker it never reaches is reported blocked",
+    "a reported worker's tab closes once it has sat idle, unless its question is still open",
+    "a reviewer joins the row of the PR its builder linked, with the PR's checks",
+    "a turned-off built-in cannot start, and the rules name what replaces it",
+    "a worker that stops without a report is reported once its screen sits still; background work of its own buys it an hour",
+    "commands share the hrd- prefix",
+    "compact shows the first two lines of workers; Details shows them all",
+    "one number in two repos is two rows, and a row that joins another keeps its slot",
+    "the box shows every answer at the same height, and a closed item keeps its slot",
+    "the settings on the band save to the chosen file and refuse bad values",
+    "unpin_for_owner removes items by id and names the ones it did not find",
+    "view picks the band or the sidebar, opens it at start, and switches it from the settings",
+    "workers join through shared numbers, and only a role name gives a number",
+    "workers on one issue share a row, and an answer stays in its slot until clear done",
+    "workers show one per row, two per line, the one that needs the person first"
+  ],
+  "discriminating": ["a prompt that starts no work is typed again, and a worker it never reaches is reported blocked"]
+}

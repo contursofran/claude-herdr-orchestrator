@@ -1,0 +1,32 @@
+{
+  "title": "Replay of #26: the board makes no herdr calls, and a worker's own session sweeps while its workers run (issue #18)",
+  "kind": "replay",
+  "issue": {
+    "number": 18,
+    "file": "issue.json"
+  },
+  "source": {
+    "commit": "8bec2a7c2d5aaf93ed14b533a403272c54a6df05"
+  },
+  "hidden": {
+    "commit": "5492371a9d03dcd4a596250f9579a34eda5bbd8f",
+    "paths": ["tests"]
+  },
+  "setup": [
+    ["npm", "ci", "--no-audit", "--no-fund", "--prefer-offline"],
+    ["bash", "scripts/types.sh"]
+  ],
+  "grade": {
+    "cmd": ["claude", "plugin", "test", "."],
+    "parser": "plugin-test",
+    "timeout": 300
+  },
+  "allowed": ["README.md", "hooks/board.ts", "hooks/register.tsx", "hooks/workers.ts", "tests/**"],
+  "expect": {
+    "decision": null,
+    "testsChanged": true
+  },
+  "onDecision": "recommended",
+  "estimateScale": 1,
+  "notes": "Source 8bec2a7 (the parent of PR #26; PR #25, which is items 1, 2 and 5 of #18, is in it), hidden tests from its merge 5492371 (tests/ replaced whole). testsChanged is true: PR #26 changed tests/band.test.tsx, tests/harness.tsx and tests/workers.test.tsx. The issue is assembled from #18's own text: #25 is stated as merged, items 3 and 4 and the acceptance lines are as #18 writes them, and Q4=A is word for word from plan-18-PLAN.md line 236. comments is []. D14 is referenced by PR #26 (its body, its fix round and its review comment) but its text is not recorded in plan-18-PLAN.md, #18 (body or comments) or #25, so the issue does not state it. The worker-session sweep is not in #18 either: it comes from the owner's review comment on PR #26 (hooks/register.tsx:39), which PR #26's fix round answers. The issue states it in Acceptance details, as replay-14 states the details its reference tests check: the start-up sweep for restored running jobs, the 60 s sweep while a job runs, the report of a dead wait child delivered at the sweep 60 s later, no herdr call once no job runs, and, for a session with no running job, no sidebar pane and no file under ~/.herdr-agents/board/. Item 4 ('No timers in worker sessions') does not mention a sweep, so the Acceptance details are the only place the issue gives it."
+}
