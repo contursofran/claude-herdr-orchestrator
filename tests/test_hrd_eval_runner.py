@@ -101,6 +101,12 @@ elif beh.get("branch"):
 if beh.get("pr"):
     subprocess.run(["gh", "pr", "create", "--title", beh["pr"], "--body", "Body"], cwd=cwd, check=True,
                    stdout=subprocess.DEVNULL)
+if beh.get("shim_pr"):  # a PR already in the shim's state, written here, so no gh call (no calls.log line) made it
+    rec = beh["shim_pr"]
+    path = os.path.join(os.environ["HRD_EVAL_GH_STATE"], "prs", f"{rec['number']}.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(rec))
 if not beh.get("no_result"):
     open(os.path.join(job, "RESULT.md"), "w").write(f"<!-- report {token} -->\n{beh.get('report', '')}\n")
 cost = float(beh.get("cost", 0.1))
@@ -1012,6 +1018,36 @@ class MatrixTest(RunnerCase):
         run = self.run_json()
         self.assertEqual(run["status"], "no_pr")
         self.assertIsNone(run["slices"][0]["pr"])
+
+    def test_a_header_pr_in_the_shim_state_that_no_call_made_is_the_slices_pr(self):
+        # PR 13 is in the shim's state before the builder's report is read, its head is not the slice branch, and no gh
+        # call opened it in this run. The builder's header names it, so the run takes it and goes on to review.
+        pr = {
+            "number": 13,
+            "title": "Make the total 5",
+            "body": "Body",
+            "state": "OPEN",
+            "isDraft": False,
+            "headRefName": "owner-total-fix",
+            "baseRefName": "main",
+            "author": {"login": "hrd-eval"},
+            "labels": [],
+            "comments": [],
+            "reviews": [],
+            "createdAt": "2026-10-01T00:00:00Z",
+            "updatedAt": "2026-10-01T00:00:00Z",
+            "mergedAt": None,
+            "mergeCommit": None,
+            "autoMergeRequest": None,
+        }
+        report = "```report\nstatus: done\npr: 13\nsummary: Built.\n```"
+        self.behave(build={"pr": None, "shim_pr": pr, "report": report})
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        run = self.run_json()
+        self.assertEqual(run["slices"][0]["pr"], 13)
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(self.kinds(), ["plan", "build", "review"])
 
     def test_every_job_folder_keeps_the_full_rule_in_reporting_md(self):
         self.behave(build={"report": "Built.\nDECISION: Stack? | Yes (recommended) | No"})

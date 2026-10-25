@@ -554,6 +554,7 @@ def header_prs(report):
                 if not pm:
                     break
                 found.append(int(pm.group(1) or pm.group(2)))
+            # The same limit as prNumbers() in hooks/report.ts: the first five distinct PRs.
             return list(dict.fromkeys(found))[:5]
     return []
 
@@ -999,8 +1000,10 @@ class Run:
         job = os.path.join(self.dir, "jobs", name)
         os.makedirs(job)
         token = uuid.uuid4().hex[:8]
-        # The full rule is kept in the job folder's REPORTING.md, as the mod keeps it in the worker's folder. A resumed
-        # session has the rule already, so its prompt only reminds it of the file.
+        # REPORTING.md gets the full rule on every call, resumed calls too, with this call's token. A job folder
+        # outlives its job, so a resumed prompt cannot rely on a file an earlier prompt left; workers.ts writes
+        # the full rule when a folder has no REPORTING.md. A resumed session has the rule already, so its prompt
+        # only reminds it of the file.
         write_text(os.path.join(job, "REPORTING.md"), report_rule(job, token))
         prompt = text(report_reminder(job, token) if resume else report_rule(job, token))
         write_text(os.path.join(job, "prompt.txt"), prompt)
