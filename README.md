@@ -18,7 +18,7 @@ The coordinator starts each worker in its own herdr tab, usually in its own git 
 
 ### Reports come back by themselves
 
-When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report), and long reports are shortened to a pointer to the file. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job.
+When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job.
 
 ### To-dos pinned for you
 
@@ -192,6 +192,7 @@ npm run check                   # formatting, type check, both manifests, tests
 | `config.ts` | The settings files, the built-in profiles, the state file's path. |
 | `defaults.ts` | Default settings and tuning values. |
 | `workers.ts` | `spawn`, `message`, `stop`: starting workers, watching them, delivering `RESULT.md`, `WAIT.json` waits. |
+| `report.ts` | The report header workers write at the top of `RESULT.md`, and its parsing. |
 | `owner.ts` | Questions (`ask_owner`, `DECISION:` lines) and to-dos (`pin_for_owner`) waiting for the person. |
 | `coordinator.ts` | The playbook, the worker target, wrap-up, and compacting the coordinator's context. |
 | `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |

@@ -16,6 +16,7 @@ import {
 } from './defaults'
 import { acceptFolderTrust, herdr, type HerdrAgent, lastStatus, notify } from './herdr'
 import { ask, openQuestions } from './owner'
+import { type Header, parseHeader, summaryOf } from './report'
 import { cmd } from './session'
 import { jobs, saveJob } from './state'
 import { briefRefs, withPr } from './tasks'
@@ -46,22 +47,31 @@ const chains = new Map<string, Promise<void>>()
 
 // Each prompt gets a fresh token the worker puts on RESULT.md's first line, so a
 // report the worker writes late for an earlier prompt is never taken as this one's.
-export function reportRule(job: Job) {
+// The full rule goes in the first prompt to a job folder, and in REPORTING.md, which
+// the later prompts name (see prompt).
+export function reportRule(job: Job, token = job.token) {
   return [
-    `When you are completely finished, write your final report to ${job.dir}/RESULT.md,`,
-    `whose first line must be exactly: <!-- report ${job.token} -->. Then, in at most 25 lines:`,
-    'what you did, the branch or PR link, test results, open questions, and anything you could not do.',
-    `Put long material, such as a plan or a full review, in another file in ${job.dir} (a plan goes in PLAN.md)`,
-    'and give its absolute path in the report instead of copying it in.',
-    'If you need a decision only the owner can make, write each question on its own line as',
-    '"DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short;',
-    'if you cannot go on without the answer, stop there.',
-    'That file is how your coordinator gets your answer.',
+    `When you are completely finished, write your final report to ${job.dir}/RESULT.md. Its first line must be exactly: <!-- report ${token} -->`,
+    'Right below that line, put this header, fences included, with your own values:',
+    '```report',
+    'status: done',
+    'pr: 123',
+    'summary: what changed; the checks you ran and their result; what is next (at most 3 short lines)',
+    'ask: one line, only if your coordinator must answer something; otherwise leave this line out',
+    '```',
+    'status is done, blocked (you need an answer or something outside your control) or failed. Leave out pr if you opened or updated no PR; list several as 12, 13. Your coordinator usually reads only this header, so make the summary enough to act on.',
+    `Below the header, in at most 25 lines: what you did, the branch or PR link, test results, open questions, and anything you could not do. Put long material, such as a plan or a full review, in another file in ${job.dir} (a plan goes in PLAN.md) and give its absolute path instead of copying it in.`,
+    'If you need a decision only the owner can make, write each question on its own line as "DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short; if you cannot go on without the answer, stop there.',
     'To wait for something outside your control (CI, a merge, a free test machine), never sleep or poll inside a command for more than 2 minutes.',
     `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run in your folder, that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
     'and end your turn without RESULT.md; you get a message when the check passes or times out.',
-    'If you cannot go on, write why to RESULT.md and stop.',
-  ].join(' ')
+    `If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.`,
+  ].join('\n')
+}
+
+// The one-line reminder that later prompts carry instead of the full rule (see prompt).
+export function reportReminder(job: Job) {
+  return `When you are finished, report as before: write ${job.dir}/RESULT.md with the first line exactly <!-- report ${job.token} -->, then the \`\`\`report header (status, pr, summary, ask) and your report. DECISION lines and WAIT.json work as in ${job.dir}/REPORTING.md.`
 }
 
 // Sends `text` to the worker and, once herdr sees it working, arms the wait for its turn
@@ -71,7 +81,11 @@ export async function prompt($: EngineInterface, job: Job, lead: string) {
   const next: Job = { ...job, token, status: 'running', endedAt: undefined }
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   await saveJob($, next)
-  const lost = await send($, job.name, `${lead} ${reportRule(next)}`)
+  // The full rule goes in the first prompt to the folder and in REPORTING.md; later prompts get the reminder.
+  const rules = `${job.dir}/REPORTING.md`
+  const first = !(await $.fs.exists(rules))
+  if (first) await $.fs.write(rules, `TOKEN below is the token in the latest prompt you got.\n\n${reportRule(next, 'TOKEN')}`)
+  const lost = await send($, job.name, `${lead} ${first ? reportRule(next) : reportReminder(next)}`)
   if (lost === undefined) {
     // Only once the worker works is its turn's end the one to wait for: herdr answers a wait at
     // once for a state the worker is already in, and the last turn's 'done' may still be there.
@@ -328,11 +342,15 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
 
   const resultPath = `${job.dir}/RESULT.md`
   let body: string
-  // The PR a report links, for the sidebar's task rows.
-  let pr: number | undefined
+  // The PRs a report names, for the sidebar's task rows: its header's, else the PR link in the report.
+  let prs: number[] = []
+  // A report's header (see report.ts): its status and PRs go on the prompt's tag.
+  let header: Header | undefined
   if (await reported($, current)) {
     body = (await $.fs.read(resultPath)).replace(/^\s*<!-- report \S+ -->\s*/, '')
-    pr = Number(body.match(/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/)?.[1]) || undefined
+    header = parseHeader(body)
+    const linked = Number(body.match(/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/)?.[1]) || undefined
+    prs = header?.prs.length ? header.prs : linked ? [linked] : []
     // Read the questions from the whole report: they often sit past the cut.
     // "DECISION: none. No owner decision is needed" asks nothing, so it is not pinned.
     const asked = [...body.matchAll(/^\s*(?:[-*]\s*)?\**DECISION:?\**:?\s*(.+)$/gm)]
@@ -345,19 +363,26 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     const full = `${job.dir}/RESULT-${current.token ?? (await $.clock.now())}.md`
     await $.fs.write(full, body)
     const lines = body.split('\n').filter(l => l.trim())
-    if (lines.length > INLINE_LINES || body.length > INLINE_CHARS) {
-      const first = (lines[0] ?? '').replace(/^#+\s*/, '').slice(0, 200)
-      body = `${first}\n[Full report, ${lines.length} lines: ${full}. Read it before acting on it.]`
-    }
     const ids: string[] = []
+    // A header report shows each pinned question inline, as the coordinator can settle it from there.
+    const pinnedLines: string[] = []
     for (const line of asked) {
       const [head = line, ...parts] = line.split(/\s+\|\s+/)
       const titled = head.match(/^\[([^\]]{1,40})\]\s*(.+)$/)
       const question = titled ? titled[2]! : head
       const marked = /\s*\((?:recommended|rec\.?)\)\s*/i
-      const recommended = parts.findIndex(o => marked.test(o))
+      const found = parts.findIndex(o => marked.test(o))
+      const recommended = found >= 0 ? found : undefined
       const options = parts.map(o => o.replace(marked, ' ').trim()).filter(Boolean)
-      ids.push(`D${await ask($, job.name, question, options, recommended >= 0 ? recommended : undefined, titled?.[1], true)}`)
+      const id = await ask($, job.name, question, options, recommended, titled?.[1], true)
+      ids.push(`D${id}`)
+      const shown = options.map((o, i) => (i === recommended ? `${o} (recommended)` : o))
+      pinnedLines.push(`D${id} ${titled ? `[${titled[1]}] ` : ''}${question}${shown.length ? ` | ${shown.join(' | ')}` : ''}`)
+    }
+    if (header) body = summaryOf(header, full, lines.length, pinnedLines)
+    else if (lines.length > INLINE_LINES || body.length > INLINE_CHARS) {
+      const first = (lines[0] ?? '').replace(/^#+\s*/, '').slice(0, 200)
+      body = `${first}\n[Full report, ${lines.length} lines: ${full}. Read it before acting on it.]`
     }
     if (ids.length)
       body += `\n\n[Pinned for the owner as ${ids.join(', ')}. The owner is pinged when this turn ends. Settle any that is not theirs (not a product rule, design choice or approval) now, with decided and your answer; the band shows them what you chose.]`
@@ -375,7 +400,13 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
 
-  await saveJob($, { ...withPr(current, pr), status: 'reported', queued: [], wait: undefined, endedAt: await $.clock.now() })
+  await saveJob($, {
+    ...prs.reduce((j, n) => withPr(j, n), current),
+    status: 'reported',
+    queued: [],
+    wait: undefined,
+    endedAt: await $.clock.now(),
+  })
   misses.delete(job.name)
   quiet.delete(job.name)
   $.ui.toast(`herdr worker ${job.name}: ${status}`)
@@ -390,8 +421,10 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     body += `\n\n[The ${queued.length} message(s) queued for it were sent now; its next report follows.]`
   }
   body += await belowTarget($)
+  // The header's result and PRs, when it has them (see report.ts).
+  const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}`
   await $.prompt.submit({
-    text: `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}">\n${body.trim()}\n</herdr-agent>`,
+    text: `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}"${attrs}>\n${body.trim()}\n</herdr-agent>`,
   })
 }
 

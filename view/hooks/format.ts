@@ -25,7 +25,9 @@ export function oneLine(text: string): string | undefined {
     const count = body.match(/\[(\d+) of (\d+) workers working/)
     const wrap = body.match(/\[Wrapping up: (?:(\d+) workers? still out|every worker has finished)/)
     const workers = wrap ? ` · wrapping up, ${wrap[1] ?? 0} left` : count ? ` · ${count[1]}/${count[2]} working` : ''
-    return `⇠ ${attr(tag, 'name') ?? 'worker'} ${attr(tag, 'status') ?? ''}: ${first}${full}${workers}`
+    const pr = attr(tag, 'pr')
+    const prs = pr ? ` · PR #${pr.split(',').join(', #')}` : ''
+    return `⇠ ${attr(tag, 'name') ?? 'worker'} ${attr(tag, 'result') ?? attr(tag, 'status') ?? ''}: ${first}${full}${prs}${workers}`
   }
   // Single-line forms: <herdr-decision ...>text</herdr-decision>, <herdr-context ...>text...
   const text1 =
