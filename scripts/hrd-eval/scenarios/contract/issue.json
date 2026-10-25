@@ -1,0 +1,13 @@
+{
+  "number": 5,
+  "title": "Quote a cart's total through the server",
+  "body": "`Client.quote(items)` returns the cart's total as text, priced by the server, so the bulk discount is included.\n\n- `items` is a list of `{\"sku\": str, \"qty\": int}`. The prices are the `PRICES` in `shop/server.py`, in cents.\n- The result is the text `Total: $108.00` for ten `mug`s: 120.00 of goods, 10% off.\n- An unknown sku makes `quote` raise `ValueError`, and the message names the sku.\n- The server side is `handle(request)` in `shop/server.py`. The client reaches it through a transport: `Client(LocalTransport(handle))`, as `Client(transport).ping()` does now.\n- The field names of the request and the reply are yours to choose, as long as both sides agree.",
+  "state": "OPEN",
+  "labels": [],
+  "comments": [],
+  "url": "https://github.com/hrd-eval/contract/issues/5",
+  "author": {
+    "login": "owner"
+  },
+  "createdAt": "2026-10-20T10:00:00Z"
+}

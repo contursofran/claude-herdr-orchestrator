@@ -13,8 +13,9 @@ into the grade folder only after the last worker call has ended.
   scripts/hrd-eval.py [--arms A,C] [--repeats 3] [--parallel 1] [--max-cost 30] [--max-call-cost 5] [--call-timeout 20]
                       [--results DIR] [--config PATH] [--claude PATH] [--json]
 
+A real run ends with the score table of its results folder (scripts/hrd-eval/score.py); --json prints the aggregate.
 Exit codes: 0 done; 1 error (bad input, or a check that failed); 2 budget refused the start or stopped a run.
-Python 3 standard library only (3.9 compatible). scripts/hrd-eval/score.py reads the results folders.
+Python 3 standard library only (3.9 compatible).
 """
 
 import argparse
@@ -47,8 +48,10 @@ IDENT = ["-c", f"user.name={FALLBACK_NAME}", "-c", f"user.email={FALLBACK_EMAIL}
 BLOCKED_BASE = "file:///dev/null/blocked/"
 BLOCKED_PREFIXES = ["https://github.com/", "http://github.com/", "ssh://git@github.com/", "git@github.com:"]
 
-# Dollars per call by the profile's --model, and the factor a run's fix rounds add.
-ESTIMATE = {"opus": 0.60, "sonnet": 0.30, "haiku": 0.08}
+# Dollars per call by the profile's --model, and the factor a run's fix rounds add. Calibrated on the smoke run
+# (replay-13 x A x 1, calls.jsonl): the three opus calls cost $0.52, $0.15 and $0.19 (mean $0.29), the one haiku
+# call $0.059. sonnet has no call in that run and keeps its old figure; "other" is unchanged.
+ESTIMATE = {"opus": 0.30, "sonnet": 0.30, "haiku": 0.06}
 ESTIMATE_OTHER = 0.50
 FIX_FACTOR = 1.5
 MAX_ANSWERS = 2  # answer calls a run gets under onDecision "recommended"
@@ -56,7 +59,7 @@ KILL_GRACE_S = 30  # after SIGINT, before SIGKILL
 MAX_FIX_ROUNDS = 2
 SETTINGS = json.dumps({"env": {"CLAUDE_CODE_PLUGIN_DIRS": ""}}, separators=(",", ":"))
 DISALLOW = "WebFetch(domain:github.com)"
-ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE")  # and every HERDR_* variable
+ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "SSH_AUTH_SOCK")  # and every HERDR_* variable
 ARM_KEYS = ("profiles", "disable", "fixRound", "maxFixRounds", "note")
 
 # The report rule of hooks/workers.ts reportRule(), one part per line of its array in the TS form (${job.dir}, and
@@ -101,8 +104,6 @@ HEADER_KEY = re.compile(r"^\s*(?:[-*]\s+)?\**[A-Za-z][\w-]*\**\s*:")
 HEADER_PR = re.compile(r"^\s*(?:[-*]\s+)?\**(?:pr|prs)\**\s*:\s*\**\s*(.*?)\s*$", re.I)
 HEADER_ASK = re.compile(r"^\s*(?:[-*]\s+)?\**ask\**\s*:\s*\**\s*(.*?)\s*$", re.I)
 PR_ITEM = re.compile(r"^(?:#?(\d+)|https?://\S*?/pull/(\d+)\b\S*)$")
-PLUGIN_ROW = re.compile(r"^\s*\((pass|fail|skip)\)\s+(.+?)\s*$")
-PLUGIN_MS = re.compile(r"\s+\[\d+(?:\.\d+)?\s*ms\]$")
 
 
 class RunnerError(Exception):
@@ -125,6 +126,7 @@ def load_module(name, path):
 
 
 hm = load_module("hrd_metrics", os.path.join(HERE, "hrd-metrics.py"))
+scorer = load_module("hrd_eval_score", os.path.join(EVAL_DIR, "score.py"))  # the grade parsers and the table
 
 
 # Files, git and processes
@@ -670,17 +672,6 @@ def parse_json(text):
 
 def number(x):
     return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
-
-
-def plugin_rows(text):
-    """{name: pass|fail|skip} from `claude plugin test` output, one `(pass) <name> [ms]` row per test. This mirrors
-    parse_plugin_test in scripts/hrd-eval/score.py (PR #34); the scorer's copy can replace it once both are merged."""
-    out = {}
-    for line in text.splitlines():
-        m = PLUGIN_ROW.match(line)
-        if m:
-            out[PLUGIN_MS.sub("", m.group(2))] = m.group(1)
-    return out
 
 
 def created_epoch(rec):
@@ -1304,6 +1295,15 @@ def run_matrix(ctx, scenarios, arms, repeats, parallel, quiet):
     return sorted(rows, key=lambda r: (r["scenario"], r["arm"], r["repeat"]))
 
 
+def score_rows(results, rows, matrix):
+    """The aggregate of the runs this matrix made, scored by scripts/hrd-eval/score.py (the table at the end of a run)."""
+    try:
+        scores = [scorer.score_run(os.path.join(results, r["scenario"], r["arm"], f"r{r['repeat']}")) for r in rows]
+    except ValueError as e:  # a graded scenario's expected.json was removed while the matrix ran
+        raise RunnerError(str(e))
+    return scorer.aggregate(scores, matrix)
+
+
 # --check-scenarios
 
 
@@ -1312,14 +1312,35 @@ def overlay_and_grade(sc, source, folder, env):
     return run_grade(sc["grade"]["cmd"], folder, sc["grade"]["timeout"], env)
 
 
+def check_ungraded(sc, source):
+    """A scenario with no grade command has nothing to grade. Its source must make a folder, its setup must run, and
+    its expect.decision regex must compile. No expected.json is written for it."""
+    problems = []
+    decision = (sc.get("expect") or {}).get("decision")
+    if decision:
+        try:
+            re.compile(decision["match"])
+        except re.error as e:
+            problems.append(f"expect.decision.match does not compile: {e}")
+    tmp = tempfile.mkdtemp(prefix="hrd-eval-check-")
+    try:
+        folder = os.path.join(tmp, "base")
+        scenario_snapshot(sc, source, folder)
+        run_setup(sc["setup"], folder, clean_env(tmp))
+    except (RunnerError, OSError, subprocess.CalledProcessError) as e:
+        problems.append(str(e))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {"scenario": sc["id"], "ungraded": True, "base": None, "reference": None, "problems": problems, "drift": [],
+            "written": False}
+
+
 def check_scenario(sc, source, update):
     """Base + overlay must fail, reference + overlay must pass; expected.json holds the reference's tests and the
-    base's failing tests (written with update, otherwise compared)."""
+    base's failing tests (written with update, otherwise compared). A scenario with no grade: check_ungraded()."""
     grade = sc.get("grade")
     if not grade:
-        raise RunnerError(f"{sc['id']}: no grade command to check")
-    if grade["parser"] != "plugin-test":
-        raise RunnerError(f"{sc['id']}: --check-scenarios reads plugin-test output; this scenario's parser is {grade['parser']}")
+        return check_ungraded(sc, source)
     tmp = tempfile.mkdtemp(prefix="hrd-eval-check-")
     try:
         base, ref = os.path.join(tmp, "base"), os.path.join(tmp, "reference")
@@ -1338,7 +1359,8 @@ def check_scenario(sc, source, update):
         ref_code, ref_out = overlay_and_grade(sc, source, ref, env)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    base_rows, ref_rows = plugin_rows(base_out), plugin_rows(ref_out)
+    parse = scorer.GRADE_PARSERS[grade["parser"]]
+    base_rows, ref_rows = parse(base_out), parse(ref_out)
     discriminating = sorted(n for n, st in base_rows.items() if st == "fail")
     failing_ref = sorted(n for n, st in ref_rows.items() if st == "fail")
     want = {"tests": sorted(ref_rows), "discriminating": discriminating}
@@ -1371,17 +1393,20 @@ def check_scenario(sc, source, update):
 
 
 def print_check(r):
-    print(
-        f"{r['scenario']}: base + overlay exit {r['base']['exit']}, failing {r['base']['failing']}; "
-        f"reference + overlay exit {r['reference']['exit']}, {len(r['reference']['tests'])} tests"
-    )
+    if r.get("ungraded"):
+        print(f"{r['scenario']}: no grade command, so nothing is graded: the snapshot, setup and decision regex are checked")
+    else:
+        print(
+            f"{r['scenario']}: base + overlay exit {r['base']['exit']}, failing {r['base']['failing']}; "
+            f"reference + overlay exit {r['reference']['exit']}, {len(r['reference']['tests'])} tests"
+        )
     for p in r["problems"]:
         print(f"  problem: {p}")
     for d in r["drift"]:
         print(f"  drift: {d}")
     if r["written"]:
         print("  expected.json written")
-    elif not r["problems"] and not r["drift"]:
+    elif not r["problems"] and not r["drift"] and not r.get("ungraded"):
         print("  expected.json matches")
 
 
@@ -1501,28 +1526,34 @@ def cli(args):
     if total > args.max_cost:
         print(f"hrd-eval: estimate ${total:.2f} is over --max-cost ${args.max_cost:g}: nothing was run", file=sys.stderr)
         return 2
+    for sc in scenarios:
+        try:
+            scorer.load_expected(sc["dir"], sc)  # a graded scenario's runs can only be scored with its expected.json
+        except ValueError as e:
+            raise RunnerError(str(e))
     for arm in arms.values():
         for w in arm["warnings"]:
             print(f"warning: {w}", file=sys.stderr)
     if os.path.exists(results):
         raise RunnerError(f"{results} already exists; pick another --results folder")
     os.makedirs(results)
-    write_json(
-        os.path.join(results, "matrix.json"),
-        {
-            "started": time.time(),
-            "repo_root": source,
-            "scenarios": [sc["id"] for sc in scenarios],
-            "arms": arms,
-            "repeats": args.repeats,
-            "max_cost": args.max_cost,
-            "estimate": total,
-        },
-    )
+    matrix = {
+        "started": time.time(),
+        "repo_root": source,
+        "scenarios": [sc["id"] for sc in scenarios],
+        "arms": arms,
+        "repeats": args.repeats,
+        "max_cost": args.max_cost,
+        "estimate": total,
+    }
+    write_json(os.path.join(results, "matrix.json"), matrix)
     ctx = Ctx(results, args.claude, args.call_timeout * 60, Budget(args.max_cost, args.max_call_cost), source)
     rows = run_matrix(ctx, scenarios, arms, args.repeats, args.parallel, args.json)
+    agg = score_rows(results, rows, matrix)
     if args.json:
-        print(json.dumps(rows, indent=2))
+        print(json.dumps(agg, indent=2))
+    else:
+        scorer.print_text(agg)
     return 2 if any(r["status"] == "budget" for r in rows) else 0
 
 

@@ -28,7 +28,7 @@ DEFAULT_HIDDEN = "(pass) t1 [5.10ms]\n(pass) t2 [6ms]\n"
 GREEN = {"ran": True, "kind": "plugin-test", "merged": True, "merge_error": None, "exit": 1, "own_exit": 0}
 DEFAULT_CHANGED = ["hooks/workers.ts", "tests/test_x.py"]
 LEAKS = ["scripts/hrd-eval", "plan-18"]
-DECISION_MATCH = r"(?i)stack|combin|both|bulk|additive|compound|order"
+DECISION_MATCH = r"(?i)stack|combin|both|additive|compound|on top|instead of|larger|greater|higher|bigger|max|together"
 
 
 def write(path, text):
@@ -182,6 +182,14 @@ class UnittestParser(unittest.TestCase):
     def test_docstring_line_is_not_matched(self):
         # unittest -v prints a test's docstring instead of its name; such a test counts as missing.
         self.assertEqual(sc.parse_unittest("Adds two prices ... ok\n"), {})
+
+    def test_python_3_11_names_with_the_method_are_the_same_tests(self):
+        # Python 3.11+ prints test_x (mod.Class.test_x); 3.9 prints test_x (mod.Class). One name for both.
+        text = "test_add (test_cart.TestCart.test_add) ... ok\ntest_bulk (test_cart.TestCart.test_bulk) ... FAIL\n"
+        self.assertEqual(sc.parse_unittest(text), {"test_add (test_cart.TestCart)": "pass", "test_bulk (test_cart.TestCart)": "fail"})
+
+    def test_a_name_whose_last_part_is_not_the_method_is_kept_as_it_is(self):
+        self.assertEqual(sc.unittest_name("test_add (mod.Other)"), "test_add (mod.Other)")
 
 
 class Globs(unittest.TestCase):
@@ -433,8 +441,54 @@ class ShimBypass(Folders):
 class ExpectedRequired(Folders):
     def test_grade_scenario_needs_expected_json(self):
         scen = scenario(self.tmp, name="nogood", expected=None)
-        with self.assertRaisesRegex(ValueError, "check-scenarios --update-expected"):
+        with self.assertRaisesRegex(sc.ExpectedMissing, "nogood: no expected.json.*--check-scenarios --scenarios nogood"):
             sc.score_run(make_run(self.tmp, scen, name="nogood"))
+
+
+class ReviewUnparsed(Folders):
+    def test_a_run_whose_review_had_no_verdict_is_flagged_and_still_scored(self):
+        run = make_run(self.tmp, self.rep, slices=[dict(slice_(), review_unparsed=True)])
+        s = sc.score_run(run)
+        self.assertTrue(s["review_unparsed"])
+        self.assertTrue(s["pass"])  # the pass rule is not changed by it
+
+    def test_a_run_whose_reviews_parsed_is_not_flagged(self):
+        self.assertFalse(sc.score_run(make_run(self.tmp, self.rep, slices=[dict(slice_(), review_unparsed=False)]))["review_unparsed"])
+        self.assertFalse(sc.score_run(make_run(self.tmp, self.rep, repeat=2))["review_unparsed"])
+
+    def test_the_table_lists_the_flagged_runs(self):
+        run = make_run(self.tmp, self.rep, slices=[dict(slice_(), review_unparsed=True)])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            sc.print_text(sc.aggregate([sc.score_run(run)]))
+        self.assertIn("1 runs had a review with no VERDICT line", out.getvalue())
+        self.assertIn(run, out.getvalue())
+
+
+class Disagreements(Folders):
+    def runs(self, arm, passes, total, leak=False):
+        """`total` runs of arm `arm` on scenario "rates"; the first `passes` of them pass, the rest miss t2."""
+        scen = scenario(self.tmp, name="rates")
+        out = []
+        for k in range(1, total + 1):
+            hidden = DEFAULT_HIDDEN if k <= passes else "(pass) t1 [5ms]\n"
+            jobs = {"01-build": [tool("Bash", command="ls plan-18")]} if leak else None
+            out.append(sc.score_run(make_run(self.tmp, scen, name="rates", arm=arm, repeat=k, hidden=hidden, jobs=jobs)))
+        return out
+
+    def test_two_of_three_against_two_of_two_is_a_disagreement(self):
+        agg = sc.aggregate(self.runs("A", 2, 3) + self.runs("B", 2, 2))
+        self.assertEqual(len(agg["disagreements"]), 1)
+        d = agg["disagreements"][0]
+        self.assertEqual(d["arms"], {"A": {"pass": 2, "valid": 3}, "B": {"pass": 2, "valid": 2}})
+        self.assertEqual([(f["arm"], f["reason"]) for f in d["failing"]], [("A", "missing tests: t2")])
+
+    def test_one_of_one_against_two_of_two_is_not_a_disagreement(self):
+        self.assertEqual(sc.aggregate(self.runs("A", 1, 1) + self.runs("B", 2, 2))["disagreements"], [])
+
+    def test_an_arm_with_no_valid_run_has_no_rate_and_is_not_compared(self):
+        agg = sc.aggregate(self.runs("A", 1, 2) + self.runs("B", 0, 2, leak=True))
+        self.assertEqual(agg["disagreements"], [])
 
 
 def equal_arms(scores):
@@ -630,6 +684,15 @@ class Cli(unittest.TestCase):
     def test_matrix_is_null_without_matrix_json(self):
         os.remove(os.path.join(self.results, "matrix.json"))
         self.assertIsNone(json.loads(self.run_cli("--json").stdout)["matrix"])
+
+    def test_a_graded_scenario_without_expected_json_is_one_line_and_exit_1(self):
+        make_run(self.tmp, scenario(self.tmp, name="nogood", expected=None), name="nogood")
+        out = self.run_cli()
+        self.assertEqual(out.returncode, 1)
+        self.assertEqual(len(out.stderr.strip().splitlines()), 1, out.stderr)
+        self.assertIn("nogood: no expected.json", out.stderr)
+        self.assertNotIn("Traceback", out.stderr)
+        self.assertEqual(out.stdout, "")
 
 
 if __name__ == "__main__":

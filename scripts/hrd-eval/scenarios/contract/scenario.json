@@ -1,0 +1,38 @@
+{
+  "title": "A quote priced by the server and read through the client (issue #5)",
+  "kind": "fixture",
+  "issue": {
+    "number": 5,
+    "file": "issue.json"
+  },
+  "source": {
+    "dir": "../../fixture"
+  },
+  "hidden": {
+    "dir": "hidden",
+    "to": "tests"
+  },
+  "slices": [
+    {
+      "id": "S1",
+      "brief": "the server: shop/server.py answers a quote request with the total priced by shop/cart.py total() over PRICES, and an unknown sku with an error reply that names the sku"
+    },
+    {
+      "id": "S2",
+      "brief": "the client: shop/client.py Client.quote(items) sends the request through its transport and returns the text Total: $X.YY, and raises ValueError naming the sku when the server refuses it"
+    }
+  ],
+  "grade": {
+    "cmd": ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+    "parser": "unittest",
+    "timeout": 120
+  },
+  "allowed": ["shop/**", "tests/**", "CHANGELOG.md"],
+  "expect": {
+    "decision": null,
+    "testsChanged": false
+  },
+  "onDecision": "recommended",
+  "estimateScale": 1,
+  "notes": "Fixture (scripts/hrd-eval/fixture). The hidden tests (hidden/test_quote_hidden.py) run end to end through LocalTransport: a plain cart, a bulk-discount cart and an unknown sku. The issue gives no field names; the reference (solution.patch) picks them. solution.patch is applied to the base for the reference run of --check-scenarios."
+}
