@@ -301,15 +301,44 @@ class PrDiffAndListTests(ShimCase):
         self.assertEqual(self.numbers("pr", "list", "--state", "closed"), [13])
         self.assertEqual(self.numbers("pr", "list", "--state", "all"), [14, 13])
 
-    def test_search_qualifiers_filter_by_head_and_state_and_reject_others(self):
+    def test_search_head_and_state_qualifiers_filter_the_list(self):
         self.open_pr()
         self.branch("issue-14-eval", {"scripts/b.py": "print(1)\n"}, "Add b")
         self.ok("pr", "create", "--title", "Add b", "--body", "b")
         self.assertEqual(self.numbers("pr", "list", "--search", "head:issue-12-eval"), [13])
         self.assertEqual(self.numbers("pr", "list", "--search", "is:open head:issue-14-eval"), [14])
-        p = self.gh("pr", "list", "--search", "draft:true")
+        self.set_pr_state(13, "CLOSED")
+        self.assertEqual(self.numbers("pr", "list", "--search", "is:closed"), [13])
+        self.assertEqual(self.numbers("pr", "list", "--search", "state:open"), [14])
+
+    def test_an_unknown_state_qualifier_value_exits_1(self):
+        self.open_pr()
+        p = self.gh("pr", "list", "--search", "state:bogus")
         self.assertEqual(p.returncode, 1)
-        self.assertIn("unsupported search qualifier: draft:true", p.stderr)
+        self.assertIn("unsupported search qualifier: state:bogus", p.stderr)
+
+    def test_is_pr_is_ignored_and_is_open_with_a_path_matches_the_pr_that_touches_it(self):
+        self.open_pr()
+        self.branch("issue-14-eval", {"scripts/b.py": "print(1)\n"}, "Add b")
+        self.ok("pr", "create", "--title", "Add b", "--body", "b")
+        self.assertEqual(self.numbers("pr", "list", "--search", "is:pr is:open scripts/b.py"), [14])
+        self.assertEqual(self.numbers("pr", "list", "--search", "is:pr is:open shop/server.py"), [13])
+        self.assertEqual(self.numbers("pr", "list", "--search", "is:pr"), [14, 13])
+
+    def test_is_draft_and_draft_qualifier_filter_on_is_draft(self):
+        self.open_pr()
+        self.branch("issue-14-eval", {"scripts/b.py": "print(1)\n"}, "Add b")
+        self.ok("pr", "create", "--title", "Add b", "--body", "b", "--draft")
+        self.assertEqual(self.numbers("pr", "list", "--search", "is:draft"), [14])
+        self.assertEqual(self.numbers("pr", "list", "--search", "draft:true"), [14])
+        self.assertEqual(self.numbers("pr", "list", "--search", "draft:false"), [13])
+
+    def test_an_ignored_key_value_token_neither_filters_nor_matches_text(self):
+        self.open_pr()
+        self.branch("issue-14-eval", {"scripts/b.py": "print(1)\n"}, "Add b")
+        self.ok("pr", "create", "--title", "Add b", "--body", "b")
+        self.assertEqual(self.numbers("pr", "list", "--search", "author:@me"), [14, 13])
+        self.assertEqual(self.numbers("pr", "list", "--search", "author:@me scripts/b.py"), [14])
 
 
 class PrWriteTests(ShimCase):

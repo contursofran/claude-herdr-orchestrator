@@ -311,29 +311,39 @@ def matches_words(repo, rec, words):
 
 
 def parse_search(search):
-    """Split a --search string into (state sets, head names, base names, words)."""
+    """Split a --search string into (state sets, head names, base names, isDraft values, words).
+
+    is:open|closed|merged and state:open|closed|merged set the state; head: and base: match branch names;
+    is:draft and draft:true|false filter on isDraft. is:pr and every other key:value token are ignored.
+    A token without a colon is a word: it must appear in the title, body or a changed file's path.
+    """
     try:
         tokens = shlex.split(search)
     except ValueError as e:
         raise Fail(f"invalid --search: {e}")
-    states, heads, bases, words = [], [], [], []
+    states, heads, bases, drafts, words = [], [], [], [], []
     for tok in tokens:
-        m = re.match(r"^(is|state|head|base):(.+)$", tok, re.IGNORECASE)
-        if m:
-            key, val = m.group(1).lower(), m.group(2)
-            if key in ("is", "state"):
-                if val.lower() not in ("open", "closed", "merged"):
-                    raise Fail(f"unsupported search qualifier: {tok}")
-                states.append({val.upper()})
-            elif key == "head":
-                heads.append(val)
-            else:
-                bases.append(val)
-        elif re.match(r"^[A-Za-z_-]+:", tok):
-            raise Fail(f"unsupported search qualifier: {tok}")
-        else:
+        m = re.match(r"^([A-Za-z_-]+):(.*)$", tok)
+        if not m:
             words.append(tok.lower())
-    return states, heads, bases, words
+            continue
+        key, val = m.group(1).lower(), m.group(2)
+        low = val.lower()
+        if key == "state":
+            if low not in ("open", "closed", "merged"):
+                raise Fail(f"unsupported search qualifier: {tok}")
+            states.append({low.upper()})
+        elif key == "is" and low in ("open", "closed", "merged"):
+            states.append({low.upper()})
+        elif key == "is" and low == "draft":
+            drafts.append(True)
+        elif key == "draft" and low in ("true", "false"):
+            drafts.append(low == "true")
+        elif key == "head" and val:
+            heads.append(val)
+        elif key == "base" and val:
+            bases.append(val)
+    return states, heads, bases, drafts, words
 
 
 def parse(args, kinds, max_pos=0):
@@ -639,7 +649,7 @@ def pr_list(state, args):
     opts, _ = parse(args, {"state": "value", "search": "value", "head": "value", "base": "value", "label": "multi", "limit": "value", "json": "value", "jq": "value"})
     fields = json_fields(opts, PR_FIELDS)
     limit, labels = limit_arg(opts), label_names(opts)
-    qual_states, qual_heads, qual_bases, words = parse_search(opts.get("search", ""))
+    qual_states, qual_heads, qual_bases, qual_drafts, words = parse_search(opts.get("search", ""))
     explicit = opts.get("state")
     want = []
     if explicit is not None:
@@ -659,6 +669,8 @@ def pr_list(state, args):
         if any(rec["state"] not in s for s in want):
             continue
         if any(rec["headRefName"] != h for h in heads) or any(rec["baseRefName"] != b for b in bases):
+            continue
+        if any(rec["isDraft"] != d for d in qual_drafts):
             continue
         if not set(labels) <= {label["name"] for label in rec["labels"]}:
             continue
