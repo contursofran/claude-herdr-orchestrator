@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """Baseline metrics for herdr-agents: how a coordinator and its workers spend time and tokens.
 
-Usage: hrd-metrics.py [--days N] [--json]        (default 7 days)
+Usage: hrd-metrics.py [--days N] [--since "YYYY-MM-DD HH:MM"] [--json]   (default 7 days)
 
 Reads only what Claude Code and the mod already write:
   - transcripts: $CLAUDE_CONFIG_DIR/projects/*/*.jsonl (default ~/.claude/projects)
   - worker folders: <cwd>/.herdr-agents/<worker>/ with RESULT-<token>.md and SCREEN-<token>.txt
 A coordinator session got at least one <herdr-agent> prompt. A worker session's first prompt
 names .herdr-agents/<worker>/TASK.md. Everything counts inside the window, by record time.
+The window starts at --since (local time), at --days ago, or at the later of the two when both are given.
+A report counts when its prompt is inside the window, even when its session started before it;
+a session's turns and cost count from the window start.
 
 Per report (one <herdr-agent> prompt from the mod):
   turns     assistant turns from the prompt to its first spawn/message/stop call (that turn
             included), or to the next user or plugin prompt when there is no such call
   reaction  everything until the next user or plugin prompt: tokens and cost per report
-  det       detection lag: the worker's own RESULT.md write (a Write or Edit call, or a Bash redirect
+  det       detection lag: the worker's earliest RESULT.md write (a Write or Edit call, or a Bash redirect
             or heredoc, in the worker's transcript, with `<!-- report <token> -->` on its first line)
             to the mtime of RESULT-<token>.md, which the mod writes when it delivers the report
+  det_est   with no queue lag (the worker folder is gone, or the token file is missing): the prompt minus
+            that same earliest write. It includes the queue lag, which is unknown then: an upper bound on det
   queue     queue lag: RESULT-<token>.md mtime to the prompt. The prompt names the token when the
             report is long (a pointer); a short report is matched to the worker's RESULT files by its text
   action    prompt to the first spawn/message/stop call
@@ -74,10 +79,29 @@ ASSIGN_VALUE = re.compile(r"(?:^|[;&\n]\s*)([A-Za-z_]\w*)=([^\s;&|'\"]+)")  # D=
 RESULT_WRITE = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*[\"']?([^\s\"'<>|;&]*?)RESULT\.md(?![\w.-])")
 RESULT_OUT = re.compile(r">>?\s*\S*RESULT(?:-\w+)?\.md")  # a segment that writes a RESULT file is not a read
 SKIP_LINES = (b'{"type":"api-request',)  # the big system-prompt dumps; no metric reads them
+DEFAULT_DAYS = 7
 
 
 def epoch(stamp):
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+
+
+def since_arg(text):
+    """A local-time 'YYYY-MM-DD HH:MM' as an epoch time; argparse reports a text it cannot read."""
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M").timestamp()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD HH:MM (local time), got {text!r}")
+
+
+def window_start(days, since, now):
+    """Where the window starts: `days` before now, at `since`, or the later of the two when both are given."""
+    starts = []
+    if days is not None:
+        starts.append(now - days * 86400)
+    if since is not None:
+        starts.append(since)
+    return max(starts) if starts else now - DEFAULT_DAYS * 86400
 
 
 def records(path):
@@ -230,7 +254,8 @@ class Report:
         self.queue = None
         self.queue_how = None  # "token" or "text": how the RESULT file was found
         self.queue_miss = None  # why there is no queue lag, when there is none
-        self.det = None  # the worker's RESULT.md write to the RESULT file's mtime
+        self.det = None  # the worker's earliest RESULT.md write to the RESULT file's mtime
+        self.det_est = None  # with no queue lag: the prompt minus that write (includes the queue lag)
 
 
 class Session:
@@ -383,9 +408,17 @@ def found(r, mtime, how, writes):
         r.det = mtime - wrote
 
 
+def write_lag(r, writes):
+    """Without a queue lag, det_est: the prompt minus the worker's earliest write of the report's RESULT.md."""
+    wrote = writes.get((r.folder, r.token)) if r.folder and r.token else None
+    if wrote is not None:
+        r.det_est = r.ts - wrote
+
+
 def resolve(s, since, writes):
     """Fills each report's queue and det from the RESULT file the mod wrote for it, and counts quiet stops.
 
+    With no queue lag, det_est is the prompt minus the worker's write (write_lag).
     writes is write_index() over every session: the worker's RESULT.md writes.
     """
     texts = {}  # folder -> [(mtime, body, token)], read once per folder
@@ -417,6 +450,9 @@ def resolve(s, since, writes):
             found(r, mt, "text", writes)
         else:
             r.queue_miss = "no report file"  # blocked and stopped prompts write none; older mods wrote RESULT.md only
+    for r in s.reports:
+        if r.queue is None:
+            write_lag(r, writes)
     s.quiet = sum(
         1
         for cwd, worker in s.spawn_folders
@@ -462,8 +498,8 @@ def queue_by(reports):
 
 
 def det_missing(reports):
-    """Why each report has no det: no queue lag either (the same reason), or no worker wrote its RESULT.md."""
-    why = [r.queue_miss if r.queue is None else "no worker write" for r in reports if r.det is None]
+    """Why each report has neither det nor det_est: no worker wrote its token's RESULT.md, or (no token) its queue miss."""
+    why = ["no worker write" if r.token else r.queue_miss for r in reports if r.det is None and r.det_est is None]
     return dict(collections.Counter(why))
 
 
@@ -482,6 +518,7 @@ def coordinator_row(s):
         "reads": {"read": s.read_calls, "bash": s.bash_reads},
         "edits_per_report": share(s.edits, n),
         "det": dist([r.det for r in reports if r.det is not None]),
+        "det_est": dist([r.det_est for r in reports if r.det_est is not None]),
         "det_missing": det_missing(reports),
         "queue": dist([r.queue for r in reports if r.queue is not None]),
         "queue_by": queue_by(reports),
@@ -510,6 +547,7 @@ def totals(rows, coords):
         "reads": {"read": sum(s.read_calls for s in coords), "bash": sum(s.bash_reads for s in coords)},
         "edits_per_report": share(sum(s.edits for s in coords), n),
         "det": dist([r.det for r in reports if r.det is not None]),
+        "det_est": dist([r.det_est for r in reports if r.det_est is not None]),
         "det_missing": det_missing(reports),
         "queue": dist([r.queue for r in reports if r.queue is not None]),
         "queue_by": queue_by(reports),
@@ -556,8 +594,8 @@ def missing_text(missing):
     return ", ".join(f"{n} {why}" for why, n in sorted(missing.items(), key=lambda kv: -kv[1])) or "none"
 
 
-def print_text(days, rows, tot, workers, by_model, unpriced, root):
-    print(f"== coordinator sessions, last {days} days: {len(rows)} with {tot['reports']} reports")
+def print_text(label, rows, tot, workers, by_model, unpriced, root):
+    print(f"== coordinator sessions, {label}: {len(rows)} with {tot['reports']} reports")
     if not rows:
         print("   none: no transcript in the window got a <herdr-agent> prompt")
     else:
@@ -578,7 +616,7 @@ def print_text(days, rows, tot, workers, by_model, unpriced, root):
                   f"{fmt_s(spawn['median']):>9s} {fmt_s(spawn['max']):>4s} {row['quiet']:5d}")
         print("   turns: model turns per report up to its spawn/message/stop call; read%: reports followed by a RESULT read"
               " (Read or Bash); ptr%: reports whose prompt pointed at the file")
-        print("   det s: the worker's RESULT.md write to RESULT-<token>.md; queue s: RESULT-<token>.md to the prompt;"
+        print("   det s: the worker's earliest RESULT.md write to RESULT-<token>.md; queue s: RESULT-<token>.md to the prompt;"
               " act s: prompt to its spawn/message/stop call; spawn: the tool call; quiet: SCREEN files (stopped without a report)")
         print("\n== tokens and cost (session = every turn in the window; $/rpt = cost inside each report's reaction)")
         print("start        session  rpts        input      cache-r      cache-w      output       cost  $/rpt")
@@ -590,7 +628,11 @@ def print_text(days, rows, tot, workers, by_model, unpriced, root):
             per = row["reaction_cost_per_report"]
             print(f"{start:12s} {label:8s} {row['reports']:4d}  {fmt_tok(t['inp']):>11s}  {fmt_tok(t['cr']):>11s}  "
                   f"{fmt_tok(t['cw']):>11s}  {fmt_tok(t['out']):>11s}  ${t['cost']:9,.2f}  {fmt_money(per):>5s}")
-        print(f"\n== det found for {tot['det']['n']} of {tot['reports']} reports; the rest: {missing_text(tot['det_missing'])}")
+        est = tot["det_est"]
+        est_text = (f"; prompt minus write, no queue lag known, for {est['n']} more (median {fmt_s(est['median'])} s, "
+                    f"p90 {fmt_s(est['p90'])} s, max {fmt_s(est['max'])} s; queue lag included)") if est["n"] else ""
+        print(f"\n== det found for {tot['det']['n']} of {tot['reports']} reports{est_text}; "
+              f"the rest: {missing_text(tot['det_missing'])}")
         print(f"== queue found for {tot['queue']['n']} of {tot['reports']} reports (by token {tot['queue_by']['token']}, "
               f"by text {tot['queue_by']['text']}); the rest: {missing_text(tot['queue_by']['missing'])}")
     print(f"\n== worker sessions by model: {len(workers)} (first prompt names .herdr-agents/<worker>/TASK.md)")
@@ -609,10 +651,16 @@ def print_text(days, rows, tot, workers, by_model, unpriced, root):
 
 def main():
     ap = argparse.ArgumentParser(description="Coordinator and worker time and tokens from Claude Code transcripts.")
-    ap.add_argument("--days", type=int, default=7)
+    ap.add_argument("--days", type=int, help=f"count the last N days (default {DEFAULT_DAYS} when --since is not given)")
+    ap.add_argument("--since", type=since_arg, metavar='"YYYY-MM-DD HH:MM"',
+                    help="count from this local time on; with --days too, the later of the two starts the window")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the tables")
     args = ap.parse_args()
-    since = time.time() - args.days * 86400
+    days = args.days
+    if days is None and args.since is None:
+        days = DEFAULT_DAYS
+    since = window_start(days, args.since, time.time())
+    label = f"last {days} days" if args.since is None else f"since {datetime.fromtimestamp(since):%Y-%m-%d %H:%M}"
     root = os.path.join(os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"), "projects")
 
     coords, workers = collect(root, since)
@@ -624,7 +672,8 @@ def main():
 
     if args.json:
         out = {
-            "days": args.days,
+            "days": days,
+            "window_start": datetime.fromtimestamp(since).strftime("%Y-%m-%d %H:%M"),
             "coordinators": rows,
             "totals": tot,
             "workers": {"sessions": len(workers), "by_model": by_model},
@@ -632,7 +681,7 @@ def main():
         }
         print(json.dumps(out, indent=2))
         return
-    print_text(args.days, rows, tot, workers, by_model, unpriced, root)
+    print_text(label, rows, tot, workers, by_model, unpriced, root)
 
 
 if __name__ == "__main__":
