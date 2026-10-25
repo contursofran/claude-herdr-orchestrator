@@ -114,3 +114,78 @@ test('a wrap-up goes out at once, not in the batch: the answer waiting for its b
   expect(submitted[1]).toMatch(/^<herdr-decision id="D1" from="p-1">/)
   await stopAll($, clock, ['w-a'])
 })
+
+test('a loop that wakes after a reload emptied $.state sends no empty prompt; the held batch goes out once after the restore', async ($, on) => {
+  // A reload empties $.state while a batch's loop sleeps, and the store keeps its copy. The kit gives
+  // each session its own module, so the two loops of a real reload cannot be staged; this stages the
+  // empty flush they would cause: the loop wakes with no items.
+  let lost = false
+  // The state as a reload leaves it: empty, at the version the engine holds.
+  on('state.get', async (_, e, next) => {
+    const read = await next(e)
+    if (!read.value || !lost || e.key !== 'outbox') return read
+    return { value: { value: [], version: read.value.version } }
+  })
+  const { clock, submitted, files, store } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: 'Ship it today?', options: ['Yes', 'No'], from: 'p-1' })
+  files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
+  await clock.advance(3000)
+  lost = true
+  await clock.advance(BATCH_MS)
+  expect(submitted).toEqual([])
+  // Nothing was sent, so the copy in the store is still there for the restore.
+  expect(store.has('outbox:session-1234')).toBe(true)
+  lost = false
+  // The reload's start restores the copy in the store, and its batch goes out after the quiet.
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.advance(BATCH_MS + 3000)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toMatch(/^<herdr-decision id="D1" from="p-1">/)
+  expect(store.has('outbox:session-1234')).toBe(false)
+  await clock.advance(BATCH_MS)
+  expect(submitted).toHaveLength(1)
+})
+
+test('a prompt the session refused goes out on the next sweep, with no new report or turn end', async ($, on) => {
+  const { clock, submitted, typed, files, refuse } = await start($, on)
+  await spawn($, ['w-a'])
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
+  refuse.next = 1
+  await clock.advance(3000 + BATCH_MS)
+  expect(submitted).toEqual([])
+  // Nothing else comes in before the sweep at 60 s: it is what tries again.
+  await clock.advance(50_000)
+  expect(submitted).toEqual([])
+  await clock.advance(10_000)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toMatch(/^<herdr-agent name="w-a"/)
+  await stopAll($, clock, ['w-a'])
+})
+
+test('a turn whose decision ping throws still ends, so a report that comes later goes out', async ($, on) => {
+  // The ping reads the decisions; a read that gives no list makes it throw.
+  let unreadable = false
+  on('state.get', async (_, e, next) => {
+    const read = await next(e)
+    if (!read.value || !unreadable || e.key !== 'decisions') return read
+    return { value: { value: null, version: read.value.version } }
+  })
+  const { clock, submitted, typed, files } = await start($, on)
+  await spawn($, ['w-a', 'w-b'])
+  const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${tokenA} -->\nDECISION: Ship it today? | Yes | No`
+  await clock.advance(3000 + BATCH_MS)
+  expect(submitted).toHaveLength(1)
+  // The coordinator's turn reads the report; its end pings the person for the question, and the ping throws
+  // (the engine skips the turn.complete hook, so the turn still ends).
+  await $.turn.start({ text: submitted[0] ?? '', turnId: 't1' })
+  unreadable = true
+  await $.turn.complete(turnEnd('t1'))
+  unreadable = false
+  files['/repo-w-b/.herdr-agents/w-b/RESULT.md'] = `<!-- report ${tokenB} -->\nReviewed: approve.`
+  await clock.advance(3000 + BATCH_MS)
+  expect(submitted).toHaveLength(2)
+  expect(submitted[1]).toMatch(/^<herdr-agent name="w-b"/)
+  await stopAll($, clock, ['w-a', 'w-b'])
+})

@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 import type { Job } from '../types'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
-import { afterFailedRounds, belowTarget } from './coordinator'
+import { afterFailedRounds } from './coordinator'
 import {
   GONE_MISSES,
   INLINE_CHARS,
@@ -21,6 +21,7 @@ import { type Header, parseHeader, summaryOf } from './report'
 import { cmd } from './session'
 import { jobs, saveJob } from './state'
 import { briefRefs, withPr } from './tasks'
+import { belowTarget } from './target'
 import { excludeFromGit } from './worktrees'
 
 // Worker agents that run in herdr tabs. spawn opens a tab, starts the CLI there,

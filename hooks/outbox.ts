@@ -1,10 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { OutboxItem } from '../types'
-// coordinator.ts imports owner.ts, which imports this file: a cycle, safe while only function
-// declarations cross it, as belowTarget is here.
-import { belowTarget } from './coordinator'
 import { BATCH_MS, JOBS_KEEP_MS, OUTBOX_PREFIX } from './defaults'
+import { belowTarget } from './target'
 
 // The prompts for the coordinator that come close together go out as one: reports (each a
 // <herdr-agent> element), the owner's answers and the to-dos they ticked. An item waits until
@@ -15,7 +13,9 @@ import { BATCH_MS, JOBS_KEEP_MS, OUTBOX_PREFIX } from './defaults'
 const outbox = atom({ plugin: 'herdr-agents', key: 'outbox' } as const, [] as OutboxItem[])
 
 // Whether a main-loop turn runs, when an item last came in or a turn last ended, and whether
-// a loop is waiting to flush (only one at a time).
+// a loop is waiting to flush (only one at a time). A reload resets busy to false, so a batch can
+// go out during a turn that was running before it: that is acceptable, as the prompt only queues
+// behind that turn and nothing is lost.
 let busy = false
 let lastAt = 0
 let flushing = false
@@ -39,6 +39,11 @@ export async function post($: EngineInterface, text: string, report = false) {
   void kick($)
 }
 
+// The sweep's tick (register.tsx): a batch that a refused prompt kept goes out without a new post or turn's end.
+export function retry($: EngineInterface) {
+  void kick($)
+}
+
 // Waits for the quiet and flushes, while items are held. A post or a turn's end that finds the
 // loop running needs nothing more: the loop looks again after its wait.
 async function kick($: EngineInterface) {
@@ -50,7 +55,7 @@ async function kick($: EngineInterface) {
       // A turn is running: its end starts the loop again.
       if (busy) return
       if ((await $.clock.now()) - lastAt < BATCH_MS) continue
-      // A prompt that could not be sent keeps its items; the next post or turn's end tries again.
+      // A prompt that could not be sent keeps its items; the next post, turn's end or sweep tries again.
       if (!(await flush($))) return
     }
   } catch {
@@ -61,12 +66,15 @@ async function kick($: EngineInterface) {
 }
 
 // Takes the held items and sends them as one prompt. False when the send failed: the items go back.
+// With no items there is nothing to send: a loop that wakes after a reload emptied the state sends
+// no empty prompt, and the copy in $.store is left for the restore.
 async function flush($: EngineInterface): Promise<boolean> {
   let items: OutboxItem[] = []
   await update($, outbox, list => {
     items = list
     return []
   })
+  if (items.length === 0) return true
   try {
     let text = items.map(i => i.text).join('\n\n')
     if (items.some(i => i.report)) text += await belowTarget($)

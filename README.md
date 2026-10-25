@@ -196,6 +196,7 @@ npm run check                   # formatting, type check, both manifests, tests
 | `owner.ts` | Questions (`ask_owner`, `DECISION:` lines) and to-dos (`pin_for_owner`) waiting for the person. |
 | `outbox.ts` | Holds the coordinator's prompts and sends the ones that arrive together as one. |
 | `coordinator.ts` | The playbook, the worker target, wrap-up, and compacting the coordinator's context. |
+| `target.ts` | The line after a report or a stop: how many workers are still to start, or that wrap-up holds new ones. |
 | `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |
 | `side.tsx`, `tasks.ts` | `/hrd-side`: the sidebar, and grouping workers into one row per issue or PR. |
 | `links.ts` | `#123` links to the right repo, for the panel and the sidebar. |
