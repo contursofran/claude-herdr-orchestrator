@@ -547,9 +547,17 @@ class ReportRuleTest(unittest.TestCase):
 
     def test_report_rule_fills_in_the_job_folder_and_the_token(self):
         rule = HR.report_rule("/run/jobs/01-planner", "abcd1234")
-        self.assertIn("write your final report to /run/jobs/01-planner/RESULT.md,", rule)
-        self.assertIn("first line must be exactly: <!-- report abcd1234 -->.", rule)
-        self.assertNotIn("${job", rule)
+        self.assertIn("write your final report to /run/jobs/01-planner/RESULT.md in one write, as your last step.", rule)
+        self.assertIn("Its first line must be exactly: <!-- report abcd1234 -->", rule)
+        self.assertIn("in another file in /run/jobs/01-planner (a plan goes in PLAN.md)", rule)
+        self.assertNotIn("${", rule)
+        self.assertNotIn("WAIT.json", rule)
+
+    def test_report_rule_puts_the_header_fences_and_keys_on_their_own_lines(self):
+        rule = HR.report_rule("/run/jobs/01-planner", "abcd1234")
+        self.assertIn("\n```report\nstatus: done\npr: 123\nsummary: what changed;", rule)
+        self.assertIn("\nask: one line, only if your coordinator must answer something;", rule)
+        self.assertIn("\n```\nstatus is done, blocked (you need an answer", rule)
 
     def test_the_decision_regexes_are_the_ones_in_workers_ts(self):
         # the whole JS literal, flags included: a prefix of the pattern is not enough
@@ -573,6 +581,81 @@ class ReportRuleTest(unittest.TestCase):
 
     def test_split_decision_without_options_says_best_judgement(self):
         self.assertEqual(HR.split_decision("Which way?")[2], "your best judgement")
+
+
+class ReportHeaderTest(unittest.TestCase):
+    def test_the_pr_field_of_a_fenced_header_gives_its_prs(self):
+        report = "```report\nstatus: done\npr: 12, 13\nsummary: Built.\n```\n\nSee https://github.com/o/r/pull/99."
+        self.assertEqual(HR.header_prs(report), [12, 13])
+
+    def test_an_unfenced_header_gives_its_pr(self):
+        self.assertEqual(HR.header_prs("status: done\npr: #12\nsummary: Built.\n\nThe body."), [12])
+
+    def test_blank_lines_before_the_header_are_skipped(self):
+        self.assertEqual(HR.header_prs("\n\n```report\npr: 7\n```\nbody"), [7])
+
+    def test_a_pr_link_in_the_pr_field_gives_its_number(self):
+        self.assertEqual(HR.header_prs("```report\npr: https://github.com/o/r/pull/21\n```"), [21])
+
+    def test_the_pr_list_ends_at_the_first_item_that_is_not_a_pr(self):
+        self.assertEqual(HR.header_prs("```report\npr: 42 (merged 2026-10-24) 43\n```"), [42])
+
+    def test_pr_none_and_a_header_without_a_pr_line_name_no_pr(self):
+        self.assertEqual(HR.header_prs("```report\nstatus: blocked\npr: none\n```"), [])
+        self.assertEqual(HR.header_prs("```report\nstatus: blocked\nsummary: Stuck.\n```"), [])
+
+    def test_a_report_without_a_header_names_no_pr_even_if_a_later_line_looks_like_one(self):
+        self.assertEqual(HR.header_prs("Built the PR: https://github.com/o/r/pull/5\n\npr: 6"), [])
+
+    def test_a_fence_that_is_never_closed_is_no_header(self):
+        self.assertEqual(HR.header_prs("```report\npr: 12\nThe body."), [])
+
+
+class ReadReportTest(unittest.TestCase):
+    def setUp(self):
+        self.job = tempfile.mkdtemp(prefix="hrd-eval-job-")
+        self.addCleanup(shutil.rmtree, self.job, True)
+
+    def test_a_result_md_in_the_new_format_is_read_without_its_token_line(self):
+        text = "```report\nstatus: done\npr: 12\nsummary: Built.\n```\n\nDECISION: Stack? | Yes (recommended) | No\n"
+        write(self.job, "RESULT.md", "<!-- report abcd1234 -->\n" + text)
+        self.assertEqual(HR.read_report(self.job, "abcd1234", "json result"), (text, "result_md"))
+        self.assertEqual(HR.header_prs(text), [12])
+        self.assertEqual(HR.decisions(text), ["Stack? | Yes (recommended) | No"])
+
+    def test_a_result_md_with_another_token_is_not_this_prompts_report(self):
+        write(self.job, "RESULT.md", "<!-- report zzzz9999 -->\n```report\npr: 12\n```\n")
+        self.assertEqual(HR.read_report(self.job, "abcd1234", "json result"), ("json result", "result"))
+
+
+class FindPrTest(RunnerCase):
+    """Run.find_pr with the gh state written by hand: no call made the PR, so only the report can name it."""
+
+    def run_for_find(self):
+        sc = HR.load_scenario(os.path.join(self.scen, "replay-test"))
+        ctx = HR.Ctx(self.results, "claude", 60, HR.Budget(5.0, 5.0), self.src)
+        return HR.Run(ctx, sc, {"id": "A"}, 1)
+
+    def open_pr(self, run, number, head):
+        write_json(os.path.join(run.dir, "gh", "prs", f"{number}.json"), {"number": number, "headRefName": head})
+
+    def call(self, report):
+        return {"started": 1.0, "ended": 2.0, "report": report}
+
+    def test_the_pr_the_header_names_is_found_when_no_call_made_it(self):
+        run = self.run_for_find()
+        self.open_pr(run, 13, "other-branch")
+        self.assertEqual(run.find_pr("issue-12-eval", self.call("```report\nstatus: done\npr: 13\n```")), 13)
+
+    def test_a_header_pr_that_is_not_a_known_pr_falls_back_to_the_link(self):
+        run = self.run_for_find()
+        self.open_pr(run, 13, "other-branch")
+        report = "pr: 14\n\nSee https://github.com/hrd-eval/replay-test/pull/13"
+        self.assertEqual(run.find_pr("issue-12-eval", self.call(report)), 13)
+
+    def test_a_header_pr_that_is_not_a_known_pr_and_no_link_finds_nothing(self):
+        run = self.run_for_find()
+        self.assertIsNone(run.find_pr("issue-12-eval", self.call("```report\npr: 14\n```")))
 
 
 class VerdictTest(unittest.TestCase):
@@ -852,6 +935,30 @@ class MatrixTest(RunnerCase):
         self.assertEqual(run["status"], "no_pr")
         self.assertIsNone(run["slices"][0]["pr"])
         self.assertEqual(self.kinds(), ["plan", "build"])
+
+    def test_every_prompt_carries_the_report_header_rule(self):
+        self.matrix()
+        calls = self.fake_calls()
+        self.assertTrue(calls)
+        for call in calls:
+            self.assertIn("\n```report\nstatus: done\npr: 123\n", call["prompt"], call["kind"])
+            self.assertRegex(call["prompt"], r"Its first line must be exactly: <!-- report \w+ -->")
+
+    def test_a_decision_below_a_report_header_is_found_and_stops_the_run(self):
+        self.make_scenario(on_decision="stop")
+        report = "```report\nstatus: done\nsummary: Built.\n```\n\nDECISION: Stack? | Yes (recommended) | No"
+        self.behave(build={"report": report})
+        self.matrix()
+        run = self.run_json()
+        self.assertEqual(run["status"], "decision")
+        self.assertEqual(run["decisions"][0]["text"], "Stack? | Yes (recommended) | No")
+
+    def test_a_header_pr_that_no_call_made_ends_the_run_as_no_pr(self):
+        self.behave(build={"pr": None, "report": "```report\nstatus: done\npr: 13\nsummary: Built.\n```"})
+        self.matrix()
+        run = self.run_json()
+        self.assertEqual(run["status"], "no_pr")
+        self.assertIsNone(run["slices"][0]["pr"])
 
     def test_review_that_never_clears_ends_as_rounds_exhausted(self):
         arms = os.path.join(self.tmp, "arms")

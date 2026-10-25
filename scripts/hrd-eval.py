@@ -59,19 +59,23 @@ DISALLOW = "WebFetch(domain:github.com)"
 ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE")  # and every HERDR_* variable
 ARM_KEYS = ("profiles", "disable", "fixRound", "maxFixRounds", "note")
 
-# The report rule of hooks/workers.ts reportRule(), in its TS form, minus the WAIT.json sentences (a level 1 worker
-# never waits). A test checks each part still appears word for word in workers.ts.
+# The report rule of hooks/workers.ts reportRule(), one part per line of its array in the TS form (${job.dir}, and
+# ${token} for the token), minus the WAIT.json sentences (a level 1 worker never waits). report_rule() joins the parts
+# with newlines, as workers.ts does, so the header's fences and keys stay on their own lines. A test checks each part
+# still appears word for word in workers.ts.
 REPORT_RULE_PARTS = [
-    "When you are completely finished, write your final report to ${job.dir}/RESULT.md,",
-    "whose first line must be exactly: <!-- report ${job.token} -->. Then, in at most 25 lines:",
-    "what you did, the branch or PR link, test results, open questions, and anything you could not do.",
-    "Put long material, such as a plan or a full review, in another file in ${job.dir} (a plan goes in PLAN.md)",
-    "and give its absolute path in the report instead of copying it in.",
-    "If you need a decision only the owner can make, write each question on its own line as",
-    '"DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short;',
-    "if you cannot go on without the answer, stop there.",
-    "That file is how your coordinator gets your answer.",
-    "If you cannot go on, write why to RESULT.md and stop.",
+    "When you are completely finished, write your final report to ${job.dir}/RESULT.md in one write, as your last step. Its first line must be exactly: <!-- report ${token} -->",
+    "Right below that line, put this header, fences included, with your own values:",
+    "```report",
+    "status: done",
+    "pr: 123",
+    "summary: what changed; the checks you ran and their result; what is next (at most 3 short lines)",
+    "ask: one line, only if your coordinator must answer something; otherwise leave this line out",
+    "```",
+    "status is done, blocked (you need an answer or something outside your control) or failed. Leave out pr if you opened or updated no PR; list several as 12, 13. Your coordinator usually reads only this header, so make the summary enough to act on.",
+    "Below the header, in at most 25 lines: what you did, the branch or PR link, test results, open questions, and anything you could not do. Put long material, such as a plan or a full review, in another file in ${job.dir} (a plan goes in PLAN.md) and give its absolute path instead of copying it in.",
+    'If you need a decision only the owner can make, write each question on its own line as "DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short; if you cannot go on without the answer, stop there.',
+    "If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.",
 ]
 VERDICT_LINE = "End the report with one line: `VERDICT: approve` or `VERDICT: changes needed, <n> blockers`."
 # The same regexes as hooks/workers.ts deliver() (DECISION) and the verdict rule of this runner.
@@ -82,6 +86,11 @@ NONE_RE = re.compile(NONE_SRC, re.I)
 VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(approve|changes needed)(?:,\s*(\d+)\s+blockers?)?")
 MARKED = re.compile(r"\s*\((?:recommended|rec\.?)\)\s*", re.I)
 REPORT_MARK = re.compile(r"^\s*<!-- report (\S+) -->\s*")
+# The report's header (reportRule in workers.ts, parseHeader in report.ts): read here for its pr field only.
+FENCE_LINE = re.compile(r"^\s*```")
+HEADER_KEY = re.compile(r"^\s*(?:[-*]\s+)?\**[A-Za-z][\w-]*\**\s*:")
+HEADER_PR = re.compile(r"^\s*(?:[-*]\s+)?\**(?:pr|prs)\**\s*:\s*\**\s*(.*?)\s*$", re.I)
+PR_ITEM = re.compile(r"^(?:#?(\d+)|https?://\S*?/pull/(\d+)\b\S*)$")
 PLUGIN_ROW = re.compile(r"^\s*\((pass|fail|skip)\)\s+(.+?)\s*$")
 PLUGIN_MS = re.compile(r"\s+\[\d+(?:\.\d+)?\s*ms\]$")
 
@@ -495,8 +504,44 @@ def run_env(run, profile):
 
 
 def report_rule(job_dir, token):
-    text = " ".join(REPORT_RULE_PARTS)
-    return text.replace("${job.dir}", job_dir).replace("${job.token}", token)
+    text = "\n".join(REPORT_RULE_PARTS)
+    return text.replace("${job.dir}", job_dir).replace("${token}", token)
+
+
+def header_lines(report):
+    """The lines of a report's header, its token line already gone: what a fenced ```report block holds (none if the
+    fence is never closed), else the key lines from the first non-blank line on. [] when the report has no header."""
+    lines = report.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip()), len(lines))
+    if start < len(lines) and FENCE_LINE.match(lines[start]):
+        for end in range(start + 1, len(lines)):
+            if FENCE_LINE.match(lines[end]):
+                return lines[start + 1 : end]
+        return []
+    out = []
+    for line in lines[start:]:
+        if not HEADER_KEY.match(line):
+            break
+        out.append(line)
+    return out
+
+
+def header_prs(report):
+    """The PR numbers in a report's header (`pr: 12`, `pr: 12, 13` or PR links): the leading items of its pr value
+    that are PRs, as report.ts reads them. [] when the header has no pr line."""
+    for line in header_lines(report):
+        m = HEADER_PR.match(line)
+        if m:
+            found = []
+            for item in re.split(r"[\s,]+", m.group(1)):
+                if not item:
+                    continue
+                pm = PR_ITEM.match(item)
+                if not pm:
+                    break
+                found.append(int(pm.group(1) or pm.group(2)))
+            return list(dict.fromkeys(found))[:5]
+    return []
 
 
 def numbered_blockers(text):
@@ -565,7 +610,8 @@ def split_decision(text):
 
 
 def read_report(job, token, result):
-    """RESULT.md minus its token line when the token is this prompt's; otherwise the JSON result."""
+    """RESULT.md minus its token line when the token is this prompt's (the header and the body stay in it: DECISION
+    lines and PR links are read from all of it, as deliver() does); otherwise the JSON result."""
     path = os.path.join(job, "RESULT.md")
     if os.path.exists(path):
         text = read_text(path)
@@ -1005,7 +1051,7 @@ class Run:
 
     def find_pr(self, branch, c):
         """The slice's PR: the one whose head is the slice branch; else one created during the call (calls.log);
-        else the PR number the report links."""
+        else the first PR the report's header names that exists; else the PR number the report links."""
         prs = self.gh_prs()
         for num in sorted(prs):
             if prs[num].get("headRefName") == branch:
@@ -1015,6 +1061,9 @@ class Run:
             made = [num for num, rec in prs.items() if t0 <= created_epoch(rec) <= t1]
             if made:
                 return max(made)
+        for num in header_prs(c["report"]):
+            if num in prs:
+                return num
         m = re.search(r"/pull/(\d+)", c["report"])
         if m and int(m.group(1)) in prs:
             return int(m.group(1))
