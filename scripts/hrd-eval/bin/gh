@@ -1,0 +1,830 @@
+#!/usr/bin/env python3
+"""hrd-eval's gh stand-in: the gh commands a worker uses, answered from a local bare remote.
+
+The runner puts this folder first on PATH, so a worker's `gh` resolves here. Tests run it directly.
+
+State is the folder in HRD_EVAL_GH_STATE, which must be set (exit 1 without it):
+  repo.json        {"remote": "<abs path of the bare remote>", "name": "<repo>", "owner": "<owner>"}
+                   name defaults to "repo", owner to "hrd-eval"; URLs are https://github.com/<owner>/<name>/...
+                   The default branch is the remote's HEAD.
+  issues/<n>.json  issue records (gh issue JSON); missing fields get defaults
+  prs/<n>.json     PR records: title, body, state, isDraft, headRefName, baseRefName, labels, comments, reviews.
+                   The head sha, commits, files and mergeability are read from the remote on each call.
+  next             the next PR number to hand out: PR numbers continue after the highest issue number
+  lock             fcntl lock held by every write command
+  calls.log        one JSON line per call: {"t", "cwd", "argv", "exit"}
+
+Commands: repo view; issue view|list|comment; pr create|view|diff|list|edit|ready|comment|review|checks;
+run list|view (no runs); auth status. Anything else exits 1 with "hrd-eval gh shim: unsupported: gh <args>".
+Every command takes and ignores -R/--repo. --jq needs jq on PATH. Python 3 standard library only.
+"""
+
+import contextlib
+import fcntl
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+HOST = "https://github.com"
+AUTHOR = "hrd-eval"
+PR_FIELDS = [
+    "number",
+    "title",
+    "body",
+    "state",
+    "isDraft",
+    "url",
+    "headRefName",
+    "headRefOid",
+    "baseRefName",
+    "author",
+    "labels",
+    "files",
+    "additions",
+    "deletions",
+    "comments",
+    "reviews",
+    "reviewDecision",
+    "mergeable",
+    "mergeStateStatus",
+    "statusCheckRollup",
+    "commits",
+    "createdAt",
+    "updatedAt",
+    "mergedAt",
+    "mergeCommit",
+    "autoMergeRequest",
+]
+ISSUE_FIELDS = ["number", "title", "body", "state", "labels", "comments", "url", "author", "createdAt"]
+REPO_FIELDS = ["name", "owner", "nameWithOwner", "url", "description", "defaultBranchRef"]
+SHORT = {"R": "repo", "t": "title", "b": "body", "B": "base", "H": "head", "F": "body-file", "l": "label", "d": "draft", "f": "fill"}
+REVIEW_STATES = {"approve": "APPROVED", "request-changes": "CHANGES_REQUESTED", "comment": "COMMENTED"}
+
+
+class Fail(Exception):
+    """A command error: the message goes to stderr and the call exits 1."""
+
+
+def write_out(text):
+    sys.stdout.buffer.write(text.encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
+def write_err(text):
+    sys.stderr.buffer.write(text.encode("utf-8"))
+    sys.stderr.buffer.flush()
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return None
+
+
+def save_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def numbers_in(folder):
+    try:
+        names = os.listdir(folder)
+    except FileNotFoundError:
+        return []
+    return sorted(int(n[:-5]) for n in names if n.endswith(".json") and n[:-5].isdigit())
+
+
+@contextlib.contextmanager
+def locked(state):
+    os.makedirs(state, exist_ok=True)
+    fd = os.open(os.path.join(state, "lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+class Repo:
+    """repo.json in the state folder, and the bare remote it names."""
+
+    def __init__(self, state):
+        self.state = state
+        cfg = read_json(os.path.join(state, "repo.json"))
+        if not cfg or "remote" not in cfg:
+            raise Fail(f"no repo.json with a remote in {state}")
+        self.remote = cfg["remote"]
+        self.owner = cfg.get("owner", "hrd-eval")
+        self.name = cfg.get("name", "repo")
+        self.description = cfg.get("description", "")
+        self.url = f"{HOST}/{self.owner}/{self.name}"
+
+    def git(self, *args):
+        return subprocess.run(["git", "--git-dir", self.remote, *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def text(self, *args):
+        p = self.git(*args)
+        return p.stdout.decode("utf-8") if p.returncode == 0 else None
+
+    def sha(self, branch):
+        out = self.text("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+        return out.strip() if out else None
+
+    def default_branch(self):
+        ref = (self.text("symbolic-ref", "-q", "HEAD") or "").strip()
+        return ref[len("refs/heads/") :] if ref.startswith("refs/heads/") else "main"
+
+    def commits(self, base, head):
+        """Commits on head and not on base, oldest first: [(oid, subject, body)]. None when a branch is missing."""
+        out = self.text("log", "--reverse", "--format=%H%x1f%s%x1f%b%x1e", f"refs/heads/{base}..refs/heads/{head}")
+        if out is None:
+            return None
+        rows = []
+        for rec in out.split("\x1e"):
+            rec = rec.strip("\n")
+            if rec:
+                oid, subject, body = rec.split("\x1f", 2)
+                rows.append((oid, subject, body.rstrip()))
+        return rows
+
+    def files(self, base, head):
+        """Changed files of base...head: [(path, additions, deletions)]. None when a branch is missing."""
+        out = self.text("diff", "--no-color", "--numstat", "-z", f"refs/heads/{base}...refs/heads/{head}")
+        if out is None:
+            return None
+        parts = out.split("\0")
+        rows, i = [], 0
+        while i < len(parts):
+            rec = parts[i]
+            i += 1
+            if not rec:
+                continue
+            add, dele, path = rec.split("\t", 2)
+            if not path:  # a rename: the old and the new path follow
+                path = parts[i + 1]
+                i += 2
+            rows.append((path, 0 if add == "-" else int(add), 0 if dele == "-" else int(dele)))
+        return rows
+
+    def patch(self, base, head):
+        p = self.git("diff", "--no-color", "--no-ext-diff", f"refs/heads/{base}...refs/heads/{head}")
+        return p.stdout if p.returncode == 0 else None
+
+    def mergeability(self, base, head):
+        p = self.git("merge-tree", "--write-tree", "--no-messages", f"refs/heads/{base}", f"refs/heads/{head}")
+        return {0: ("MERGEABLE", "CLEAN"), 1: ("CONFLICTING", "DIRTY")}.get(p.returncode, ("UNKNOWN", "UNKNOWN"))
+
+
+def current_branch(cwd):
+    p = subprocess.run(["git", "-C", cwd, "branch", "--show-current"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        raise Fail(p.stderr.decode("utf-8").strip() or "not a git repository")
+    return p.stdout.decode("utf-8").strip()
+
+
+def issue_numbers(repo):
+    return numbers_in(os.path.join(repo.state, "issues"))
+
+
+def pr_numbers(repo):
+    return numbers_in(os.path.join(repo.state, "prs"))
+
+
+def load_issue(repo, n):
+    rec = read_json(os.path.join(repo.state, "issues", f"{n}.json"))
+    if rec is None:
+        raise Fail(f"Could not resolve to an Issue with the number of {n}.")
+    full = {"number": n, "title": "", "body": "", "state": "OPEN", "labels": [], "comments": [], "url": f"{repo.url}/issues/{n}", "author": {"login": ""}, "createdAt": ""}
+    full.update(rec)
+    full["number"] = n
+    return full
+
+
+def save_issue(repo, issue):
+    save_json(os.path.join(repo.state, "issues", f"{issue['number']}.json"), issue)
+
+
+def load_pr(repo, n):
+    rec = read_json(os.path.join(repo.state, "prs", f"{n}.json"))
+    if rec is None:
+        raise Fail(f"Could not resolve to a PullRequest with the number of {n}.")
+    full = {"title": "", "body": "", "state": "OPEN", "isDraft": False, "labels": [], "comments": [], "reviews": [], "author": {"login": AUTHOR}, "createdAt": "", "updatedAt": "", "mergedAt": None, "mergeCommit": None, "autoMergeRequest": None}
+    full.update(rec)
+    full["number"] = n
+    return full
+
+
+def save_pr(repo, rec):
+    save_json(os.path.join(repo.state, "prs", f"{rec['number']}.json"), rec)
+
+
+def next_number(repo):
+    """The number for a new PR: past the stored counter, the highest issue and the highest PR."""
+    path = os.path.join(repo.state, "next")
+    try:
+        with open(path, encoding="utf-8") as f:
+            counter = int(f.read().strip())
+    except FileNotFoundError:
+        counter = 1
+    n = max([counter] + [i + 1 for i in issue_numbers(repo)] + [p + 1 for p in pr_numbers(repo)])
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"{n + 1}\n")
+    return n
+
+
+def find_pr(repo, sel, cwd):
+    """The stored PR a selector names: a number, a PR URL or a head branch. No selector: the cwd's branch."""
+    if sel is None:
+        sel = current_branch(cwd)
+        if not sel:
+            raise Fail("no branch is checked out here; give a PR number, URL or branch")
+    if sel.isdigit():
+        return load_pr(repo, int(sel))
+    if sel.startswith("http"):
+        m = re.search(r"/pull/(\d+)", sel)
+        if not m:
+            raise Fail(f"not a pull request URL: {sel}")
+        return load_pr(repo, int(m.group(1)))
+    hits = [r for r in (load_pr(repo, n) for n in pr_numbers(repo)) if r["headRefName"] == sel]
+    if not hits:
+        raise Fail(f'no pull requests found for branch "{sel}"')
+    hits.sort(key=lambda r: (r["state"] != "OPEN", -r["number"]))
+    return hits[0]
+
+
+def pr_full(repo, rec):
+    """Every PR field: the stored ones, plus what the remote says about the head and base."""
+    base, head, n = rec["baseRefName"], rec["headRefName"], rec["number"]
+    files = repo.files(base, head) or []
+    commits = repo.commits(base, head) or []
+    mergeable, merge_state = repo.mergeability(base, head)
+    return {
+        "number": n,
+        "title": rec["title"],
+        "body": rec["body"],
+        "state": rec["state"],
+        "isDraft": rec["isDraft"],
+        "url": f"{repo.url}/pull/{n}",
+        "headRefName": head,
+        "headRefOid": repo.sha(head) or "",
+        "baseRefName": base,
+        "author": rec["author"],
+        "labels": rec["labels"],
+        "files": [{"path": p, "additions": a, "deletions": d} for p, a, d in files],
+        "additions": sum(a for _, a, _ in files),
+        "deletions": sum(d for _, _, d in files),
+        "comments": rec["comments"],
+        "reviews": rec["reviews"],
+        "reviewDecision": "",
+        "mergeable": mergeable,
+        "mergeStateStatus": merge_state,
+        "statusCheckRollup": [],
+        "commits": [{"oid": oid, "messageHeadline": subject} for oid, subject, _ in commits],
+        "createdAt": rec["createdAt"],
+        "updatedAt": rec["updatedAt"],
+        "mergedAt": rec["mergedAt"],
+        "mergeCommit": rec["mergeCommit"],
+        "autoMergeRequest": rec["autoMergeRequest"],
+    }
+
+
+def matches_words(repo, rec, words):
+    """Each word appears in the title or body, or in a changed file's path (case-insensitive)."""
+    text = (rec["title"] + "\n" + rec["body"]).lower()
+    paths = [p.lower() for p, _, _ in (repo.files(rec["baseRefName"], rec["headRefName"]) or [])]
+    return all(w in text or any(w in p for p in paths) for w in words)
+
+
+def parse_search(search):
+    """Split a --search string into (state sets, head names, base names, words)."""
+    try:
+        tokens = shlex.split(search)
+    except ValueError as e:
+        raise Fail(f"invalid --search: {e}")
+    states, heads, bases, words = [], [], [], []
+    for tok in tokens:
+        m = re.match(r"^(is|state|head|base):(.+)$", tok, re.IGNORECASE)
+        if m:
+            key, val = m.group(1).lower(), m.group(2)
+            if key in ("is", "state"):
+                if val.lower() not in ("open", "closed", "merged"):
+                    raise Fail(f"unsupported search qualifier: {tok}")
+                states.append({val.upper()})
+            elif key == "head":
+                heads.append(val)
+            else:
+                bases.append(val)
+        elif re.match(r"^[A-Za-z_-]+:", tok):
+            raise Fail(f"unsupported search qualifier: {tok}")
+        else:
+            words.append(tok.lower())
+    return states, heads, bases, words
+
+
+def parse(args, kinds, max_pos=0):
+    """Split args into ({name: value}, positionals). kinds maps each long name to flag, value or multi."""
+    kinds = dict(kinds, repo="value")
+    opts, pos, i = {}, [], 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "--":
+            pos.extend(args[i:])
+            break
+        if arg.startswith("--"):
+            name, eq, value = arg[2:].partition("=")
+            flag = f"--{name}"
+        elif arg.startswith("-") and len(arg) > 1:
+            name = SHORT.get(arg[1], "")
+            flag = arg[:2]
+            eq, value = ("=", arg[2:]) if len(arg) > 2 else ("", "")
+        else:
+            pos.append(arg)
+            continue
+        if name not in kinds:
+            raise Fail(f"unknown flag: {flag}")
+        kind = kinds[name]
+        if kind == "flag":
+            if eq:
+                raise Fail(f"{flag} takes no value")
+            opts[name] = True
+            continue
+        if not eq:
+            if i >= len(args):
+                raise Fail(f"{flag} needs a value")
+            value = args[i]
+            i += 1
+        if kind == "multi":
+            opts.setdefault(name, []).append(value)
+        else:
+            opts[name] = value
+    if len(pos) > max_pos:
+        raise Fail(f"too many arguments: {' '.join(pos[max_pos:])}")
+    return opts, pos
+
+
+def label_names(opts, key="label"):
+    names = []
+    for value in opts.get(key, []):
+        names += [name.strip() for name in value.split(",") if name.strip()]
+    return names
+
+
+def json_fields(opts, allowed):
+    """The --json field names, or None without --json. An unknown field fails; --jq needs --json."""
+    if "json" not in opts:
+        if "jq" in opts:
+            raise Fail("--jq needs --json")
+        return None
+    fields = [f.strip() for f in opts["json"].split(",") if f.strip()]
+    if not fields:
+        raise Fail("--json needs field names")
+    for f in fields:
+        if f not in allowed:
+            raise Fail(f'Unknown JSON field: "{f}"\nAvailable fields:\n' + "\n".join(f"  {a}" for a in allowed))
+    return fields
+
+
+def emit_json(opts, data):
+    text = json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n"
+    if "jq" not in opts:
+        write_out(text)
+        return 0
+    try:
+        p = subprocess.run(["jq", "-r", opts["jq"]], input=text.encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        raise Fail("jq is not installed; --jq needs it")
+    sys.stdout.buffer.write(p.stdout)
+    sys.stdout.buffer.flush()
+    sys.stderr.buffer.write(p.stderr)
+    sys.stderr.buffer.flush()
+    return p.returncode
+
+
+def limit_arg(opts):
+    try:
+        n = int(opts.get("limit", "30"))
+    except ValueError:
+        raise Fail(f"invalid --limit: {opts['limit']}")
+    if n < 1:
+        raise Fail(f"invalid --limit: {n}")
+    return n
+
+
+def number_arg(pos):
+    if not pos:
+        raise Fail("a number is required")
+    text = pos[0].lstrip("#")
+    if not text.isdigit():
+        raise Fail(f"not a number: {pos[0]}")
+    return int(text)
+
+
+def selector(pos):
+    return pos[0] if pos else None
+
+
+def read_body(opts):
+    """--body, or --body-file (a path, or - for stdin). None when neither is given."""
+    if "body" in opts and "body-file" in opts:
+        raise Fail("use one of --body and --body-file")
+    if "body-file" not in opts:
+        return opts.get("body")
+    path = opts["body-file"]
+    if path == "-":
+        raw = sys.stdin.buffer.read()
+    else:
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+        except OSError as e:
+            raise Fail(f"could not read {path}: {e.strerror}")
+    return raw.decode("utf-8")
+
+
+def required_body(opts):
+    body = read_body(opts)
+    if body is None:
+        raise Fail("--body or --body-file is required")
+    return body
+
+
+def comments_text(comments):
+    return "".join(f"\n{c['author']['login']} commented at {c['createdAt']}\n{c['body']}\n" for c in comments)
+
+
+def issue_text(issue, with_comments):
+    text = "\n".join([issue["title"], f"{issue['state']} - opened by {issue['author']['login']}", "", issue["body"], "", f"View this issue on GitHub: {issue['url']}"]) + "\n"
+    return text + comments_text(issue["comments"]) if with_comments else text
+
+
+def pr_text(full, with_comments):
+    draft = " (draft)" if full["isDraft"] else ""
+    status = f"{full['state']}{draft} - {full['author']['login']} wants to merge {full['headRefName']} into {full['baseRefName']}"
+    text = "\n".join([full["title"], status, "", full["body"], "", f"View this pull request on GitHub: {full['url']}"]) + "\n"
+    return text + comments_text(full["comments"]) if with_comments else text
+
+
+# ---- commands: each takes (state, args) and returns the exit code ----
+
+
+def repo_view(state, args):
+    opts, _ = parse(args, {"json": "value", "jq": "value"}, max_pos=1)
+    repo = Repo(state)
+    fields = json_fields(opts, REPO_FIELDS)
+    full = {
+        "name": repo.name,
+        "owner": {"login": repo.owner},
+        "nameWithOwner": f"{repo.owner}/{repo.name}",
+        "url": repo.url,
+        "description": repo.description,
+        "defaultBranchRef": {"name": repo.default_branch()},
+    }
+    if fields is not None:
+        return emit_json(opts, {f: full[f] for f in fields})
+    write_out(f"{full['nameWithOwner']}\n{full['description']}\n\nView this repository on GitHub: {full['url']}\n")
+    return 0
+
+
+def issue_view(state, args):
+    opts, pos = parse(args, {"json": "value", "jq": "value", "comments": "flag"}, max_pos=1)
+    fields = json_fields(opts, ISSUE_FIELDS)
+    repo = Repo(state)
+    issue = load_issue(repo, number_arg(pos))
+    if fields is not None:
+        return emit_json(opts, {f: issue[f] for f in fields})
+    write_out(issue_text(issue, opts.get("comments", False)))
+    return 0
+
+
+def issue_list(state, args):
+    opts, _ = parse(args, {"state": "value", "label": "multi", "limit": "value", "json": "value", "jq": "value"})
+    fields = json_fields(opts, ISSUE_FIELDS)
+    want = (opts.get("state") or "open").upper()
+    if want not in ("OPEN", "CLOSED", "ALL"):
+        raise Fail(f"invalid --state: {opts['state']}")
+    limit, labels = limit_arg(opts), label_names(opts)
+    repo = Repo(state)
+    rows = []
+    for n in sorted(issue_numbers(repo), reverse=True):
+        issue = load_issue(repo, n)
+        if want != "ALL" and issue["state"].upper() != want:
+            continue
+        if not set(labels) <= {label["name"] for label in issue["labels"]}:
+            continue
+        rows.append(issue)
+    rows = rows[:limit]
+    if fields is not None:
+        return emit_json(opts, [{f: r[f] for f in fields} for r in rows])
+    write_out("".join(f"#{r['number']}\t{r['title']}\t{','.join(label['name'] for label in r['labels'])}\n" for r in rows))
+    return 0
+
+
+def issue_comment(state, args):
+    opts, pos = parse(args, {"body": "value", "body-file": "value"}, max_pos=1)
+    repo = Repo(state)
+    n = number_arg(pos)
+    body = required_body(opts)
+    issue = load_issue(repo, n)
+    issue["comments"].append({"author": {"login": AUTHOR}, "body": body, "createdAt": now_iso()})
+    save_issue(repo, issue)
+    write_out(issue["url"] + "\n")
+    return 0
+
+
+def pr_create(state, args):
+    opts, _ = parse(args, {"base": "value", "head": "value", "title": "value", "body": "value", "body-file": "value", "fill": "flag", "draft": "flag", "label": "multi"})
+    repo = Repo(state)
+    head = opts.get("head") or current_branch(os.getcwd())
+    if not head:
+        raise Fail("no branch is checked out here; pass --head")
+    base = opts.get("base") or repo.default_branch()
+    fill = bool(opts.get("fill"))
+    title = opts.get("title")
+    if title is None and not fill:
+        raise Fail("--title (or --fill) is required")
+    body = read_body(opts)
+    if repo.sha(head) is None:
+        raise Fail(f'head branch "{head}" is not on the remote; push it first')
+    if repo.sha(base) is None:
+        raise Fail(f'base branch "{base}" is not on the remote')
+    commits = repo.commits(base, head) or []
+    if not commits:
+        raise Fail(f'no commits between {base} and {head}')
+    for n in pr_numbers(repo):
+        rec = load_pr(repo, n)
+        if rec["headRefName"] == head and rec["state"] == "OPEN":
+            raise Fail(f'a pull request for branch "{head}" into branch "{base}" already exists:\n{repo.url}/pull/{n}')
+    if fill:
+        one = len(commits) == 1
+        if title is None:
+            title = commits[0][1] if one else head
+        if body is None:
+            body = commits[0][2] if one else "\n".join(f"- {subject}" for _, subject, _ in commits)
+    n = next_number(repo)
+    now = now_iso()
+    save_pr(
+        repo,
+        {
+            "number": n,
+            "title": title,
+            "body": body or "",
+            "state": "OPEN",
+            "isDraft": bool(opts.get("draft")),
+            "headRefName": head,
+            "baseRefName": base,
+            "author": {"login": AUTHOR},
+            "labels": [{"name": name} for name in label_names(opts)],
+            "comments": [],
+            "reviews": [],
+            "createdAt": now,
+            "updatedAt": now,
+            "mergedAt": None,
+            "mergeCommit": None,
+            "autoMergeRequest": None,
+        },
+    )
+    write_out(f"{repo.url}/pull/{n}\n")
+    return 0
+
+
+def pr_view(state, args):
+    opts, pos = parse(args, {"json": "value", "jq": "value", "comments": "flag"}, max_pos=1)
+    fields = json_fields(opts, PR_FIELDS)
+    repo = Repo(state)
+    full = pr_full(repo, find_pr(repo, selector(pos), os.getcwd()))
+    if fields is not None:
+        return emit_json(opts, {f: full[f] for f in fields})
+    write_out(pr_text(full, opts.get("comments", False)))
+    return 0
+
+
+def pr_diff(state, args):
+    opts, pos = parse(args, {"name-only": "flag", "patch": "flag", "color": "value"}, max_pos=1)
+    if opts.get("name-only") and opts.get("patch"):
+        raise Fail("--name-only and --patch can't be used together")
+    repo = Repo(state)
+    rec = find_pr(repo, selector(pos), os.getcwd())
+    base, head = rec["baseRefName"], rec["headRefName"]
+    if opts.get("name-only"):
+        files = repo.files(base, head)
+        if files is None:
+            raise Fail(f"could not diff {base}...{head}: a branch is missing on the remote")
+        write_out("".join(f"{path}\n" for path, _, _ in files))
+        return 0
+    text = repo.patch(base, head)
+    if text is None:
+        raise Fail(f"could not diff {base}...{head}: a branch is missing on the remote")
+    sys.stdout.buffer.write(text)
+    sys.stdout.buffer.flush()
+    return 0
+
+
+def pr_list(state, args):
+    opts, _ = parse(args, {"state": "value", "search": "value", "head": "value", "base": "value", "label": "multi", "limit": "value", "json": "value", "jq": "value"})
+    fields = json_fields(opts, PR_FIELDS)
+    limit, labels = limit_arg(opts), label_names(opts)
+    qual_states, qual_heads, qual_bases, words = parse_search(opts.get("search", ""))
+    explicit = opts.get("state")
+    want = []
+    if explicit is not None:
+        if explicit.upper() not in ("OPEN", "CLOSED", "MERGED", "ALL"):
+            raise Fail(f"invalid --state: {explicit}")
+        if explicit.upper() != "ALL":
+            want.append({explicit.upper()})
+    elif not qual_states:
+        want.append({"OPEN"})
+    want += qual_states
+    heads = ([opts["head"]] if "head" in opts else []) + qual_heads
+    bases = ([opts["base"]] if "base" in opts else []) + qual_bases
+    repo = Repo(state)
+    rows = []
+    for n in pr_numbers(repo):
+        rec = load_pr(repo, n)
+        if any(rec["state"] not in s for s in want):
+            continue
+        if any(rec["headRefName"] != h for h in heads) or any(rec["baseRefName"] != b for b in bases):
+            continue
+        if not set(labels) <= {label["name"] for label in rec["labels"]}:
+            continue
+        if words and not matches_words(repo, rec, words):
+            continue
+        rows.append(rec)
+    rows = sorted(rows, key=lambda r: -r["number"])[:limit]
+    full_rows = [pr_full(repo, r) for r in rows]
+    if fields is not None:
+        return emit_json(opts, [{f: r[f] for f in fields} for r in full_rows])
+    write_out("".join(f"#{r['number']}\t{r['title']}\t{r['headRefName']}\t{r['state']}\n" for r in full_rows))
+    return 0
+
+
+def pr_edit(state, args):
+    opts, pos = parse(args, {"title": "value", "body": "value", "body-file": "value", "add-label": "multi", "remove-label": "multi", "base": "value"}, max_pos=1)
+    repo = Repo(state)
+    rec = find_pr(repo, selector(pos), os.getcwd())
+    if "title" in opts:
+        rec["title"] = opts["title"]
+    body = read_body(opts)
+    if body is not None:
+        rec["body"] = body
+    for name in label_names(opts, "add-label"):
+        if name not in {label["name"] for label in rec["labels"]}:
+            rec["labels"].append({"name": name})
+    remove = set(label_names(opts, "remove-label"))
+    rec["labels"] = [label for label in rec["labels"] if label["name"] not in remove]
+    if "base" in opts:
+        if repo.sha(opts["base"]) is None:
+            raise Fail(f'base branch "{opts["base"]}" is not on the remote')
+        rec["baseRefName"] = opts["base"]
+    rec["updatedAt"] = now_iso()
+    save_pr(repo, rec)
+    write_out(f"{repo.url}/pull/{rec['number']}\n")
+    return 0
+
+
+def pr_ready(state, args):
+    _, pos = parse(args, {}, max_pos=1)
+    repo = Repo(state)
+    rec = find_pr(repo, selector(pos), os.getcwd())
+    rec["isDraft"] = False
+    rec["updatedAt"] = now_iso()
+    save_pr(repo, rec)
+    write_out(f"{repo.url}/pull/{rec['number']}\n")
+    return 0
+
+
+def pr_comment(state, args):
+    opts, pos = parse(args, {"body": "value", "body-file": "value"}, max_pos=1)
+    body = required_body(opts)
+    repo = Repo(state)
+    rec = find_pr(repo, selector(pos), os.getcwd())
+    rec["comments"].append({"author": {"login": AUTHOR}, "body": body, "createdAt": now_iso()})
+    rec["updatedAt"] = now_iso()
+    save_pr(repo, rec)
+    write_out(f"{repo.url}/pull/{rec['number']}\n")
+    return 0
+
+
+def pr_review(state, args):
+    opts, pos = parse(args, {"approve": "flag", "request-changes": "flag", "comment": "flag", "body": "value"}, max_pos=1)
+    chosen = [kind for kind in REVIEW_STATES if opts.get(kind)]
+    if len(chosen) != 1:
+        raise Fail("pass exactly one of --approve, --request-changes or --comment")
+    kind = chosen[0]
+    body = opts.get("body") or ""
+    if kind != "approve" and not body.strip():
+        raise Fail(f"--{kind} needs --body")
+    repo = Repo(state)
+    rec = find_pr(repo, selector(pos), os.getcwd())
+    rec["reviews"].append({"author": {"login": AUTHOR}, "body": body, "state": REVIEW_STATES[kind], "submittedAt": now_iso()})
+    rec["updatedAt"] = now_iso()
+    save_pr(repo, rec)
+    write_out(f"{repo.url}/pull/{rec['number']}\n")
+    return 0
+
+
+def pr_checks(state, args):
+    _, pos = parse(args, {}, max_pos=1)
+    repo = Repo(state)
+    rec = find_pr(repo, selector(pos), os.getcwd())
+    raise Fail(f"no checks reported on the '{rec['headRefName']}' branch")
+
+
+def run_list(state, args):
+    write_out("no runs found\n")
+    return 0
+
+
+def auth_status(state, args):
+    write_out(f"github.com: logged in as {AUTHOR} (hrd-eval gh shim)\n")
+    return 0
+
+
+HANDLERS = {
+    ("repo", "view"): repo_view,
+    ("issue", "view"): issue_view,
+    ("issue", "list"): issue_list,
+    ("issue", "comment"): issue_comment,
+    ("pr", "create"): pr_create,
+    ("pr", "view"): pr_view,
+    ("pr", "diff"): pr_diff,
+    ("pr", "list"): pr_list,
+    ("pr", "edit"): pr_edit,
+    ("pr", "ready"): pr_ready,
+    ("pr", "comment"): pr_comment,
+    ("pr", "review"): pr_review,
+    ("pr", "checks"): pr_checks,
+    ("run", "list"): run_list,
+    ("run", "view"): run_list,
+    ("auth", "status"): auth_status,
+}
+WRITES = {("pr", "create"), ("pr", "edit"), ("pr", "ready"), ("pr", "comment"), ("pr", "review"), ("issue", "comment")}
+
+
+def strip_repo_flag(argv):
+    """-R/--repo before the command is ignored too."""
+    args = list(argv)
+    while args:
+        if args[0] in ("-R", "--repo"):
+            del args[:2]
+        elif args[0].startswith("--repo=") or (args[0].startswith("-R") and len(args[0]) > 2):
+            del args[0]
+        else:
+            break
+    return args
+
+
+def dispatch(args, state, argv):
+    group = args[0] if args else ""
+    sub = args[1] if len(args) > 1 else ""
+    handler = HANDLERS.get((group, sub))
+    if handler is None:
+        write_err(f"hrd-eval gh shim: unsupported: gh {' '.join(argv)}\n")
+        return 1
+    if (group, sub) in WRITES:
+        with locked(state):
+            return handler(state, args[2:])
+    return handler(state, args[2:])
+
+
+def log_call(state, argv, code):
+    os.makedirs(state, exist_ok=True)
+    line = {"t": time.time(), "cwd": os.getcwd(), "argv": argv, "exit": code}
+    with open(os.path.join(state, "calls.log"), "a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def main(argv):
+    state = os.environ.get("HRD_EVAL_GH_STATE", "")
+    if not state:
+        write_err("hrd-eval gh shim: HRD_EVAL_GH_STATE is not set\n")
+        return 1
+    try:
+        code = dispatch(strip_repo_flag(argv), state, argv)
+    except Fail as e:
+        write_err(f"{e.args[0]}\n")
+        code = 1
+    except Exception as e:
+        write_err(f"hrd-eval gh shim: {type(e).__name__}: {e}\n")
+        code = 1
+    log_call(state, argv, code)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
