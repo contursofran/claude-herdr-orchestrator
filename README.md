@@ -14,11 +14,11 @@ Install it from the plugin marketplace, at a Claude Code prompt (details under [
 
 ### Workers in herdr tabs, on any model
 
-The coordinator starts each worker in its own herdr tab, usually in its own git worktree, with a profile: the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker's tab gets `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers and sweeps only while one of the workers it started runs.
+The coordinator starts each worker in its own herdr tab, usually in its own git worktree, with a profile: the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker's tab gets `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers; for the workers it started, it sweeps and checks their reports only while one of them runs.
 
 ### Reports come back by themselves
 
-When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job.
+When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a `RESULT.md` is delivered within 3 seconds of landing, even while its worker is still finishing its turn (a worker with messages held for it waits for the end of its turn). A sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job.
 
 ### To-dos pinned for you
 
