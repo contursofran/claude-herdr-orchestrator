@@ -20,5 +20,9 @@
     "workers on one issue share a row, and an answer stays in its slot until clear done",
     "workers show one per row, two per line, the one that needs the person first"
   ],
-  "discriminating": ["a DECISION line that says none is not pinned for the owner"]
+  "discriminating": ["a DECISION line that says none is not pinned for the owner"],
+  "flaky": [
+    "a pinned to-do shows at the top, and Done unpins it and tells the coordinator",
+    "a reviewer joins the row of the PR its builder linked, with the PR's checks"
+  ]
 }

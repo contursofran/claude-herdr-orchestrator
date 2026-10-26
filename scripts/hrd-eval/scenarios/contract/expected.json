@@ -12,5 +12,6 @@
     "test_quote_discount (test_quote_hidden.QuoteHiddenTest)",
     "test_quote_plain (test_quote_hidden.QuoteHiddenTest)",
     "test_quote_unknown_sku (test_quote_hidden.QuoteHiddenTest)"
-  ]
+  ],
+  "flaky": []
 }

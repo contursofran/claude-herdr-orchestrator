@@ -27,6 +27,10 @@
     "testsChanged": true
   },
   "onDecision": "recommended",
+  "knownFlaky": [
+    "a pinned to-do shows at the top, and Done unpins it and tells the coordinator",
+    "a reviewer joins the row of the PR its builder linked, with the PR's checks"
+  ],
   "estimateScale": 1,
-  "notes": "Source, hidden tests and allowed files are PR #13 (merged as a3bcb63). testsChanged is true: PR #13 changed tests/workers.test.tsx."
+  "notes": "Source, hidden tests and allowed files are PR #13 (merged as a3bcb63). testsChanged is true: PR #13 changed tests/workers.test.tsx. knownFlaky: the pinned to-do and reviewer-row tests are flaky at this commit (fixed later by #40, 5250c02); replay-26/R of 20261026-172215 failed the pinned to-do test. issue.json is served open, at the eval's URL (https://github.com/hrd-eval/<scenario>/issues/<n>), with the owner's login as \"owner\": no link to the real repo."
 }

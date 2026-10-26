@@ -41,13 +41,20 @@ def write_json(path, data):
     write(path, json.dumps(data))
 
 
-def tool(name, **inp):
+def tool(name, _id="t1", **inp):
     """One assistant transcript line that calls a tool, as Claude Code writes it."""
     rec = {
         "type": "assistant",
         "timestamp": "2026-10-24T10:00:00.000Z",
-        "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": name, "input": inp}]},
+        "message": {"role": "assistant", "content": [{"type": "tool_use", "id": _id, "name": name, "input": inp}]},
     }
+    return json.dumps(rec, separators=(",", ":"))
+
+
+def result(_id, text, is_error=False):
+    """The user transcript line with a tool's result, as Claude Code writes it."""
+    block = {"type": "tool_result", "tool_use_id": _id, "content": text, "is_error": is_error}
+    rec = {"type": "user", "timestamp": "2026-10-24T10:00:01.000Z", "message": {"role": "user", "content": [block]}}
     return json.dumps(rec, separators=(",", ":"))
 
 
@@ -93,7 +100,7 @@ def call(n, role, cost, reported=None, started=0.0, ended=10.0, tokens=(0, 0, 0,
 
 def make_run(tmp, scen_dir, name="rep", arm="A", repeat=1, status="done", slices=None, grade=None,
              changed=DEFAULT_CHANGED, decisions=(), plan_decisions=(), calls=(), hidden=DEFAULT_HIDDEN, jobs=None,
-             gh_log="", leaks=LEAKS, started=1000.0, ended=1600.0, pr_opened=True):
+             gh_log="", leaks=LEAKS, started=1000.0, ended=1600.0, pr_opened=True, isolation=None, questions=None):
     """One run folder under <tmp>/results/<name>/<arm>/r<repeat>. hidden=None writes no hidden.txt."""
     run_dir = os.path.join(tmp, "results", name, arm, f"r{repeat}")
     shutil.rmtree(run_dir, ignore_errors=True)  # a test may build the same folder twice
@@ -115,6 +122,10 @@ def make_run(tmp, scen_dir, name="rep", arm="A", repeat=1, status="done", slices
         "changed_files": list(changed),
         "leak_patterns": list(leaks),
     }
+    if isolation is not None:
+        run["isolation"] = isolation
+    if questions is not None:
+        run["questions"] = questions
     write_json(os.path.join(run_dir, "run.json"), run)
     write(os.path.join(run_dir, "calls.jsonl"), "".join(json.dumps(c) + "\n" for c in calls))
     for job, lines in (jobs or {}).items():
@@ -227,7 +238,7 @@ class ReplayPass(Folders):
         self.assertTrue(s["pass"])
         self.assertEqual(s["reasons"], [])
         self.assertFalse(s["invalid"])
-        self.assertEqual(s["hidden"], {"new_pass": 1, "new_total": 1, "failed": []})
+        self.assertEqual(s["hidden"], {"new_pass": 1, "new_total": 1, "failed": [], "flaky_failed": []})
         self.assertEqual(s["own_tests"], "pass")
         self.assertEqual(s["outside"], [])
         self.assertEqual(s["wall"], 600.0)
@@ -238,7 +249,7 @@ class ReplayPass(Folders):
         s = self.score(hidden="(pass) t1 [5ms]\n")
         self.assertFalse(s["pass"])
         self.assertEqual(s["reasons"], ["missing tests: t2"])
-        self.assertEqual(s["hidden"], {"new_pass": 0, "new_total": 1, "failed": ["t2"]})
+        self.assertEqual(s["hidden"], {"new_pass": 0, "new_total": 1, "failed": ["t2"], "flaky_failed": []})
 
     def test_failing_and_skipped_expected_tests_fail(self):
         self.assertEqual(self.score(hidden="(pass) t1\n(fail) t2\n")["reasons"], ["failing tests: t2"])
@@ -252,13 +263,32 @@ class ReplayPass(Folders):
     def test_not_merged_without_an_error_fails(self):
         self.assertEqual(self.score(grade=dict(GREEN, merged=False))["reasons"], ["not merged"])
 
-    def test_not_graded_fails_and_lists_every_test_as_failed(self):
+    def test_not_graded_fails_and_lists_no_test_as_failed(self):
+        # contract/R (20261026-172215) was not graded, and every hidden test, cart tests included, read as failed.
         s = self.score(grade={"ran": False, "kind": None, "merged": False, "merge_error": None, "exit": None,
                               "own_exit": None}, hidden=None)
         self.assertFalse(s["pass"])
-        self.assertEqual(s["reasons"], ["not graded"])
+        self.assertEqual(s["reasons"], ["not merged", "not graded"])
         self.assertEqual(s["own_tests"], "none")
-        self.assertEqual(s["hidden"], {"new_pass": 0, "new_total": 1, "failed": ["t1", "t2"]})
+        self.assertEqual(s["hidden"], {"new_pass": 0, "new_total": 1, "failed": [], "flaky_failed": []})
+
+    def test_a_graded_run_with_a_slice_left_out_fails_on_the_merge_and_shows_its_tests(self):
+        s = self.score(grade=dict(GREEN, merged=False, merge_error="issue-12-s2: no branch on the remote (no PR)"),
+                       hidden="(pass) t1\n(fail) t2\n")
+        self.assertEqual(s["reasons"], ["not merged: issue-12-s2: no branch on the remote (no PR)", "failing tests: t2"])
+
+    def test_a_flaky_test_that_fails_is_set_aside_unless_it_is_discriminating(self):
+        scen = scenario(self.tmp, name="fl", expected={"tests": ["t1", "t2", "t3"], "discriminating": ["t2"],
+                                                       "flaky": ["t1", "t2"]})
+        s = sc.score_run(make_run(self.tmp, scen, name="fl", hidden="(fail) t1\n(pass) t2\n(pass) t3\n"))
+        self.assertTrue(s["pass"], s["reasons"])
+        self.assertEqual(s["hidden"]["flaky_failed"], ["t1"])
+        self.assertEqual(s["hidden"]["failed"], [])
+        s = sc.score_run(make_run(self.tmp, scen, name="fl", hidden="(pass) t1\n(fail) t2\n(pass) t3\n"))
+        self.assertEqual(s["reasons"], ["failing tests: t2"])  # t2 is flaky but discriminating: it counts
+        s = sc.score_run(make_run(self.tmp, scen, name="fl", hidden="(pass) t2\n(pass) t3\n"))
+        self.assertTrue(s["pass"], s["reasons"])  # a flaky test that is missing is set aside too
+        self.assertEqual(s["hidden"]["flaky_failed"], ["t1"])
 
     def test_missing_pr_fails(self):
         s = self.score(slices=[slice_("S1"), slice_("S2", pr=None)])
@@ -419,6 +449,59 @@ class Leaks(Folders):
         s = self.score({"03-build": [tool("Write", file_path="/tmp/plan-18.md", content="plan-18")]})
         self.assertFalse(s["invalid"])
         self.assertEqual(s["leak"], [])
+
+    def test_a_report_a_worker_writes_through_a_quoted_heredoc_is_not_a_leak(self):
+        # replay-14/B (20261026-172215): the builder's RESULT.md quoted the issue's link.
+        command = ("cd /r/jobs/04-builder-S1 && cat > RESULT.md <<'E'\n<!-- report 4c470ff2 -->\nPR: "
+                   "https://github.com/contursofran/x/pull/11\nE")
+        s = self.score({"04-build": [tool("Bash", command=command)]}, leaks=["github.com/contursofran"])
+        self.assertFalse(s["invalid"])
+        for heredoc in ('<<"EOF"', "<<\\EOF", "<<-'EOF'"):
+            command = f"cat >> /r/jobs/01-plan/PLAN.md {heredoc}\nsee plan-18\nEOF"
+            self.assertFalse(self.score({"01-plan": [tool("Bash", command=command)]})["invalid"], heredoc)
+
+    def test_a_read_after_a_report_heredoc_or_inside_an_unquoted_one_is_still_a_leak(self):
+        after = "cat > RESULT.md <<'E'\nnotes\nE\ncat ~/plan-18/PLAN.md"
+        self.assertTrue(self.score({"01-plan": [tool("Bash", command=after)]})["invalid"])
+        unquoted = "cat > RESULT.md <<E\n$(cat ~/plan-18/PLAN.md)\nE"  # an unquoted heredoc runs its $(...)
+        self.assertTrue(self.score({"01-plan": [tool("Bash", command=unquoted)]})["invalid"])
+        to_code = "cat > hooks/x.ts <<'E'\nplan-18\nE"  # only a .md file is a report
+        self.assertTrue(self.score({"01-plan": [tool("Bash", command=to_code)]})["invalid"])
+
+    def test_a_read_the_sandbox_refused_is_blocked_not_a_leak(self):
+        mods = "~/.claude/mods/herdr-agents"
+        home = os.path.expanduser("~")
+        jobs = {"01-build": [
+            tool("Bash", _id="a", command=f"npm test 2>&1 | tail -3; ls {mods}/.claude-plugin/types 2>&1 | head"),
+            result("a", f" 21 pass\nls: {home}/.claude/mods/herdr-agents/.claude-plugin/types: Operation not permitted"),
+            tool("Read", _id="b", file_path=f"{home}/.claude/mods/herdr-agents/hooks/state.ts"),
+            result("b", "Permission to read this file has been denied.", is_error=True),
+        ]}
+        s = self.score(jobs, leaks=[mods, f"{home}/.claude/mods/herdr-agents"])
+        self.assertFalse(s["invalid"])
+        self.assertEqual(s["leak"], [])
+        self.assertEqual(s["leak_blocked"], [
+            {"job": "jobs/01-build", "tool": "Bash", "pattern": mods},
+            {"job": "jobs/01-build", "tool": "Read", "pattern": f"{home}/.claude/mods/herdr-agents"},
+        ])
+
+    def test_a_refusal_that_names_another_path_does_not_block_a_read(self):
+        # replay-15/B (20261026-172215): the listing came back; an error elsewhere in the output says nothing.
+        jobs = {"01-build": [
+            tool("Bash", _id="a", command="ls nope; ls ~/.claude/mods/herdr-agents/.claude-plugin/types"),
+            result("a", "ls: nope: No such file or directory\nclaude-code\nindex.d.ts", is_error=True),
+        ]}
+        s = self.score(jobs, leaks=["~/.claude/mods/herdr-agents"])
+        self.assertTrue(s["invalid"])
+
+    def test_an_empty_result_is_blocked_only_in_an_isolated_run(self):
+        jobs = {"01-build": [tool("Bash", _id="a", command="grep -rn store ~/.claude/mods/herdr-agents 2>/dev/null"),
+                             result("a", "")]}
+        leaks = ["~/.claude/mods/herdr-agents"]
+        self.assertTrue(self.score(jobs, leaks=leaks)["invalid"])
+        s = self.score(jobs, leaks=leaks, isolation={"sandbox": True, "deny_read": ["/home/x/.claude/mods"]})
+        self.assertFalse(s["invalid"])
+        self.assertEqual(len(s["leak_blocked"]), 1)
 
     def test_no_pattern_or_an_empty_pattern_is_no_leak(self):
         jobs = {"01-plan": [tool("Bash", command="cat plan-18")]}
@@ -642,6 +725,32 @@ class PrintText(unittest.TestCase):
     def test_no_disagreements_says_none(self):
         agg = sc.aggregate(equal_arms(self.agg["runs"]))
         self.assertIn("== disagreements: scenarios whose pass counts differ between arms\n   none", self.render(agg))
+
+
+class Footers(Folders):
+    """The notes under the table for runs that set a flaky failure aside, asked past the answer cap, or were refused a
+    leak path."""
+
+    def test_flaky_failures_questions_past_the_cap_and_refused_reads_are_listed(self):
+        scen = scenario(self.tmp, name="fl", expected={"tests": ["t1", "t2"], "discriminating": ["t2"], "flaky": ["t1"]})
+        jobs = {"01-build": [tool("Bash", _id="a", command="ls ~/.claude/mods/herdr-agents"),
+                             result("a", "ls: /h/.claude/mods/herdr-agents: Operation not permitted")]}
+        run = make_run(self.tmp, scen, name="fl", hidden="(fail) t1\n(pass) t2\n", jobs=jobs,
+                       leaks=["~/.claude/mods/herdr-agents"],
+                       questions={"recommended": 2, "auto": 1, "unanswered": 1, "stop": 0})
+        s = sc.score_run(run)
+        self.assertTrue(s["pass"], s["reasons"])
+        self.assertFalse(s["invalid"])
+        self.assertEqual(s["questions"]["unanswered"], 1)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sc.print_text(sc.aggregate([s]))
+        text = buf.getvalue()
+        self.assertIn("1 runs failed tests that are flaky in the reference (expected.json); set aside, not failures:", text)
+        self.assertIn(f"      {run}: t1", text)
+        self.assertIn(f"      {run}: auto 1, unanswered 1", text)
+        self.assertIn("1 runs tried to read a leak path and were refused (not invalid):", text)
+        self.assertIn(f"      {run}: Bash ~/.claude/mods/herdr-agents", text)
 
 
 class Cli(unittest.TestCase):

@@ -34,5 +34,5 @@
   },
   "onDecision": "recommended",
   "estimateScale": 1,
-  "notes": "Fixture (scripts/hrd-eval/fixture). The hidden tests (hidden/test_quote_hidden.py) run end to end through LocalTransport: a plain cart, a bulk-discount cart and an unknown sku. The issue gives no field names; the reference (solution.patch) picks them. solution.patch is applied to the base for the reference run of --check-scenarios."
+  "notes": "Fixture (scripts/hrd-eval/fixture). The hidden tests (hidden/test_quote_hidden.py) run end to end through LocalTransport: a plain cart, a bulk-discount cart and an unknown sku. The issue gives no field names; the reference (solution.patch) picks them. solution.patch is applied to the base for the reference run of --check-scenarios. Both slices usually add a CHANGELOG.md line: the grade merges CHANGELOG.md as a union (the runner's mergeUnion default), as a coordinator would when it updates the second PR from main. Before that, contract/B2 and contract/R of 20261026-172215 conflicted there and were never graded; merged as a union, both pass the hidden tests."
 }
