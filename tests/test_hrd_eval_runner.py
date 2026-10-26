@@ -61,7 +61,7 @@ from datetime import datetime, timezone
 argv = sys.argv[1:]
 prompt = sys.stdin.read()
 KINDS = (("Plan issue", "plan"), ("Build issue", "build"), ("Review PR", "review"), ("Fix round", "fix"),
-         ("Re-review PR", "rereview"), ("Answers to your DECISION", "answer"))
+         ("Re-review PR", "rereview"), ("Answers to your DECISION", "answer"), ("Sandbox check", "probe"))
 kind = next(k for start, k in KINDS if prompt.startswith(start))
 resumed = "--resume" in argv
 sid = argv[argv.index("--resume") + 1] if resumed else argv[argv.index("--session-id") + 1]
@@ -75,8 +75,10 @@ state["counts"][kind] = count + 1
 cwd = os.getcwd()
 by_dir = script.get("by_dir", {}).get(os.path.basename(cwd), {}).get(kind)
 beh = by_dir if by_dir is not None else script[kind][min(count, len(script[kind]) - 1)]
-job = re.search(r"write (?:your final report to )?(\S+)/RESULT\.md", prompt).group(1)  # the full rule or the reminder
-token = re.search(r"<!-- report (\w+) -->", prompt).group(1)
+job_m = re.search(r"write (?:your final report to )?(\S+)/RESULT\.md", prompt)  # the full rule or the reminder
+job = job_m.group(1) if job_m else cwd
+token_m = re.search(r"<!-- report (\w+) -->", prompt)
+token = token_m.group(1) if token_m else ""
 files = []
 for root, dirs, names in os.walk(cwd):
     dirs[:] = [d for d in dirs if d != ".git"]
@@ -107,6 +109,11 @@ if beh.get("shim_pr"):  # a PR already in the shim's state, written here, so no 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(json.dumps(rec))
+if beh.get("shell"):  # the probe's symlink and builder-flow commands, run as the prompt gives them
+    for cmd in re.findall(r"^\d+\. Bash: ((?:ln -s|cd ).*)$", prompt, re.M):
+        subprocess.run(["sh", "-c", cmd], cwd=cwd)
+if beh.get("write"):
+    open(re.search(r"echo ok > (\S+)", prompt).group(1), "w").write("ok\n")
 if not beh.get("no_result"):
     open(os.path.join(job, "RESULT.md"), "w").write(f"<!-- report {token} -->\n{beh.get('report', '')}\n")
 cost = float(beh.get("cost", 0.1))
@@ -124,6 +131,12 @@ with open(os.path.join(proj, sid + ".jsonl"), "a", encoding="utf-8") as f:
                                     "content": [{"type": "text", "text": "ok"}],
                                     "usage": {"input_tokens": 0, "output_tokens": round(cost * 1e6 / price_out),
                                               "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}) + "\n")
+    paths = re.findall(r"(?:ls|cat|Read:|in) (/\S+)", prompt)
+    for i, (name, field, path_i, text, err) in enumerate(beh.get("tools", [])):
+        use = {"type": "tool_use", "id": f"u{i}", "name": name, "input": {field: paths[path_i]}}
+        f.write(json.dumps({"type": "assistant", "timestamp": now, "message": {"role": "assistant", "content": [use]}}) + "\n")
+        res = {"type": "tool_result", "tool_use_id": f"u{i}", "content": text.replace("PATH", paths[path_i]), "is_error": err}
+        f.write(json.dumps({"type": "user", "timestamp": now, "message": {"role": "user", "content": [res]}}) + "\n")
 json.dump(state, open(state_path, "w"))
 print(json.dumps({"type": "result", "subtype": beh.get("subtype", "success"), "is_error": bool(beh.get("is_error")),
                   "result": beh.get("result", beh.get("report", "")), "session_id": sid, "total_cost_usd": total}))
@@ -138,6 +151,7 @@ DEFAULTS = {
     "fix": {"report": "Fixed the blocker."},
     "rereview": {"report": "Fixed.\n\nVERDICT: approve"},
     "answer": {"report": "Carrying on."},
+    "probe": {"report": "Done."},
 }
 CONFIG = {
     "profiles": {
@@ -412,11 +426,11 @@ class ArgvEnvTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_role_argv_has_the_plugin_settings_the_permissions_and_the_webfetch_denial(self):
-        argv = HR.role_argv(self.PROFILE, "sid-1", False, 2.5)
+    def test_role_argv_has_the_settings_the_permissions_and_the_webfetch_denial(self):
+        argv = HR.role_argv(self.PROFILE, "sid-1", False, 2.5, '{"env":{}}')
         self.assertEqual(argv[0], "claude")
         self.assertEqual(argv[1], "-p")
-        self.assertIn('--settings={"env":{"CLAUDE_CODE_PLUGIN_DIRS":""}}', argv)
+        self.assertIn('--settings={"env":{}}', argv)
         self.assertEqual(argv[argv.index("--permission-prompts") + 1], "none")
         self.assertIn("--disallowedTools=WebFetch(domain:github.com)", argv)
         self.assertEqual(argv[argv.index("--output-format") + 1], "json")
@@ -425,7 +439,7 @@ class ArgvEnvTest(unittest.TestCase):
         self.assertNotIn("--resume", argv)
 
     def test_role_argv_resumes_a_session_without_a_new_id(self):
-        argv = HR.role_argv(self.PROFILE, "sid-1", True, 1)
+        argv = HR.role_argv(self.PROFILE, "sid-1", True, 1, "{}")
         self.assertEqual(argv[argv.index("--resume") + 1], "sid-1")
         self.assertNotIn("--session-id", argv)
 
@@ -433,7 +447,7 @@ class ArgvEnvTest(unittest.TestCase):
         env_patch = {"GH_TOKEN": "t", "GITHUB_TOKEN": "t", "CLAUDECODE": "1", "HERDR_SOCKET": "s", "KEEP_ME": "k"}
         with mock.patch.dict(os.environ, env_patch):
             env = HR.run_env(self.run, self.PROFILE)
-        self.assertTrue(env["PATH"].startswith(SHIM_BIN + os.pathsep))
+        self.assertTrue(env["PATH"].startswith(os.path.join(self.run, "bin") + os.pathsep))
         self.assertEqual(env["HRD_EVAL_GH_STATE"], os.path.join(self.run, "gh"))
         self.assertEqual(env["GH_CONFIG_DIR"], os.path.join(self.run, "gh-config"))
         self.assertEqual(env["CLAUDE_ENV_FILE"], os.path.join(self.run, "env.sh"))
@@ -791,7 +805,12 @@ class SetupTest(RunnerCase):
         self.assertEqual(gh, {"remote": run.remote, "name": "replay-test", "owner": "hrd-eval"})
         self.assertTrue(os.path.exists(os.path.join(run.dir, "gh", "issues", "12.json")))
         with open(os.path.join(run.dir, "env.sh"), encoding="utf-8") as f:
-            self.assertIn(SHIM_BIN, f.read())
+            self.assertIn(os.path.join(run.dir, "bin"), f.read())
+        # the run's own copy of the shim: a worker's sandbox cannot read this repo
+        self.assertEqual(read_text(os.path.join(run.dir, "bin", "gh")), read_text(os.path.join(SHIM_BIN, "gh")))
+        self.assertTrue(os.access(os.path.join(run.dir, "bin", "gh"), os.X_OK))
+        issue = read_json(os.path.join(run.dir, "gh", "issues", "12.json"))
+        self.assertEqual((issue["state"], issue["url"]), ("OPEN", "https://github.com/hrd-eval/replay-test/issues/12"))
 
     def test_setup_commands_run_with_the_run_git_config(self):
         self.make_scenario(setup=[["sh", "-c", 'printf %s "$GIT_CONFIG_GLOBAL" > global.txt']])
@@ -839,9 +858,12 @@ class MatrixTest(RunnerCase):
         for entry in self.fake_calls():
             self.assertNotIn("tests/test_hidden.py", entry["files"], entry["kind"])
             self.assertEqual(entry["git_config"], os.path.join(self.run_dir(), "gitconfig"), entry["kind"])
-        # the builder's gh resolves to the shim
+        # the builder's gh resolves to the run's copy of the shim
         builder = [e for e in self.fake_calls() if e["kind"] == "build"][0]
-        self.assertTrue(builder["gh"].startswith(SHIM_BIN))
+        self.assertEqual(builder["gh"], os.path.join(self.run_dir(), "bin", "gh"))
+        # the hidden tests ran in the grade, then were taken out of it: a later run's workers could read them there
+        self.assertFalse(os.path.exists(os.path.join(self.run_dir(), "grade", "tests", "test_hidden.py")))
+        self.assertTrue(os.path.exists(os.path.join(self.run_dir(), "grade", "tests", "test_own.py")))
 
     def test_the_grade_command_runs_with_the_run_git_config(self):
         # the grade runs twice (own tests, then with the hidden tests), so the probe appends one line per run
@@ -951,18 +973,51 @@ class MatrixTest(RunnerCase):
         self.assertIn("Answers to your DECISION questions: Do member and bulk discounts stack? -> Yes. Carry on.", prompt)
         run = self.run_json()
         self.assertEqual(run["decisions"][0]["answered"], "Yes")
+        self.assertEqual(run["decisions"][0]["how"], "recommended")
+        self.assertEqual(run["questions"], {"recommended": 1, "auto": 0, "unanswered": 0, "stop": 0})
         self.assertEqual(run["status"], "done")
 
-    def test_a_third_decision_after_two_answers_stops_the_run(self):
+    def test_past_two_answers_a_question_gets_the_no_owner_answer_once_then_the_run_carries_on_and_is_graded(self):
+        # contract/B2 (20261026-172215) ended at the third question, ungraded. Past the cap the asker gets one answer
+        # with no owner answer in it, then its questions go unanswered; the review and the grade still happen.
         self.behave(
             build={"report": "DECISION: First? | A (recommended) | B"},
-            answer=[{"report": "DECISION: Second? | C (recommended) | D"}, {"report": "DECISION: Third? | E (recommended) | F"}],
+            answer=[
+                {"report": "DECISION: Second? | C (recommended) | D"},
+                {"report": "DECISION: Third? | E (recommended) | F"},
+                {"report": "DECISION: Fourth? | G (recommended) | H"},
+            ],
         )
-        self.matrix()
-        self.assertEqual(self.kinds(), ["plan", "build", "answer", "answer"])
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.kinds(), ["plan", "build", "answer", "answer", "answer", "review"])
         run = self.run_json()
-        self.assertEqual(run["status"], "decision")
-        self.assertEqual([d["answered"] for d in run["decisions"]], ["A", "C", None])
+        self.assertEqual(run["status"], "done")
+        self.assertEqual([d["answered"] for d in run["decisions"]], ["A", "C", NO_OWNER, None])
+        self.assertEqual([d["how"] for d in run["decisions"]], ["recommended", "recommended", "auto", "unanswered"])
+        self.assertEqual(run["questions"], {"recommended": 2, "auto": 1, "unanswered": 1, "stop": 0})
+        self.assertTrue(run["grade"]["ran"])
+        prompts = [e["prompt"] for e in self.fake_calls() if e["kind"] == "answer"]
+        self.assertIn(f"Answers to your DECISION questions: Third? -> {NO_OWNER}. No more answers will come in this run", prompts[2])
+
+    def test_past_the_cap_a_reviewer_that_asks_still_gives_its_verdict_and_the_other_slice_goes_on(self):
+        slices = [{"id": "S1", "brief": "the server"}, {"id": "S2", "brief": "the client"}]
+        self.make_scenario(slices=slices)
+        ask = "```report\nstatus: done\nsummary: x\nask: {}\n```"
+        self.behave(
+            plan={"report": ask.format("Which fields?")},
+            answer=[{"report": ask.format("Really which fields?")}, {"report": "Done.\n\nVERDICT: approve"}],
+            review={"report": ask.format("Fix one contract?") + "\n\nVERDICT: approve"},
+        )
+        code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        run = self.run_json()
+        self.assertEqual(run["status"], "done")
+        self.assertEqual(sorted(s["pr"] for s in run["slices"]), [13, 14])
+        self.assertTrue(all(s["reviews"] and s["reviews"][-1]["verdict"] == "approve" for s in run["slices"]))
+        self.assertTrue(run["grade"]["merged"])
+        self.assertEqual(run["questions"]["recommended"], 2)
+        self.assertGreaterEqual(run["questions"]["auto"], 1)
 
     def test_decision_none_is_ignored(self):
         self.behave(build={"report": "Built.\nDECISION: none. No owner decision is needed."})
@@ -1097,7 +1152,8 @@ class MatrixTest(RunnerCase):
         build = next(c for c in self.calls() if c["kind"] == "build")
         self.assertEqual(
             run["decisions"],
-            [{"call": build["n"], "role": "builder", "text": "Do member and bulk discounts stack?", "answered": None}],
+            [{"call": build["n"], "role": "builder", "text": "Do member and bulk discounts stack?", "answered": None,
+              "how": "stop"}],
         )
 
     def test_an_ask_header_is_answered_with_no_owner_answer_under_recommended(self):
@@ -1114,7 +1170,8 @@ class MatrixTest(RunnerCase):
         self.assertEqual(run["status"], "done")
         self.assertEqual(
             run["decisions"],
-            [{"call": build["n"], "role": "builder", "text": "Do member and bulk discounts stack?", "answered": NO_OWNER}],
+            [{"call": build["n"], "role": "builder", "text": "Do member and bulk discounts stack?", "answered": NO_OWNER,
+              "how": "recommended"}],
         )
 
     def test_an_ask_and_a_decision_in_one_report_share_one_answer_call(self):
@@ -1132,11 +1189,11 @@ class MatrixTest(RunnerCase):
         ask = "```report\nstatus: done\nsummary: Carry on.\nask: {}\n```"
         self.behave(build={"report": ask.format("First?")}, answer=[{"report": ask.format("Second?")}, {"report": ask.format("Third?")}])
         self.matrix()
-        self.assertEqual(self.kinds(), ["plan", "build", "answer", "answer"])
+        self.assertEqual(self.kinds(), ["plan", "build", "answer", "answer", "answer", "review"])
         run = self.run_json()
-        self.assertEqual(run["status"], "decision")
-        self.assertEqual([d["text"] for d in run["decisions"]], ["First?", "Second?", "Third?"])
-        self.assertEqual([d["answered"] for d in run["decisions"]], [NO_OWNER, NO_OWNER, None])
+        self.assertEqual(run["status"], "done")
+        self.assertEqual([d["text"] for d in run["decisions"]], ["First?", "Second?", "Third?", "Third?"])
+        self.assertEqual([d["how"] for d in run["decisions"]], ["recommended", "recommended", "auto", "unanswered"])
 
     def test_an_ask_of_none_n_a_or_nothing_is_no_question(self):
         for value in ("none", "N/A", ""):
@@ -1192,7 +1249,7 @@ class MatrixTest(RunnerCase):
         self.assertEqual(run["status"], "error")
         self.assertIn("boom: no repo", run["error"])
 
-    def test_the_grade_skips_when_two_slices_conflict(self):
+    def test_a_slice_that_conflicts_is_left_out_and_the_rest_is_graded(self):
         slices = [{"id": "S1", "brief": "the total"}, {"id": "S2", "brief": "the same total again"}]
         self.make_scenario(slices=slices)
         self.behave(by_dir={
@@ -1202,9 +1259,25 @@ class MatrixTest(RunnerCase):
         self.matrix()
         run = self.run_json()
         self.assertFalse(run["grade"]["merged"])
-        self.assertIn("issue-12-s", run["grade"]["merge_error"])
-        self.assertFalse(run["grade"]["ran"])
-        self.assertFalse(os.path.exists(os.path.join(self.run_dir(), "grade", "hidden.txt")))
+        self.assertRegex(run["grade"]["merge_error"], r"^issue-12-s\d: ")
+        self.assertTrue(run["grade"]["ran"])
+        self.assertTrue(os.path.exists(os.path.join(self.run_dir(), "grade", "hidden.txt")))
+
+    def test_two_slices_that_both_add_to_the_changelog_merge_as_a_union(self):
+        # contract/R and contract/B2 (20261026-172215): both slices added a CHANGELOG.md line, so the grade never ran.
+        slices = [{"id": "S1", "brief": "the server"}, {"id": "S2", "brief": "the client"}]
+        self.make_scenario(slices=slices)
+        self.behave(by_dir={
+            "wt-S1": {"build": {"commit": {"file": "CHANGELOG.md", "text": "# Changelog\n\n- The server quotes.\n"}}},
+            "wt-S2": {"build": {"commit": {"file": "CHANGELOG.md", "text": "# Changelog\n\n- The client quotes.\n"}}},
+        })
+        self.matrix()
+        run = self.run_json()
+        self.assertTrue(run["grade"]["merged"], run["grade"]["merge_error"])
+        self.assertTrue(run["grade"]["ran"])
+        changelog = read_text(os.path.join(self.run_dir(), "grade", "CHANGELOG.md"))
+        self.assertIn("- The server quotes.", changelog)
+        self.assertIn("- The client quotes.", changelog)
 
     def test_two_slices_build_in_parallel_with_one_pr_each(self):
         slices = [{"id": "S1", "brief": "the total"}, {"id": "S2", "brief": "the client"}]
@@ -1263,6 +1336,23 @@ class MatrixTest(RunnerCase):
         code, out, _ = self.matrix("--dry-run", "--max-cost", "0.1")
         self.assertEqual(code, 2)
         self.assertIn("REFUSED", out)
+
+
+class HiddenCleanupTest(RunnerCase):
+    def test_the_hidden_tests_leave_the_grade_folder_when_a_grade_raises(self):
+        real = HR.run_grade
+        seen = []
+
+        def boom(cmd, cwd, timeout_s, env):
+            if os.path.exists(os.path.join(cwd, "tests", "test_hidden.py")):
+                seen.append(True)
+                raise RuntimeError("boom")
+            return real(cmd, cwd, timeout_s, env)
+
+        with mock.patch.object(HR, "run_grade", boom):
+            self.matrix()
+        self.assertTrue(seen, "the grade never ran with the hidden tests")
+        self.assertFalse(os.path.exists(os.path.join(self.run_dir(), "grade", "tests", "test_hidden.py")))
 
 
 class OverlayTest(unittest.TestCase):
@@ -1344,7 +1434,7 @@ class CheckScenariosTest(RunnerCase):
         self.assertEqual(code, 0, out)
         self.assertIn("expected.json written", out)
         expected = read_json(os.path.join(self.scen, "replay-test", "expected.json"))
-        self.assertEqual(expected, {"tests": ["hidden test", "own test"], "discriminating": ["hidden test"]})
+        self.assertEqual(expected, {"tests": ["hidden test", "own test"], "discriminating": ["hidden test"], "flaky": []})
         code, out = self.check()
         self.assertEqual(code, 0, out)
         self.assertIn("expected.json matches", out)
@@ -1389,8 +1479,296 @@ class CheckScenariosTest(RunnerCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(
             read_json(os.path.join(folder, "expected.json")),
-            {"tests": ["hidden test", "own test"], "discriminating": ["hidden test"]},
+            {"tests": ["hidden test", "own test"], "discriminating": ["hidden test"], "flaky": []},
         )
+
+
+# A grader whose "flaky row" fails on every other run (a counter file named by FLAKE_COUNTER) and whose "broken row"
+# fails when BROKEN is set; the "hidden test" row is the discriminating one, as in STUB.
+FLAKY_STUB = """import os, sys
+sys.path.insert(0, os.getcwd())
+import shop
+path = os.environ["FLAKE_COUNTER"]
+n = int(open(path).read()) if os.path.exists(path) else 0
+open(path, "w").write(str(n + 1))
+rows = [("pass", "own test"), ("fail" if n % 2 else "pass", "flaky row"), ("fail" if os.environ.get("BROKEN") else "pass", "broken row")]
+if os.path.exists(os.path.join("tests", "test_hidden.py")):
+    rows.append(("pass" if shop.TOTAL == 5 else "fail", "hidden test"))
+for state, name in rows:
+    print(f"({state}) {name} [1.0ms]")
+sys.exit(1 if any(s == "fail" for s, _ in rows) else 0)
+"""
+
+
+class FlakeTest(RunnerCase):
+    def fixture(self, known=None):
+        folder = os.path.join(self.scen, "flake-test")
+        write(folder, "source/shop.py", "TOTAL = 0\n")
+        write(folder, "source/grade_stub.py", FLAKY_STUB)
+        write(folder, "hidden/test_hidden.py", HIDDEN_TEST)
+        write(folder, "solution.patch", "--- a/shop.py\n+++ b/shop.py\n@@ -1 +1 @@\n-TOTAL = 0\n+TOTAL = 5\n")
+        write_json(os.path.join(folder, "issue.json"), {"number": 12, "title": "t", "body": "b"})
+        sc = {
+            "title": "flaky fixture",
+            "kind": "fixture",
+            "issue": {"number": 12, "file": "issue.json"},
+            "source": {"dir": "source"},
+            "hidden": {"dir": "hidden", "to": "tests"},
+            "grade": {"cmd": ["python3", "grade_stub.py"], "parser": "plugin-test", "timeout": 60},
+        }
+        if known is not None:
+            sc["knownFlaky"] = known
+        write_json(os.path.join(folder, "scenario.json"), sc)
+        return folder
+
+    def check(self, *extra, env=None):
+        argv = ["--check-scenarios", "--scenarios-dir", self.scen, "--scenarios", "flake-test", "--source-repo", self.src]
+        out = io.StringIO()
+        patch = {"FLAKE_COUNTER": os.path.join(self.tmp, "counter"), **(env or {})}
+        with mock.patch.dict(os.environ, patch), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = HR.main(argv + list(extra))
+        return code, out.getvalue()
+
+    def test_a_test_that_fails_in_some_runs_only_is_recorded_flaky_and_is_no_problem(self):
+        folder = self.fixture(known=["own test"])
+        code, out = self.check("--update-expected", "--flake-runs", "3")
+        self.assertEqual(code, 0, out)
+        self.assertIn("3 run(s) each", out)
+        self.assertEqual(
+            read_json(os.path.join(folder, "expected.json")),
+            {"tests": ["broken row", "flaky row", "hidden test", "own test"], "discriminating": ["hidden test"],
+             "flaky": ["flaky row", "own test"]},  # seen failing in some runs, and the scenario's knownFlaky
+        )
+        code, out = self.check()  # one run: the flake does not show, which is a note, not drift
+        self.assertEqual(code, 0, out)
+        self.assertIn("note: flaky: these runs have ['own test']", out)
+
+    def test_a_test_that_fails_in_every_reference_run_is_a_problem(self):
+        self.fixture()
+        code, out = self.check("--update-expected", "--flake-runs", "2", env={"BROKEN": "1"})
+        self.assertEqual(code, 1)
+        self.assertIn("reference + overlay must pass", out)
+        self.assertIn("broken row", out)
+
+    def test_known_flaky_must_name_a_reference_test(self):
+        self.fixture(known=["no such test"])
+        code, out = self.check("--flake-runs", "2")
+        self.assertEqual(code, 1)
+        self.assertIn("knownFlaky names tests the reference does not have: ['no such test']", out)
+
+    def test_flake_runs_goes_with_check_scenarios(self):
+        code, _, err = self.matrix("--dry-run", "--flake-runs", "3")
+        self.assertEqual(code, 1)
+        self.assertIn("--flake-runs goes with --check-scenarios", err)
+
+
+class GradeRetryTest(RunnerCase):
+    def test_a_hidden_grade_that_fails_once_runs_again_and_the_better_try_is_kept(self):
+        # replay-13/R (20261026-172215) failed one timed test that took 5 s on a busy machine and passes alone.
+        stub = os.path.join(self.tmp, "once.py")
+        write(self.tmp, "once.py", (
+            "import os, sys\n"
+            "path = os.environ['FLAKE_COUNTER']\n"
+            "n = int(open(path).read()) if os.path.exists(path) else 0\n"
+            "open(path, 'w').write(str(n + 1))\n"
+            "hidden = os.path.exists(os.path.join('tests', 'test_hidden.py'))\n"
+            "bad = hidden and n == 1\n"  # run 0 is the own-tests run; the first hidden run (1) fails
+            "print('(fail) timed test' if bad else '(pass) timed test')\n"
+            "sys.exit(1 if bad else 0)\n"
+        ))
+        self.make_scenario(grade={"cmd": ["python3", stub], "parser": "plugin-test", "timeout": 60})
+        with mock.patch.dict(os.environ, {"FLAKE_COUNTER": os.path.join(self.tmp, "counter")}):
+            code, out, _ = self.matrix()
+        self.assertEqual(code, 0, out)
+        run = self.run_json()
+        self.assertEqual((run["grade"]["tries"], run["grade"]["exit"]), (2, 0))
+        self.assertIn("(pass) timed test", read_text(os.path.join(self.run_dir(), "grade", "hidden.txt")))
+        self.assertIn("(fail) timed test", read_text(os.path.join(self.run_dir(), "grade", "hidden-try1.txt")))
+
+
+class BestTryTest(unittest.TestCase):
+    @staticmethod
+    def parse(text):
+        return dict(line.split(":") for line in text.split() if ":" in line)
+
+    def test_a_try_with_no_rows_does_not_beat_a_try_with_one_real_failure(self):
+        timed_out = (124, "timed out after 60 s\n")
+        one_fail = (1, "a:pass b:fail")
+        self.assertIs(HR.best_try([timed_out, one_fail], self.parse, ["a", "b"]), one_fail)
+        self.assertIs(HR.best_try([one_fail, timed_out], self.parse, ["a", "b"]), one_fail)
+
+    def test_with_no_expected_tests_an_empty_try_has_no_failures(self):
+        timed_out = (124, "")
+        one_fail = (1, "a:fail")
+        self.assertIs(HR.best_try([timed_out, one_fail], self.parse, []), timed_out)
+
+    def test_the_first_try_wins_a_tie(self):
+        a, b = (1, "a:fail"), (1, "b:fail")
+        self.assertIs(HR.best_try([a, b], self.parse, []), a)
+
+
+class IsolationTest(RunnerCase):
+    def test_the_installed_mods_the_source_repo_its_worktree_folder_and_old_results_are_unreadable(self):
+        wt_parent = os.path.join(self.tmp, "source-wt")
+        git(self.src, "worktree", "add", "-q", "-b", "side", os.path.join(wt_parent, "side"))
+        old = os.path.join(self.tmp, "results-old")
+        write_json(os.path.join(old, "matrix.json"), {})
+        write(self.tmp, "not-results/x.txt", "x")  # a folder beside the results with no matrix.json stays readable
+        paths = HR.isolation_paths(self.src, os.path.join(self.tmp, "results-new"))
+        mods = os.path.join(os.path.realpath(self.cfgdir), "mods")
+        for want in (mods, self.src, wt_parent, old):
+            self.assertIn(want, paths)
+        plugins = os.path.join(os.path.realpath(self.cfgdir), "plugins")
+        for name in ("cache", "marketplaces", "store"):
+            self.assertIn(os.path.join(plugins, name), paths)
+        self.assertNotIn(plugins, paths)  # `claude plugin test` may need installed_plugins.json
+        repo = os.path.realpath(HR.REPO)  # this runner's repo: listed, or inside a listed folder
+        self.assertTrue(any(repo == p or repo.startswith(p + os.sep) for p in paths), paths)
+        self.assertNotIn(os.path.join(self.tmp, "not-results"), paths)
+        self.assertNotIn(os.path.join(wt_parent, "side"), paths)  # inside wt_parent, which is listed
+        home = os.path.realpath(os.path.expanduser("~"))
+        for p in paths:
+            self.assertFalse(home == p or home.startswith(p + os.sep), p)  # never home or a folder above it
+
+    def test_a_folder_that_holds_the_results_is_never_unreadable(self):
+        results = os.path.join(self.src, "..", "inside-source-wt", "results")
+        git(self.src, "worktree", "add", "-q", "-b", "side", os.path.join(self.tmp, "inside-source-wt", "side"))
+        paths = HR.isolation_paths(self.src, results)
+        self.assertNotIn(os.path.join(self.tmp, "inside-source-wt"), paths)
+
+    def test_every_call_runs_with_the_read_denials_and_the_bash_sandbox(self):
+        self.matrix()
+        run = self.run_json()
+        self.assertTrue(run["isolation"]["sandbox"])
+        mods = os.path.join(os.path.realpath(self.cfgdir), "mods")
+        self.assertIn(mods, run["isolation"]["deny_read"])
+        for call in self.calls():
+            arg = next(a for a in call["argv"] if a.startswith("--settings="))
+            settings = json.loads(arg[len("--settings="):])
+            self.assertEqual(settings["env"], {"CLAUDE_CODE_PLUGIN_DIRS": ""})
+            box = settings["sandbox"]
+            self.assertTrue(box["enabled"] and box["failIfUnavailable"] and box["autoAllowBashIfSandboxed"])
+            self.assertFalse(box["allowUnsandboxedCommands"])
+            self.assertEqual(box["filesystem"]["allowWrite"], [self.run_dir()])
+            for path in (mods, self.src):
+                self.assertIn(path, box["filesystem"]["denyRead"])
+                for tool in ("Read", "Edit"):
+                    self.assertIn(f"{tool}(/{path}/**)", settings["permissions"]["deny"])
+
+    def test_dry_run_prints_the_worker_settings_and_the_unreadable_folders(self):
+        code, out, _ = self.matrix("--dry-run")
+        self.assertEqual(code, 0, out)
+        self.assertIn('worker settings: {"env":{"CLAUDE_CODE_PLUGIN_DIRS":""}', out)
+        self.assertIn('"allowWrite":["<run folder>"]', out)
+        self.assertIn("unreadable for workers (Read/Edit deny rules and the Bash sandbox): ", out)
+
+
+class CheckIsolationTest(RunnerCase):
+    # Prompt paths in order: 0 ls mods, 1 cat mods, 2 ls other, 3 Read mods, 4 Grep mods, 5 cat through the link,
+    # 6 Read through the link.
+    REFUSED = [["Bash", "command", 0, "ls: PATH: Operation not permitted", True],
+               ["Bash", "command", 1, "cat: PATH: Operation not permitted", True],
+               ["Read", "file_path", 3, "Permission to read PATH has been denied.", True]]
+    LINK_REFUSED = [["Bash", "command", 5, "cat: PATH: Operation not permitted", True],
+                    ["Read", "file_path", 6, "Permission to read PATH has been denied.", True]]
+    GOOD = dict(write=True, shell=True)
+
+    def probe(self, **beh):
+        self.behave(probe=beh)
+        self.make_scenario(grade={"cmd": ["python3", "-c", "pass"], "parser": "unittest", "timeout": 60})
+        return self.matrix("--check-isolation")
+
+    def good(self, **more):
+        return self.probe(tools=self.REFUSED + self.LINK_REFUSED, **{**self.GOOD, **more})
+
+    def test_every_refused_read_and_a_working_write_pass(self):
+        code, out, _ = self.good()
+        self.assertEqual(code, 0, out)
+        self.assertIn("isolation holds", out)
+        self.assertIn(": refused", out)
+        self.assertIn("Bash through the symlink: refused", out)
+        self.assertIn("Read through the symlink: refused", out)
+        self.assertIn("git commit and push to the local remote: worked", out)
+        self.assertIn("the scenario's test command: passed", out)
+        probe = self.fake_calls()[0]
+        settings = json.loads(next(a for a in probe["argv"] if a.startswith("--settings="))[len("--settings="):])
+        self.assertTrue(settings["sandbox"]["enabled"])
+
+    def test_a_read_that_came_back_fails(self):
+        tools = self.REFUSED + self.LINK_REFUSED + [["Bash", "command", 0, "herdr-agents\nherdr-agents-view", False]]
+        code, out, _ = self.probe(tools=tools, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn(": READ", out)
+        self.assertIn("ISOLATION FAILED", out)
+
+    def test_no_try_or_no_write_fails(self):
+        self.assertEqual(self.probe(tools=[], **self.GOOD)[0], 1)
+        shutil.rmtree(self.results)
+        code, out, _ = self.good(write=False)
+        self.assertEqual(code, 1)
+        self.assertIn("Bash write into the run folder: FAILED", out)
+
+    def test_a_bash_cat_through_the_symlink_that_came_back_fails(self):
+        leak = [["Bash", "command", 5, '{"name": "herdr-agents"}', False], self.LINK_REFUSED[1]]
+        code, out, _ = self.probe(tools=self.REFUSED + leak, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn("Bash through the symlink: READ", out)
+        self.assertIn("Read through the symlink: refused", out)
+
+    def test_a_read_through_the_symlink_that_came_back_fails(self):
+        leak = [self.LINK_REFUSED[0], ["Read", "file_path", 6, '{"name": "herdr-agents"}', False]]
+        code, out, _ = self.probe(tools=self.REFUSED + leak, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn("Read through the symlink: READ", out)
+        self.assertIn("Bash through the symlink: refused", out)
+
+    def test_a_symlink_that_was_not_tried_fails(self):
+        code, out, _ = self.probe(tools=self.REFUSED, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn("Bash through the symlink: not tried", out)
+        self.assertIn("Read through the symlink: not tried", out)
+
+    def test_no_symlink_made_fails(self):
+        code, out, _ = self.good(shell=False)
+        self.assertEqual(code, 1)
+        self.assertIn("symlink to the mods folder: NOT MADE", out)
+        self.assertIn("git commit and push to the local remote: FAILED", out)
+
+    def test_a_failing_test_command_fails(self):
+        self.behave(probe=dict(tools=self.REFUSED + self.LINK_REFUSED, **self.GOOD))
+        self.make_scenario(grade={"cmd": ["python3", "-c", "raise SystemExit(3)"], "parser": "unittest", "timeout": 60})
+        code, out, _ = self.matrix("--check-isolation")
+        self.assertEqual(code, 1)
+        self.assertIn("the scenario's test command: FAILED (exit 3)", out)
+
+    def test_the_prompt_names_the_symlink_and_the_flow_steps(self):
+        text = HR.isolation_prompt(["/x/mods", "/y"], "/r", "python3 -m unittest")
+        for want in ("ln -s /x/mods /r/link-mods", "cat /r/link-mods/herdr-agents/package.json",
+                     "Read: /r/link-mods/herdr-agents/package.json", "git push -q origin probe-branch",
+                     "(python3 -m unittest) > /r/test-out.txt"):
+            self.assertIn(want, text)
+        self.assertNotIn("test-exit", HR.isolation_prompt(["/x/mods", "/y"], "/r"))
+
+
+@unittest.skipUnless(sys.platform == "darwin" and shutil.which("sandbox-exec"), "macOS seatbelt")
+class SeatbeltTest(unittest.TestCase):
+    """What Claude Code's sandbox does on macOS, with the same seatbelt and the folders isolation_paths() names: a
+    command cannot read the installed mods, while the grade a worker runs (writes only under the run folder and the
+    temp folders) still works. Claude Code's own sandbox is not run here: that needs a model call."""
+
+    def test_a_seatbelt_that_denies_the_mods_folder_stops_ls_cat_and_grep(self):
+        tmp = os.path.realpath(tempfile.mkdtemp(prefix="hrd-eval-seatbelt-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        mods = os.path.join(tmp, "mods")
+        write(mods, "herdr-agents/hooks/state.ts", "export const store = 1\n")
+        run = os.path.join(tmp, "run")
+        os.makedirs(run)
+        profile = f'(version 1)(allow default)(deny file-read* (subpath "{mods}"))'
+        script = f"ls {mods}/herdr-agents; cat {mods}/herdr-agents/hooks/state.ts; grep -rn store {mods}; echo ok > {run}/x"
+        p = subprocess.run(["sandbox-exec", "-p", profile, "sh", "-c", script], capture_output=True, text=True)
+        self.assertNotIn("export const store", p.stdout)
+        self.assertIn("Operation not permitted", p.stderr)
+        self.assertEqual(read_text(os.path.join(run, "x")), "ok\n")
 
 
 class ScoreTableTest(RunnerCase):

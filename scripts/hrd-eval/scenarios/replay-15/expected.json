@@ -22,5 +22,9 @@
     "workers on one issue share a row, and an answer stays in its slot until clear done",
     "workers show one per row, two per line, the one that needs the person first"
   ],
-  "discriminating": ["a session whose $.state lost its jobs gets them back from the store; a report written meanwhile is delivered once"]
+  "discriminating": ["a session whose $.state lost its jobs gets them back from the store; a report written meanwhile is delivered once"],
+  "flaky": [
+    "a pinned to-do shows at the top, and Done unpins it and tells the coordinator",
+    "a reviewer joins the row of the PR its builder linked, with the PR's checks"
+  ]
 }

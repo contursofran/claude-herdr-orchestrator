@@ -5,11 +5,14 @@ For each scenario and arm it plays the coordinator: a planner (unless the arm di
 its own worktree, a reviewer, and fix rounds until the review has no blockers. Every role is a `claude -p` call built
 from the arm's profile (herdr-agents.json format); each prompt carries the mod's report rule (hooks/workers.ts), and
 each job folder keeps the full rule in REPORTING.md. Results go to --results, outside this repo. Hidden tests are copied
-into the grade folder only after the last worker call has ended.
+into the grade folder only after the last worker call has ended. Workers cannot read the installed mods or the source
+repo: Read and Edit are denied there, and Bash runs in Claude Code's sandbox with those folders unreadable
+(isolation_paths, worker_settings).
 
   scripts/hrd-eval.py --dry-run [--scenarios a] [--arms A,C]   print the matrix and each role's command; calls nothing
-  scripts/hrd-eval.py --check-scenarios --scenarios replay-13 [--update-expected]
+  scripts/hrd-eval.py --check-scenarios --scenarios replay-13 [--update-expected] [--flake-runs 5]
                                                                grade the base and the reference; no model call
+  scripts/hrd-eval.py --check-isolation [--arms A]               one real call: the worker sandbox refuses each read (also through a symlink)
   scripts/hrd-eval.py [--arms A,C] [--repeats 3] [--parallel 1] [--max-cost 30] [--max-call-cost 5] [--call-timeout 20]
                       [--results DIR] [--config PATH] [--claude PATH] [--json]
 
@@ -57,7 +60,10 @@ FIX_FACTOR = 1.5
 MAX_ANSWERS = 2  # answer calls a run gets under onDecision "recommended"
 KILL_GRACE_S = 30  # after SIGINT, before SIGKILL
 MAX_FIX_ROUNDS = 2
-SETTINGS = json.dumps({"env": {"CLAUDE_CODE_PLUGIN_DIRS": ""}}, separators=(",", ":"))
+MAX_AUTO_ANSWERS = 1  # past MAX_ANSWERS, the answer calls one asking call gets with NO_OWNER_ANSWER (then it goes unanswered)
+GRADE_TRIES = 2  # a hidden grade that fails runs again once (a test past its time limit on a busy machine); the best is kept
+QUESTION_HOWS = ("recommended", "auto", "unanswered", "stop")  # run.json's questions: how each one was answered
+MERGE_UNION = ["CHANGELOG.md"]  # files two slices both add lines to: merged as a union in the grade, as a coordinator would
 DISALLOW = "WebFetch(domain:github.com)"
 ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "SSH_AUTH_SOCK")  # and every HERDR_* variable
 ARM_KEYS = ("profiles", "disable", "fixRound", "maxFixRounds", "note")
@@ -208,6 +214,42 @@ def apply_hidden(sc, source, grade_dir):
         target = os.path.join(grade_dir, h["to"])
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copytree(os.path.join(sc["dir"], h["dir"]), target, dirs_exist_ok=True)
+
+
+def expected_tests(sc):
+    try:
+        return scorer.load_expected(sc["dir"], sc)["tests"]
+    except ValueError:
+        return []
+
+
+def best_try(tries, parse, expected):
+    """The grade try with the fewest failing tests (the first on a tie). A test the try's rows lack counts as failing, so
+    a try that timed out with no rows never beats a try with one real failure."""
+
+    def failures(t):
+        rows = parse(t[1])
+        return sum(v == "fail" for v in rows.values()) + sum(n not in rows for n in expected)
+
+    return min(tries, key=failures)
+
+
+def remove_hidden(sc, grade_dir):
+    """Puts the grade checkout's overlaid paths back to the merged state, so no hidden test stays in the results
+    folder, where a later run's workers could read it."""
+    h = sc.get("hidden")
+    if not h:
+        return
+    paths = h["paths"] if "commit" in h else [h["to"]]
+    for p in paths:
+        git("checkout", "-q", "HEAD", "--", p, cwd=grade_dir, check=False)
+        git("clean", "-fdqx", "--", p, cwd=grade_dir, check=False)
+        if git("ls-tree", "HEAD", "--", p, cwd=grade_dir, check=False).stdout.strip() == "":
+            target = os.path.join(grade_dir, p)
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+            elif os.path.lexists(target):
+                os.remove(target)
 
 
 def owner_identity():
@@ -464,6 +506,9 @@ def load_scenario(folder):
     if sc["onDecision"] not in ("recommended", "stop"):
         raise bad('onDecision must be "recommended" or "stop"')
     sc.setdefault("estimateScale", 1)
+    for key in ("mergeUnion", "knownFlaky"):
+        if key in sc and not (isinstance(sc[key], list) and all(isinstance(x, str) for x in sc[key])):
+            raise bad(f"{key} must be a list of strings")
     return sc
 
 
@@ -485,7 +530,68 @@ def load_scenarios(folder, names=None):
 # Commands, prompts and reports
 
 
-def role_argv(profile, sid, resume, cap):
+def worktree_paths(repo):
+    """The repo's worktrees, the main one first ([] when it is not a git repo)."""
+    p = git("worktree", "list", "--porcelain", cwd=repo, check=False)
+    if p.returncode != 0:
+        return []
+    return [line[len("worktree ") :] for line in p.stdout.splitlines() if line.startswith("worktree ")]
+
+
+def isolation_paths(source, results):
+    """The folders a worker must not read: the plugin copies and the mod's state (~/.claude/plugins/cache, marketplaces
+    and store), the installed mods (the owner's ~/.claude/mods/herdr-agents is a newer copy
+    of the code under test, with its tests and harness; the repo's scripts/types.sh and the owner's global AGENTS.md
+    both name it), the source repo and this runner's repo with their worktrees (the hidden tests' commits, the eval
+    itself), the folders that hold linked worktrees (the plans kept beside them), and earlier results folders beside
+    this one (a folder with a matrix.json: their grade folders hold hidden tests). A folder that holds the results or
+    the home folder is never listed: a worker could not run in it."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
+    found = [source, REPO]
+    for base in dict.fromkeys([config, os.path.join(home, ".claude")]):
+        found.append(os.path.join(base, "mods"))
+        # Copies of the mod's code (cache, marketplaces) and its runtime state (store). Not ~/.claude/plugins as a
+        # whole: `claude plugin test` may need installed_plugins.json.
+        found += [os.path.join(base, "plugins", d) for d in ("cache", "marketplaces", "store")]
+    for repo in dict.fromkeys([source, REPO]):
+        trees = worktree_paths(repo)
+        found += trees
+        found += [os.path.dirname(t) for t in trees[1:]]  # linked worktrees only: the main one's parent is too wide
+    results = os.path.realpath(results)
+    parent = os.path.dirname(results)
+    if os.path.isdir(parent):  # earlier results folders: their grade folders hold the hidden tests
+        found += [os.path.join(parent, d) for d in sorted(os.listdir(parent)) if os.path.exists(os.path.join(parent, d, "matrix.json"))]
+    out = []
+    for path in found:
+        for p in dict.fromkeys([os.path.abspath(path), os.path.realpath(path)]):
+            if inside(results, p) or inside(home, p) or p in out:
+                continue
+            out.append(p)
+    return sorted(p for p in out if not any(q != p and inside(p, q) for q in out))  # a folder inside another is covered
+
+
+def worker_settings(deny_read, run):
+    """The --settings of every role call. The herdr-agents plugin is off. Read and Edit (and so Grep and Glob) are
+    denied in the isolation folders, and Bash runs in Claude Code's sandbox with the same folders unreadable: the
+    sandbox must start (failIfUnavailable), a command cannot leave it (allowUnsandboxedCommands false), it writes only
+    in its folder and the run folder, and it has no network beyond what the sandbox grants (none by default)."""
+    deny = [f"{tool}(/{p}/**)" for p in deny_read for tool in ("Read", "Edit")]
+    settings = {
+        "env": {"CLAUDE_CODE_PLUGIN_DIRS": ""},
+        "permissions": {"deny": deny},
+        "sandbox": {
+            "enabled": True,
+            "failIfUnavailable": True,
+            "autoAllowBashIfSandboxed": True,
+            "allowUnsandboxedCommands": False,
+            "filesystem": {"denyRead": list(deny_read), "allowWrite": [run]},
+        },
+    }
+    return json.dumps(settings, separators=(",", ":"))
+
+
+def role_argv(profile, sid, resume, cap, settings):
     """The claude command for one role call (the prompt goes on stdin). argv[0] is the claude name; run() swaps it."""
     argv = [
         "claude",
@@ -495,7 +601,7 @@ def role_argv(profile, sid, resume, cap):
         "json",
         "--permission-prompts",
         "none",
-        f"--settings={SETTINGS}",
+        f"--settings={settings}",
         f"--disallowedTools={DISALLOW}",
         "--max-budget-usd",
         f"{cap:g}",
@@ -504,11 +610,11 @@ def role_argv(profile, sid, resume, cap):
 
 
 def run_env(run, profile):
-    """The environment of one role call in run folder `run`: the profile's env, the shim first on PATH, the gh state,
-    and the run's git config (clean_env)."""
+    """The environment of one role call in run folder `run`: the profile's env, the run's copy of the shim first on
+    PATH (the sandbox cannot read this repo), the gh state, and the run's git config (clean_env)."""
     env = clean_env(run)
     env.update({str(k): str(v) for k, v in (profile.get("env") or {}).items()})
-    env["PATH"] = SHIM_BIN + os.pathsep + env.get("PATH", "")
+    env["PATH"] = os.path.join(run, "bin") + os.pathsep + env.get("PATH", "")
     env["CLAUDE_ENV_FILE"] = os.path.join(run, "env.sh")
     env["HRD_EVAL_GH_STATE"] = os.path.join(run, "gh")
     env["GH_CONFIG_DIR"] = os.path.join(run, "gh-config")
@@ -762,6 +868,8 @@ class Ctx:
     def __init__(self, results, claude, call_timeout_s, budget, source):
         self.results, self.claude, self.call_timeout_s = results, claude, call_timeout_s
         self.budget, self.source = budget, source
+        self.deny_read = isolation_paths(source, results)
+        self.grade_lock = threading.Lock()  # one grade at a time: timed tests fail on a busy machine
 
 
 def leak_patterns(sc, source):
@@ -803,7 +911,8 @@ class Run:
         self.ready = False
         self.halt_status = None
         self.halt_error = None
-        self.grade_rec = {"ran": False, "kind": None, "merged": False, "merge_error": None, "exit": None, "own_exit": None}
+        self.grade_rec = {"ran": False, "kind": None, "merged": False, "merge_error": None, "exit": None, "own_exit": None,
+                          "tries": 0}
         self.changed = []
         self.issue = read_json(os.path.join(sc["dir"], sc["issue"]["file"]))
         n = sc["issue"]["number"]
@@ -861,7 +970,10 @@ class Run:
         sc = self.sc
         os.makedirs(os.path.join(self.dir, "jobs"), exist_ok=True)
         os.makedirs(os.path.join(self.dir, "gh-config"), exist_ok=True)
-        write_text(os.path.join(self.dir, "env.sh"), f'export PATH={shlex.quote(SHIM_BIN)}:"$PATH"\n')
+        # The shim is copied into the run: the sandbox of a worker's commands cannot read this repo.
+        os.makedirs(os.path.join(self.dir, "bin"), exist_ok=True)
+        shutil.copy2(os.path.join(SHIM_BIN, "gh"), os.path.join(self.dir, "bin", "gh"))
+        write_text(os.path.join(self.dir, "env.sh"), f'export PATH={shlex.quote(os.path.join(self.dir, "bin"))}:"$PATH"\n')
         snap = os.path.join(self.dir, ".snap")
         scenario_snapshot(sc, self.ctx.source, snap)
         git("init", "-q", "-b", "main", cwd=snap)
@@ -875,7 +987,9 @@ class Run:
         gh = os.path.join(self.dir, "gh")
         os.makedirs(os.path.join(gh, "issues"), exist_ok=True)
         write_json(os.path.join(gh, "repo.json"), {"remote": self.remote, "name": sc["id"], "owner": "hrd-eval"})
-        write_json(os.path.join(gh, "issues", f"{sc['issue']['number']}.json"), self.issue)
+        # The issue as the shim serves it: open, at the eval's URL (a replay's issue.json may still name the real repo).
+        issue = {**self.issue, "state": "OPEN", "url": f"https://github.com/hrd-eval/{sc['id']}/issues/{sc['issue']['number']}"}
+        write_json(os.path.join(gh, "issues", f"{sc['issue']['number']}.json"), issue)
         env = clean_env(self.dir)
         run_setup(sc["setup"], self.work, env)
         for s in self.slices:
@@ -942,39 +1056,48 @@ class Run:
 
     def settle(self, c):
         """Answers what a call's report asks: the header's ask and the DECISION lines (see questions()). onDecision
-        "stop" ends the run with status decision; "recommended" resumes the asker with the answers, at most MAX_ANSWERS
-        times a run."""
+        "stop" ends the run with status decision. Under "recommended" the asker is resumed with the answers, up to
+        MAX_ANSWERS answer calls a run; past that, each asking call gets MAX_AUTO_ANSWERS more with NO_OWNER_ANSWER for
+        every question, and then its questions go unanswered and the run carries on with what it has. Every question
+        is recorded with how it was answered (recommended, auto, unanswered or stop)."""
+        auto = 0
         while True:
             asked = questions(c["report"])
             if not asked:
                 return c
             raw = [text for text, _, _ in asked]
             if self.sc["onDecision"] == "stop":
-                self.note(c, raw, [None] * len(raw))
+                self.note(c, raw, [None] * len(raw), "stop")
                 self.stop("decision", f"{c['role']} asked: {raw[0]}")
             with self.lock:
                 full = self.answers >= MAX_ANSWERS
                 if not full:
                     self.answers += 1
-            if full:
-                self.note(c, raw, [None] * len(raw))
-                self.stop("decision", f"{MAX_ANSWERS} answers given already; {c['role']} asked again: {raw[0]}")
-            self.note(c, raw, [rec for _, _, rec in asked])
-            text = "; ".join(f"{q} -> {rec}" for _, q, rec in asked)
+            if not full:
+                answers, how, tail = [rec for _, _, rec in asked], "recommended", ""
+            elif auto < MAX_AUTO_ANSWERS:
+                auto += 1
+                answers, how = [NO_OWNER_ANSWER] * len(asked), "auto"
+                tail = " No more answers will come in this run: finish the task with your own choices."
+            else:
+                self.note(c, raw, [None] * len(raw), "unanswered")
+                return c
+            self.note(c, raw, answers, how)
+            text = "; ".join(f"{q} -> {a}" for (_, q, _), a in zip(asked, answers))
             c = self.call(
                 c["role"],
                 "answer",
                 c["slice"],
                 c["cwd"],
-                lambda R, text=text: f"Answers to your DECISION questions: {text}. Carry on. {R}",
+                lambda R, text=text, tail=tail: f"Answers to your DECISION questions: {text}.{tail} Carry on. {R}",
                 sid=c["sid"],
                 resume=True,
             )
 
-    def note(self, c, asked, answered):
+    def note(self, c, asked, answered, how):
         with self.lock:
             for q, a in zip(asked, answered):
-                self.decisions.append({"call": c["n"], "role": c["role"], "text": q, "answered": a})
+                self.decisions.append({"call": c["n"], "role": c["role"], "text": q, "answered": a, "how": how})
 
     def call(self, role, kind, slice_id, cwd, text, sid=None, resume=False):
         """One role call: its job folder, prompt, claude run, cost, and its line in calls.jsonl."""
@@ -1001,7 +1124,7 @@ class Run:
         if not resume:
             sid = str(uuid.uuid4())
         env = run_env(self.dir, profile)
-        argv = role_argv(profile, sid, resume, cap)
+        argv = role_argv(profile, sid, resume, cap, worker_settings(self.ctx.deny_read, self.dir))
         argv[0] = self.ctx.claude
         started = time.time()
         try:
@@ -1187,38 +1310,58 @@ class Run:
     # Grade, record
 
     def grade(self):
-        """Merges each slice's branch into main in a clone of the remote, runs the grade command, then runs it again
-        with the hidden tests in place. A slice without a PR, or a merge that conflicts, skips the grade."""
+        """Grades what was built: merges each slice's branch into main in a clone of the remote (the scenario's
+        mergeUnion files, CHANGELOG.md by default, as a union, since two slices both add lines to them), runs the grade
+        command, then runs it again with the hidden tests in place. A slice with no branch, or whose merge conflicts,
+        is left out and the rest is still graded; merged says whether every slice went in. A hidden run that fails runs
+        once more (GRADE_TRIES), the better of the two kept: one grade at a time, as timed tests fail on a busy
+        machine."""
         sc, rec = self.sc, self.grade_rec
         for s in self.slices:
             s["rec"]["head"] = self.head(s["branch"])
         grade_dir = os.path.join(self.dir, "grade")
         env = clean_env(self.dir)
         git("clone", "-q", self.remote, grade_dir)
-        merged, error = True, None
+        union = sc.get("mergeUnion", MERGE_UNION)
+        if union:
+            os.makedirs(os.path.join(grade_dir, ".git", "info"), exist_ok=True)
+            write_text(os.path.join(grade_dir, ".git", "info", "attributes"), "".join(f"{g} merge=union\n" for g in union))
+        errors = []
         for s in self.slices:
             if s["rec"]["head"] is None:
-                merged, error = False, f"{s['branch']}: no branch on the remote (no PR)"
-                break
+                errors.append(f"{s['branch']}: no branch on the remote (no PR)")
+                continue
             p = git(*IDENT, "merge", "--no-edit", f"origin/{s['branch']}", cwd=grade_dir, check=False)
             if p.returncode != 0:
                 git("merge", "--abort", cwd=grade_dir, check=False)
-                merged, error = False, f"{s['branch']}: {(p.stdout + p.stderr).strip()[-200:]}"
-                break
-        rec["merged"], rec["merge_error"] = merged, error
+                errors.append(f"{s['branch']}: {(p.stdout + p.stderr).strip()[-200:]}")
+        rec["merged"], rec["merge_error"] = not errors, "; ".join(errors) or None
         grade = sc.get("grade")
-        if merged and grade:
+        if grade:
             cmd, timeout = grade["cmd"], grade["timeout"]
-            own_code, own_out = run_grade(cmd, grade_dir, timeout, env)
-            write_text(os.path.join(self.dir, "grade", "own.txt"), own_out)
-            write_text(os.path.join(self.dir, "grade", "own.exit"), str(own_code))
-            hid_code, hid_out = own_code, own_out
-            if sc.get("hidden"):
-                apply_hidden(sc, self.ctx.source, grade_dir)
-                hid_code, hid_out = run_grade(cmd, grade_dir, timeout, env)
-            write_text(os.path.join(self.dir, "grade", "hidden.txt"), hid_out)
-            write_text(os.path.join(self.dir, "grade", "hidden.exit"), str(hid_code))
-            rec.update(ran=True, kind=grade["parser"], exit=hid_code, own_exit=own_code)
+            parse = scorer.GRADE_PARSERS[grade["parser"]]
+            with self.ctx.grade_lock:
+                own_code, own_out = run_grade(cmd, grade_dir, timeout, env)
+                write_text(os.path.join(grade_dir, "own.txt"), own_out)
+                write_text(os.path.join(grade_dir, "own.exit"), str(own_code))
+                if sc.get("hidden"):
+                    apply_hidden(sc, self.ctx.source, grade_dir)
+                    try:
+                        tries = []
+                        for k in range(GRADE_TRIES):
+                            code, out = run_grade(cmd, grade_dir, timeout, env)
+                            tries.append((code, out))
+                            if code == 0:
+                                break
+                            write_text(os.path.join(grade_dir, f"hidden-try{k + 1}.txt"), out)
+                        hid_code, hid_out = best_try(tries, parse, expected_tests(sc))
+                    finally:
+                        remove_hidden(sc, grade_dir)
+                else:
+                    tries, (hid_code, hid_out) = [(own_code, own_out)], (own_code, own_out)
+            write_text(os.path.join(grade_dir, "hidden.txt"), hid_out)
+            write_text(os.path.join(grade_dir, "hidden.exit"), str(hid_code))
+            rec.update(ran=True, kind=grade["parser"], exit=hid_code, own_exit=own_code, tries=len(tries))
         self.changed = changed_files(grade_dir, self.base)
 
     def write_record(self, status, error):
@@ -1235,10 +1378,12 @@ class Run:
             "pr_opened": any(s["rec"]["pr"] is not None for s in self.slices),
             "slices": [s["rec"] for s in self.slices],
             "decisions": self.decisions,
+            "questions": {how: sum(d.get("how") == how for d in self.decisions) for how in QUESTION_HOWS},
             "plan_decisions": self.plan_decisions,
             "grade": self.grade_rec,
             "changed_files": self.changed,
             "leak_patterns": leak_patterns(self.sc, self.ctx.source),
+            "isolation": {"sandbox": True, "deny_read": self.ctx.deny_read},
         }
         write_json(os.path.join(self.dir, "run.json"), rec)
         return rec
@@ -1307,9 +1452,14 @@ def score_rows(results, rows, matrix):
 # --check-scenarios
 
 
-def overlay_and_grade(sc, source, folder, env):
-    apply_hidden(sc, source, folder)
-    return run_grade(sc["grade"]["cmd"], folder, sc["grade"]["timeout"], env)
+def grade_runs(sc, folder, env, runs):
+    """The grade command run `runs` times in a folder that has the hidden tests: [(exit, {name: state})]."""
+    parse = scorer.GRADE_PARSERS[sc["grade"]["parser"]]
+    out = []
+    for _ in range(runs):
+        code, text = run_grade(sc["grade"]["cmd"], folder, sc["grade"]["timeout"], env)
+        out.append((code, parse(text)))
+    return out
 
 
 def check_ungraded(sc, source):
@@ -1332,12 +1482,15 @@ def check_ungraded(sc, source):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {"scenario": sc["id"], "ungraded": True, "base": None, "reference": None, "problems": problems, "drift": [],
-            "written": False}
+            "notes": [], "written": False}
 
 
-def check_scenario(sc, source, update):
-    """Base + overlay must fail, reference + overlay must pass; expected.json holds the reference's tests and the
-    base's failing tests (written with update, otherwise compared). A scenario with no grade: check_ungraded()."""
+def check_scenario(sc, source, update, flake_runs=1):
+    """Base + overlay must fail, reference + overlay must pass, each graded flake_runs times. expected.json holds the
+    reference's tests, the discriminating tests (failing in every base run) and the flaky ones: tests that failed in
+    some runs and passed in others, at base or in the reference, plus the scenario's knownFlaky (flaky on record, such
+    as a test a later commit fixed). Written with update, otherwise compared; a flaky list that differs is a note, not
+    drift, since a flake may not show in a few runs. A scenario with no grade: check_ungraded()."""
     grade = sc.get("grade")
     if not grade:
         return check_ungraded(sc, source)
@@ -1355,22 +1508,42 @@ def check_scenario(sc, source, update):
         env = clean_env(tmp)
         for folder in (base, ref):
             run_setup(sc["setup"], folder, env)
-        base_code, base_out = overlay_and_grade(sc, source, base, env)
-        ref_code, ref_out = overlay_and_grade(sc, source, ref, env)
+            apply_hidden(sc, source, folder)
+        base_runs = grade_runs(sc, base, env, flake_runs)
+        ref_runs = grade_runs(sc, ref, env, flake_runs)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    parse = scorer.GRADE_PARSERS[grade["parser"]]
-    base_rows, ref_rows = parse(base_out), parse(ref_out)
-    discriminating = sorted(n for n, st in base_rows.items() if st == "fail")
-    failing_ref = sorted(n for n, st in ref_rows.items() if st == "fail")
-    want = {"tests": sorted(ref_rows), "discriminating": discriminating}
-    problems = []
-    if base_code == 0 or not discriminating:
-        problems.append("base + overlay must fail: it passed, or no test failed")
-    if ref_code != 0 or failing_ref:
-        problems.append(f"reference + overlay must pass: exit {ref_code}, failing {failing_ref}")
-    drift, written = [], False
+
+    def states(runs):
+        seen = {}
+        for _, rows in runs:
+            for name, st in rows.items():
+                seen.setdefault(name, set()).add(st)
+        return seen
+
+    base_seen, ref_seen = states(base_runs), states(ref_runs)
+    seen_flaky = {n for seen in (base_seen, ref_seen) for n, st in seen.items() if "fail" in st and len(st) > 1}
+    flaky = sorted(seen_flaky | set(sc.get("knownFlaky") or []))
     path = os.path.join(sc["dir"], "expected.json")
+    # Flaky on record too (expected.json): with few runs a flaky test can fail in all of them.
+    known = set(flaky) | set((read_json(path).get("flaky") or []) if os.path.exists(path) else [])
+    discriminating = sorted(n for n, st in base_seen.items() if st == {"fail"} and n not in known)
+    failing_ref = sorted(n for n, st in ref_seen.items() if st == {"fail"} and n not in known)
+    want = {"tests": sorted(ref_seen), "discriminating": discriminating, "flaky": flaky}
+    problems = []
+    if all(code == 0 for code, _ in base_runs) or not discriminating:
+        problems.append("base + overlay must fail: it passed, or no test failed in every run")
+    ref_bad = []
+    for code, rows in ref_runs:
+        failed = [n for n, st in rows.items() if st == "fail"]
+        if code != 0 and (not failed or not all(n in known for n in failed)):
+            ref_bad.append(code)
+    if failing_ref or ref_bad:
+        problems.append(f"reference + overlay must pass: exits {[c for c, _ in ref_runs]}, failing in every run {failing_ref}")
+    unknown = sorted(set(sc.get("knownFlaky") or []) - set(ref_seen))
+    if unknown:
+        problems.append(f"knownFlaky names tests the reference does not have: {unknown}")
+    drift, notes, written = [], [], False
     if not problems:
         if update:
             write_json(path, want)
@@ -1382,12 +1555,18 @@ def check_scenario(sc, source, update):
             for key in ("tests", "discriminating"):
                 if sorted(have.get(key) or []) != want[key]:
                     drift.append(f"{key}: the run has {want[key]}, expected.json has {sorted(have.get(key) or [])}")
+            if sorted(have.get("flaky") or []) != flaky:
+                notes.append(f"flaky: these runs have {flaky}, expected.json has {sorted(have.get('flaky') or [])}")
     return {
         "scenario": sc["id"],
-        "base": {"exit": base_code, "failing": discriminating, "tests": len(base_rows)},
-        "reference": {"exit": ref_code, "tests": want["tests"], "failing": failing_ref},
+        "runs": flake_runs,
+        "base": {"exits": [c for c, _ in base_runs], "failing": discriminating, "tests": len(base_seen)},
+        "reference": {"exits": [c for c, _ in ref_runs], "tests": want["tests"], "failing": failing_ref},
+        "flaky": flaky,
+        "flaky_seen": sorted(seen_flaky),
         "problems": problems,
         "drift": drift,
+        "notes": notes,
         "written": written,
     }
 
@@ -1397,13 +1576,16 @@ def print_check(r):
         print(f"{r['scenario']}: no grade command, so nothing is graded: the snapshot, setup and decision regex are checked")
     else:
         print(
-            f"{r['scenario']}: base + overlay exit {r['base']['exit']}, failing {r['base']['failing']}; "
-            f"reference + overlay exit {r['reference']['exit']}, {len(r['reference']['tests'])} tests"
+            f"{r['scenario']}: {r['runs']} run(s) each; base + overlay exits {r['base']['exits']}, failing in every run "
+            f"{r['base']['failing']}; reference + overlay exits {r['reference']['exits']}, {len(r['reference']['tests'])} tests"
         )
+        print(f"  flaky: {r['flaky']} (seen failing in some runs only: {r['flaky_seen']})")
     for p in r["problems"]:
         print(f"  problem: {p}")
     for d in r["drift"]:
         print(f"  drift: {d}")
+    for n in r["notes"]:
+        print(f"  note: {n}")
     if r["written"]:
         print("  expected.json written")
     elif not r["problems"] and not r["drift"] and not r.get("ungraded"):
@@ -1418,8 +1600,13 @@ def dry_run_data(args, source, scenarios, arms, results):
     data = {"results": results, "repo": source, "max_cost": args.max_cost, "max_call_cost": args.max_call_cost,
             "repeats": args.repeats, "parallel": args.parallel, "call_timeout_min": args.call_timeout,
             "arms": {}, "scenarios": {}, "estimate": 0.0, "runs": 0}
+    deny_read = isolation_paths(source, results)
+    data["isolation"] = {"deny_read": deny_read, "settings": worker_settings(deny_read, "<run folder>")}
     for arm in arms.values():
-        commands = {role: shlex.join(role_argv(prof, "<session-id>", False, max_call)) for role, prof in arm["profiles"].items()}
+        commands = {
+            role: shlex.join(role_argv(prof, "<session-id>", False, max_call, "<worker settings>"))
+            for role, prof in arm["profiles"].items()
+        }
         data["arms"][arm["id"]] = {"note": arm["note"], "fixRound": arm["fixRound"], "maxFixRounds": arm["maxFixRounds"],
                                    "disable": arm["disable"], "commands": commands, "warnings": arm["warnings"]}
     for sc in scenarios:
@@ -1444,6 +1631,8 @@ def print_dry(data, args):
         f"results: {data['results']} (not created)",
         f"repeats {args.repeats}, parallel {args.parallel}, max cost ${args.max_cost:g} "
         f"(per call ${args.max_call_cost:g}), call timeout {args.call_timeout:g} min",
+        f"worker settings: {data['isolation']['settings']}",
+        "unreadable for workers (Read/Edit deny rules and the Bash sandbox): " + ", ".join(data["isolation"]["deny_read"]),
         "",
     ]
     for arm_id, arm in data["arms"].items():
@@ -1469,6 +1658,129 @@ def print_dry(data, args):
     return "\n".join(lines)
 
 
+# --check-isolation
+
+
+LINK = "link-mods"  # the symlink the probe's worker makes in the run folder, pointing at the mods folder
+PROBE_BRANCH = "probe-branch"
+
+
+def isolation_prompt(deny_read, run, test_cmd=None):
+    mods = next((p for p in deny_read if p.endswith(os.sep + "mods")), deny_read[0])
+    other = next((p for p in deny_read if p != mods), mods)
+    link = os.path.join(run, LINK)
+    work = os.path.join(run, "work")
+    lines = [
+        f"1. Bash: ls {mods}",
+        f"2. Bash: cat {mods}/herdr-agents/package.json",
+        f"3. Bash: ls {other}",
+        f"4. Read: {mods}/herdr-agents/package.json",
+        f"5. Grep: the word export in {mods}",
+        f"6. Bash: echo ok > {run}/written.txt",
+        f"7. Bash: ln -s {mods} {link}",
+        f"8. Bash: cat {link}/herdr-agents/package.json",
+        f"9. Read: {link}/herdr-agents/package.json",
+        f"10. Bash: cd {work} && git checkout -q -b {PROBE_BRANCH} && echo probe > probe.txt && git add probe.txt"
+        f" && git commit -q -m probe && git push -q origin {PROBE_BRANCH}",
+    ]
+    if test_cmd:
+        lines.append(f"11. Bash: cd {work} && ({test_cmd}) > {run}/test-out.txt 2>&1; echo $? > {run}/test-exit.txt")
+    return (
+        "Sandbox check for an eval runner; nothing to build. Make each of these tool calls, one call each, in this "
+        "order, and do not work around a failure:\n" + "\n".join(lines) + "\n"
+        "Then reply with one line per call: its number and what came back."
+    )
+
+
+def isolation_verdict(transcript, deny_read, run, test_cmd=None):
+    """(ok, lines) for a --check-isolation call: every tool call that named an unreadable folder was refused, at least
+    one such call was made, the Bash write into the run folder worked, the reads through the symlink to the mods
+    folder (Read and Bash cat) were both made and refused, and the builder flow worked (the push reached the bare
+    remote and, with a test command, the tests passed)."""
+    hits = 0
+    lines, ok = [], True
+    path = os.path.join(run, "jobs", "probe")
+    os.makedirs(path, exist_ok=True)
+    if transcript:
+        shutil.copyfile(transcript, os.path.join(path, "transcript.jsonl"))
+    link = os.path.join(run, LINK)
+    found, _ = scorer.scan_transcripts(run, deny_read, isolated=True)
+    for h in found:
+        hits += 1
+        state = "refused" if h["blocked"] else "READ"
+        ok = ok and h["blocked"]
+        lines.append(f"  {h['tool']} {h['pattern']}: {state}")
+    if not hits:
+        ok = False
+        lines.append("  no tool call named an unreadable folder: the check proves nothing")
+    wrote = os.path.exists(os.path.join(run, "written.txt"))
+    ok = ok and wrote
+    lines.append(f"  Bash write into the run folder: {'worked' if wrote else 'FAILED'}")
+    # Reads through the symlink: the pattern is the link followed by a slash, so the `ln -s` call does not count.
+    if not os.path.islink(link):
+        ok = False
+        lines.append("  symlink to the mods folder: NOT MADE")
+    through, _ = scorer.scan_transcripts(run, [link + os.sep], isolated=True)
+    for tool in ("Bash", "Read"):
+        mine = [h for h in through if h["tool"] == tool]
+        state = "not tried" if not mine else ("refused" if all(h["blocked"] for h in mine) else "READ")
+        ok = ok and state == "refused"
+        lines.append(f"  {tool} through the symlink: {state}")
+    remote = os.path.join(run, "remote.git")
+    pushed = git("rev-parse", "--verify", "-q", f"refs/heads/{PROBE_BRANCH}", cwd=remote, check=False).returncode == 0
+    ok = ok and pushed
+    lines.append(f"  git commit and push to the local remote: {'worked' if pushed else 'FAILED'}")
+    if test_cmd:
+        exit_file = os.path.join(run, "test-exit.txt")
+        code = read_text(exit_file).strip() if os.path.exists(exit_file) else None
+        ok = ok and code == "0"
+        lines.append(f"  the scenario's test command: {'passed' if code == '0' else 'FAILED (exit ' + str(code) + ')'}")
+    return ok, lines
+
+
+def probe_repo(sc, source, run, env):
+    """The probe's builder checkout: the scenario's source as a clone of a bare remote, both inside the run folder."""
+    snap = os.path.join(run, ".snap")
+    scenario_snapshot(sc, source, snap)
+    git("init", "-q", "-b", "main", cwd=snap)
+    git("add", "-A", cwd=snap)
+    git(*IDENT, "commit", "-q", "-m", "Base", cwd=snap)
+    remote = os.path.join(run, "remote.git")
+    git("init", "-q", "--bare", "-b", "main", remote)
+    git("push", "-q", remote, "HEAD:refs/heads/main", cwd=snap)
+    shutil.rmtree(snap)
+    work = os.path.join(run, "work")
+    git("clone", "-q", remote, work)
+    run_setup(sc["setup"], work, env)
+
+
+def check_isolation(args, source, arms, results, sc):
+    """One real call (the first arm's builder profile, capped at --max-call-cost) that tries to read each kind of
+    unreadable folder, also through a symlink it makes, then checks in its transcript that every try was refused. It
+    also does a builder's work (commit, push to a local remote, the scenario's tests) to show the sandbox allows it."""
+    arm = next(iter(arms.values()))
+    profile = arm["profiles"]["builder"]
+    run = os.path.join(results, "isolation")
+    os.makedirs(run)
+    deny_read = isolation_paths(source, results)
+    sid = str(uuid.uuid4())
+    env = run_env(run, profile)
+    os.makedirs(os.path.join(run, "bin"), exist_ok=True)
+    shutil.copy2(os.path.join(SHIM_BIN, "gh"), os.path.join(run, "bin", "gh"))
+    probe_repo(sc, source, run, env)
+    test_cmd = shlex.join(sc["grade"]["cmd"]) if sc.get("grade") else None
+    argv = role_argv(profile, sid, False, min(args.max_call_cost, 1.0), worker_settings(deny_read, run))
+    argv[0] = args.claude
+    code, out, err, _ = run_claude(argv, isolation_prompt(deny_read, run, test_cmd), run, env, args.call_timeout * 60)
+    write_text(os.path.join(run, "out.json"), out.decode("utf-8", "replace"))
+    write_text(os.path.join(run, "stderr.txt"), err.decode("utf-8", "replace"))
+    ok, lines = isolation_verdict(find_transcript(sid, env), deny_read, run, test_cmd)
+    print(f"hrd-eval --check-isolation: arm {arm['id']} builder, exit {code}, folder {run}")
+    print("\n".join(lines))
+    print("isolation holds" if ok else "ISOLATION FAILED")
+    return 0 if ok else 1
+
+
 # Command line
 
 
@@ -1481,6 +1793,11 @@ def parse_args(argv):
     p.add_argument("--dry-run", action="store_true", help="print the matrix and each role's command; call nothing")
     p.add_argument("--check-scenarios", action="store_true", help="grade base and reference; no model call")
     p.add_argument("--update-expected", action="store_true", help="with --check-scenarios: write expected.json")
+    p.add_argument("--check-isolation", action="store_true",
+                   help="one real call (about $0.10) that tries to read the unreadable folders; checks each was refused")
+    p.add_argument("--flake-runs", type=int, default=1,
+                   help="with --check-scenarios: grade base and reference this many times each; tests that fail in some "
+                        "runs only are recorded as flaky (try 5)")
     p.add_argument("--max-cost", type=float, default=30.0, help="dollars for the whole matrix")
     p.add_argument("--max-call-cost", type=float, default=5.0, help="dollars for one call")
     p.add_argument("--call-timeout", type=float, default=20.0, help="minutes per call")
@@ -1498,13 +1815,15 @@ def cli(args):
     source = os.path.realpath(args.source_repo)
     if args.update_expected and not args.check_scenarios:
         raise RunnerError("--update-expected goes with --check-scenarios")
-    if args.repeats < 1 or args.parallel < 1:
-        raise RunnerError("--repeats and --parallel must be at least 1")
+    if args.repeats < 1 or args.parallel < 1 or args.flake_runs < 1:
+        raise RunnerError("--repeats, --parallel and --flake-runs must be at least 1")
+    if args.flake_runs > 1 and not args.check_scenarios:
+        raise RunnerError("--flake-runs goes with --check-scenarios")
     if args.max_cost <= 0 or args.max_call_cost <= 0 or args.call_timeout <= 0:
         raise RunnerError("--max-cost, --max-call-cost and --call-timeout must be above 0")
     scenarios = load_scenarios(args.scenarios_dir, split_names(args.scenarios))
     if args.check_scenarios:
-        results = [check_scenario(sc, source, args.update_expected) for sc in scenarios]
+        results = [check_scenario(sc, source, args.update_expected, args.flake_runs) for sc in scenarios]
         if args.json:
             print(json.dumps(results, indent=2))
         else:
@@ -1515,6 +1834,10 @@ def cli(args):
     if inside(results, source):
         raise RunnerError(f"--results {results} is inside the repo {source}; pick a folder outside it")
     arms = load_arms(args.arms_dir, split_names(args.arms), args.config or default_config())
+    if args.check_isolation:
+        if os.path.exists(results):
+            raise RunnerError(f"{results} already exists; pick another --results folder")
+        return check_isolation(args, source, arms, results, scenarios[0])
     if args.dry_run:
         data = dry_run_data(args, source, scenarios, arms, results)
         if args.json:

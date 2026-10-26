@@ -51,5 +51,9 @@
     "spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env",
     "the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute",
     "the file ran to its end"
+  ],
+  "flaky": [
+    "a pinned to-do shows at the top, and Done unpins it and tells the coordinator",
+    "a reviewer joins the row of the PR its builder linked, with the PR's checks"
   ]
 }

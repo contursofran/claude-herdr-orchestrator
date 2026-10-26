@@ -2,12 +2,12 @@
   "number": 12,
   "title": "A \"DECISION: none\" line in a report is pinned as an owner question",
   "body": "A worker's RESULT.md had the line `DECISION: none. No owner decision is needed for this PR.` The mod pinned it for the owner as D3 and pinged the owner.\n\n- Expected: a DECISION line that says \"none\" (or has no question and no options) is not pinned.\n- Actual: it was pinned as an owner question. The coordinator had to unpin it with `decided`.\n- Workaround: briefs now say \"no DECISION line at all\".\n\nFix: skip DECISION lines whose text starts with \"none\" (case-insensitive), or require the `question | option | option` form before a line is pinned.",
-  "state": "CLOSED",
+  "state": "OPEN",
   "labels": [],
   "comments": [],
-  "url": "https://github.com/contursofran/claude-herdr-orchestrator/issues/12",
+  "url": "https://github.com/hrd-eval/replay-13/issues/12",
   "author": {
-    "login": "contursofran"
+    "login": "owner"
   },
   "createdAt": "2026-10-23T21:30:52Z"
 }
