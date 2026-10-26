@@ -19,3 +19,20 @@ test('a configured commandPrefix names the commands', async ($, on) => {
   await start($, on, { commandPrefix: 'crew-' })
   expect((await command($, 'crew-decisions')).text).toBe('Nothing waiting for you.')
 })
+
+test('learning notes are off by default', async ($, on) => {
+  const { clock } = await start($, on)
+  expect((await command($, 'hrd-notes')).text).toMatch(/Learning notes are off/)
+  await clock.advance(3000)
+})
+
+test('with learningNotes on, /hrd-notes asks for stubs in the vault folder and never the explanation', async ($, on) => {
+  const { submitted, clock } = await start($, on, { learningNotes: { enabled: true, vault: '/vault', folder: 'Concepts' } })
+  expect((await command($, 'hrd-notes')).text).toBe('Leaving learning notes in /vault/Concepts.')
+  await clock.advance(10000)
+  const rules = submitted.at(-1) ?? ''
+  expect(rules).toMatch(/in \/vault\/Concepts/)
+  expect(rules).toMatch(/## My explanation` with nothing under it/)
+  expect(rules).toMatch(/Never write the explanation/)
+  expect(rules).toMatch(/Never change, reword or fill in anything else in an existing note/)
+})

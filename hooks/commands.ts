@@ -5,6 +5,8 @@ import { openQuestions, pinnedItems } from './owner'
 import { cmd, session } from './session'
 import { closeSettings, openSettings, settingsOpen } from './settings'
 import { toggleSide } from './side'
+import { notesFolder, notesInstructions } from './notes'
+import { post } from './outbox'
 import { jobs } from './state'
 import { pruneMerged } from './worktrees'
 
@@ -33,6 +35,10 @@ export async function registerCommands($: EngineInterface) {
     argumentHint: '<goal, e.g. the issues labelled ready>',
   })
   await $.command.register({
+    name: `${prefix}notes`,
+    description: 'Leave learning notes for the concepts this session worked with (needs learningNotes in the settings).',
+  })
+  await $.command.register({
     name: `${prefix}wrap-up`,
     description: `Start no new herdr workers; the running ones finish. ${cmd('wrap-up')} off ends it.`,
     argumentHint: '[off]',
@@ -52,6 +58,8 @@ export async function runCommand($: EngineInterface, command: string, args: stri
       return { text: await toggleWrapUp($, !/^(off|resume)$/i.test(args.trim())) }
     case 'side':
       return { text: await toggleSide($) }
+    case 'notes':
+      return writeNotes($)
     case 'prune':
       return prune($)
     case 'update':
@@ -73,6 +81,15 @@ export async function runCommand($: EngineInterface, command: string, args: stri
     default:
       return undefined
   }
+}
+
+// The notes prompt goes through the outbox: a command cannot submit a prompt while it runs.
+async function writeNotes($: EngineInterface) {
+  const folder = await notesFolder($)
+  if (!folder)
+    return { text: 'Learning notes are off. Set `learningNotes` in herdr-agents.json: {"enabled": true, "vault": "~/path/to/vault"}.' }
+  await post($, `<herdr-context>${notesInstructions(folder)}</herdr-context>`)
+  return { text: `Leaving learning notes in ${folder}.` }
 }
 
 async function prune($: EngineInterface) {
@@ -157,6 +174,7 @@ async function help($: EngineInterface) {
         [cmd('decisions'), 'the questions and to-dos waiting for you'],
         [cmd('workers'), "this session's workers"],
         [cmd('prune'), 'remove worktrees whose PR is merged'],
+        [cmd('notes'), 'learning notes for the concepts this session worked with (learningNotes setting)'],
         [cmd('update'), 'pull the clone this mod was installed from, and install it again'],
         [cmd('config'), 'change these settings, in the panel above the prompt'],
         [`${cmd('help')}, ${cmd('h')}`, 'this guide'],
@@ -179,7 +197,7 @@ async function help($: EngineInterface) {
       'Settings',
       `  ${await userConfigPath($)}, with ${session.cwd}/.claude/herdr-agents.json over it`,
       `  target ${await target($)} workers · state file ${statePath} · compact past ${limit} tokens · prefix ${session.prefix}${c.wrapUp === true ? ' · wrapUp on everywhere' : ''}`,
-      `  ${cmd('config')} changes them. Keys: target, resetAt, statePath, trustRoots, commandPrefix, profiles, disable, smallTasks, playbook, pruneMinutes, closeIdleMinutes, repos, wrapUp. See the README.`,
+      `  ${cmd('config')} changes them. Keys: target, resetAt, statePath, trustRoots, commandPrefix, profiles, disable, smallTasks, playbook, pruneMinutes, closeIdleMinutes, repos, wrapUp, learningNotes. See the README.`,
     ].join('\n'),
   }
 }
