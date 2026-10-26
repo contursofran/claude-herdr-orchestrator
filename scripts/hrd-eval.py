@@ -12,7 +12,7 @@ repo: Read and Edit are denied there, and Bash runs in Claude Code's sandbox wit
   scripts/hrd-eval.py --dry-run [--scenarios a] [--arms A,C]   print the matrix and each role's command; calls nothing
   scripts/hrd-eval.py --check-scenarios --scenarios replay-13 [--update-expected] [--flake-runs 5]
                                                                grade the base and the reference; no model call
-  scripts/hrd-eval.py --check-isolation [--arms A]               one real call: the worker sandbox refuses each read
+  scripts/hrd-eval.py --check-isolation [--arms A]               one real call: the worker sandbox refuses each read (also through a symlink)
   scripts/hrd-eval.py [--arms A,C] [--repeats 3] [--parallel 1] [--max-cost 30] [--max-call-cost 5] [--call-timeout 20]
                       [--results DIR] [--config PATH] [--claude PATH] [--json]
 
@@ -214,6 +214,24 @@ def apply_hidden(sc, source, grade_dir):
         target = os.path.join(grade_dir, h["to"])
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copytree(os.path.join(sc["dir"], h["dir"]), target, dirs_exist_ok=True)
+
+
+def expected_tests(sc):
+    try:
+        return scorer.load_expected(sc["dir"], sc)["tests"]
+    except ValueError:
+        return []
+
+
+def best_try(tries, parse, expected):
+    """The grade try with the fewest failing tests (the first on a tie). A test the try's rows lack counts as failing, so
+    a try that timed out with no rows never beats a try with one real failure."""
+
+    def failures(t):
+        rows = parse(t[1])
+        return sum(v == "fail" for v in rows.values()) + sum(n not in rows for n in expected)
+
+    return min(tries, key=failures)
 
 
 def remove_hidden(sc, grade_dir):
@@ -521,7 +539,8 @@ def worktree_paths(repo):
 
 
 def isolation_paths(source, results):
-    """The folders a worker must not read: the installed mods (the owner's ~/.claude/mods/herdr-agents is a newer copy
+    """The folders a worker must not read: the plugin copies and the mod's state (~/.claude/plugins/cache, marketplaces
+    and store), the installed mods (the owner's ~/.claude/mods/herdr-agents is a newer copy
     of the code under test, with its tests and harness; the repo's scripts/types.sh and the owner's global AGENTS.md
     both name it), the source repo and this runner's repo with their worktrees (the hidden tests' commits, the eval
     itself), the folders that hold linked worktrees (the plans kept beside them), and earlier results folders beside
@@ -529,7 +548,12 @@ def isolation_paths(source, results):
     the home folder is never listed: a worker could not run in it."""
     home = os.path.realpath(os.path.expanduser("~"))
     config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".claude")
-    found = [os.path.join(config, "mods"), os.path.join(home, ".claude", "mods"), source, REPO]
+    found = [source, REPO]
+    for base in dict.fromkeys([config, os.path.join(home, ".claude")]):
+        found.append(os.path.join(base, "mods"))
+        # Copies of the mod's code (cache, marketplaces) and its runtime state (store). Not ~/.claude/plugins as a
+        # whole: `claude plugin test` may need installed_plugins.json.
+        found += [os.path.join(base, "plugins", d) for d in ("cache", "marketplaces", "store")]
     for repo in dict.fromkeys([source, REPO]):
         trees = worktree_paths(repo)
         found += trees
@@ -1322,16 +1346,17 @@ class Run:
                 write_text(os.path.join(grade_dir, "own.exit"), str(own_code))
                 if sc.get("hidden"):
                     apply_hidden(sc, self.ctx.source, grade_dir)
-                    tries = []
-                    for k in range(GRADE_TRIES):
-                        code, out = run_grade(cmd, grade_dir, timeout, env)
-                        tries.append((code, out))
-                        if code == 0:
-                            break
-                        write_text(os.path.join(grade_dir, f"hidden-try{k + 1}.txt"), out)
-                    # The try with the fewest failing rows (the first on a tie).
-                    hid_code, hid_out = min(tries, key=lambda t: sum(v == "fail" for v in parse(t[1]).values()))
-                    remove_hidden(sc, grade_dir)
+                    try:
+                        tries = []
+                        for k in range(GRADE_TRIES):
+                            code, out = run_grade(cmd, grade_dir, timeout, env)
+                            tries.append((code, out))
+                            if code == 0:
+                                break
+                            write_text(os.path.join(grade_dir, f"hidden-try{k + 1}.txt"), out)
+                        hid_code, hid_out = best_try(tries, parse, expected_tests(sc))
+                    finally:
+                        remove_hidden(sc, grade_dir)
                 else:
                     tries, (hid_code, hid_out) = [(own_code, own_out)], (own_code, own_out)
             write_text(os.path.join(grade_dir, "hidden.txt"), hid_out)
@@ -1636,31 +1661,49 @@ def print_dry(data, args):
 # --check-isolation
 
 
-def isolation_prompt(deny_read, run):
+LINK = "link-mods"  # the symlink the probe's worker makes in the run folder, pointing at the mods folder
+PROBE_BRANCH = "probe-branch"
+
+
+def isolation_prompt(deny_read, run, test_cmd=None):
     mods = next((p for p in deny_read if p.endswith(os.sep + "mods")), deny_read[0])
     other = next((p for p in deny_read if p != mods), mods)
+    link = os.path.join(run, LINK)
+    work = os.path.join(run, "work")
+    lines = [
+        f"1. Bash: ls {mods}",
+        f"2. Bash: cat {mods}/herdr-agents/package.json",
+        f"3. Bash: ls {other}",
+        f"4. Read: {mods}/herdr-agents/package.json",
+        f"5. Grep: the word export in {mods}",
+        f"6. Bash: echo ok > {run}/written.txt",
+        f"7. Bash: ln -s {mods} {link}",
+        f"8. Bash: cat {link}/herdr-agents/package.json",
+        f"9. Read: {link}/herdr-agents/package.json",
+        f"10. Bash: cd {work} && git checkout -q -b {PROBE_BRANCH} && echo probe > probe.txt && git add probe.txt"
+        f" && git commit -q -m probe && git push -q origin {PROBE_BRANCH}",
+    ]
+    if test_cmd:
+        lines.append(f"11. Bash: cd {work} && ({test_cmd}) > {run}/test-out.txt 2>&1; echo $? > {run}/test-exit.txt")
     return (
         "Sandbox check for an eval runner; nothing to build. Make each of these tool calls, one call each, in this "
-        "order, and do not work around a failure:\n"
-        f"1. Bash: ls {mods}\n"
-        f"2. Bash: cat {mods}/herdr-agents/package.json\n"
-        f"3. Bash: ls {other}\n"
-        f"4. Read: {mods}/herdr-agents/package.json\n"
-        f"5. Grep: the word export in {mods}\n"
-        f"6. Bash: echo ok > {run}/written.txt\n"
+        "order, and do not work around a failure:\n" + "\n".join(lines) + "\n"
         "Then reply with one line per call: its number and what came back."
     )
 
 
-def isolation_verdict(transcript, deny_read, run):
+def isolation_verdict(transcript, deny_read, run, test_cmd=None):
     """(ok, lines) for a --check-isolation call: every tool call that named an unreadable folder was refused, at least
-    one such call was made, and the Bash write into the run folder worked."""
+    one such call was made, the Bash write into the run folder worked, the reads through the symlink to the mods
+    folder (Read and Bash cat) were both made and refused, and the builder flow worked (the push reached the bare
+    remote and, with a test command, the tests passed)."""
     hits = 0
     lines, ok = [], True
     path = os.path.join(run, "jobs", "probe")
     os.makedirs(path, exist_ok=True)
     if transcript:
         shutil.copyfile(transcript, os.path.join(path, "transcript.jsonl"))
+    link = os.path.join(run, LINK)
     found, _ = scorer.scan_transcripts(run, deny_read, isolated=True)
     for h in found:
         hits += 1
@@ -1673,12 +1716,48 @@ def isolation_verdict(transcript, deny_read, run):
     wrote = os.path.exists(os.path.join(run, "written.txt"))
     ok = ok and wrote
     lines.append(f"  Bash write into the run folder: {'worked' if wrote else 'FAILED'}")
+    # Reads through the symlink: the pattern is the link followed by a slash, so the `ln -s` call does not count.
+    if not os.path.islink(link):
+        ok = False
+        lines.append("  symlink to the mods folder: NOT MADE")
+    through, _ = scorer.scan_transcripts(run, [link + os.sep], isolated=True)
+    for tool in ("Bash", "Read"):
+        mine = [h for h in through if h["tool"] == tool]
+        state = "not tried" if not mine else ("refused" if all(h["blocked"] for h in mine) else "READ")
+        ok = ok and state == "refused"
+        lines.append(f"  {tool} through the symlink: {state}")
+    remote = os.path.join(run, "remote.git")
+    pushed = git("rev-parse", "--verify", "-q", f"refs/heads/{PROBE_BRANCH}", cwd=remote, check=False).returncode == 0
+    ok = ok and pushed
+    lines.append(f"  git commit and push to the local remote: {'worked' if pushed else 'FAILED'}")
+    if test_cmd:
+        exit_file = os.path.join(run, "test-exit.txt")
+        code = read_text(exit_file).strip() if os.path.exists(exit_file) else None
+        ok = ok and code == "0"
+        lines.append(f"  the scenario's test command: {'passed' if code == '0' else 'FAILED (exit ' + str(code) + ')'}")
     return ok, lines
 
 
-def check_isolation(args, source, arms, results):
+def probe_repo(sc, source, run, env):
+    """The probe's builder checkout: the scenario's source as a clone of a bare remote, both inside the run folder."""
+    snap = os.path.join(run, ".snap")
+    scenario_snapshot(sc, source, snap)
+    git("init", "-q", "-b", "main", cwd=snap)
+    git("add", "-A", cwd=snap)
+    git(*IDENT, "commit", "-q", "-m", "Base", cwd=snap)
+    remote = os.path.join(run, "remote.git")
+    git("init", "-q", "--bare", "-b", "main", remote)
+    git("push", "-q", remote, "HEAD:refs/heads/main", cwd=snap)
+    shutil.rmtree(snap)
+    work = os.path.join(run, "work")
+    git("clone", "-q", remote, work)
+    run_setup(sc["setup"], work, env)
+
+
+def check_isolation(args, source, arms, results, sc):
     """One real call (the first arm's builder profile, capped at --max-call-cost) that tries to read each kind of
-    unreadable folder, then checks in its transcript that every try was refused."""
+    unreadable folder, also through a symlink it makes, then checks in its transcript that every try was refused. It
+    also does a builder's work (commit, push to a local remote, the scenario's tests) to show the sandbox allows it."""
     arm = next(iter(arms.values()))
     profile = arm["profiles"]["builder"]
     run = os.path.join(results, "isolation")
@@ -1688,12 +1767,14 @@ def check_isolation(args, source, arms, results):
     env = run_env(run, profile)
     os.makedirs(os.path.join(run, "bin"), exist_ok=True)
     shutil.copy2(os.path.join(SHIM_BIN, "gh"), os.path.join(run, "bin", "gh"))
+    probe_repo(sc, source, run, env)
+    test_cmd = shlex.join(sc["grade"]["cmd"]) if sc.get("grade") else None
     argv = role_argv(profile, sid, False, min(args.max_call_cost, 1.0), worker_settings(deny_read, run))
     argv[0] = args.claude
-    code, out, err, _ = run_claude(argv, isolation_prompt(deny_read, run), run, env, args.call_timeout * 60)
+    code, out, err, _ = run_claude(argv, isolation_prompt(deny_read, run, test_cmd), run, env, args.call_timeout * 60)
     write_text(os.path.join(run, "out.json"), out.decode("utf-8", "replace"))
     write_text(os.path.join(run, "stderr.txt"), err.decode("utf-8", "replace"))
-    ok, lines = isolation_verdict(find_transcript(sid, env), deny_read, run)
+    ok, lines = isolation_verdict(find_transcript(sid, env), deny_read, run, test_cmd)
     print(f"hrd-eval --check-isolation: arm {arm['id']} builder, exit {code}, folder {run}")
     print("\n".join(lines))
     print("isolation holds" if ok else "ISOLATION FAILED")
@@ -1756,7 +1837,7 @@ def cli(args):
     if args.check_isolation:
         if os.path.exists(results):
             raise RunnerError(f"{results} already exists; pick another --results folder")
-        return check_isolation(args, source, arms, results)
+        return check_isolation(args, source, arms, results, scenarios[0])
     if args.dry_run:
         data = dry_run_data(args, source, scenarios, arms, results)
         if args.json:

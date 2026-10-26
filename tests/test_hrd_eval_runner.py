@@ -109,6 +109,9 @@ if beh.get("shim_pr"):  # a PR already in the shim's state, written here, so no 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(json.dumps(rec))
+if beh.get("shell"):  # the probe's symlink and builder-flow commands, run as the prompt gives them
+    for cmd in re.findall(r"^\d+\. Bash: ((?:ln -s|cd ).*)$", prompt, re.M):
+        subprocess.run(["sh", "-c", cmd], cwd=cwd)
 if beh.get("write"):
     open(re.search(r"echo ok > (\S+)", prompt).group(1), "w").write("ok\n")
 if not beh.get("no_result"):
@@ -1335,6 +1338,23 @@ class MatrixTest(RunnerCase):
         self.assertIn("REFUSED", out)
 
 
+class HiddenCleanupTest(RunnerCase):
+    def test_the_hidden_tests_leave_the_grade_folder_when_a_grade_raises(self):
+        real = HR.run_grade
+        seen = []
+
+        def boom(cmd, cwd, timeout_s, env):
+            if os.path.exists(os.path.join(cwd, "tests", "test_hidden.py")):
+                seen.append(True)
+                raise RuntimeError("boom")
+            return real(cmd, cwd, timeout_s, env)
+
+        with mock.patch.object(HR, "run_grade", boom):
+            self.matrix()
+        self.assertTrue(seen, "the grade never ran with the hidden tests")
+        self.assertFalse(os.path.exists(os.path.join(self.run_dir(), "grade", "tests", "test_hidden.py")))
+
+
 class OverlayTest(unittest.TestCase):
     """The hidden tests over a grade folder: a commit's paths replaced, or a folder copied over."""
 
@@ -1566,6 +1586,27 @@ class GradeRetryTest(RunnerCase):
         self.assertIn("(fail) timed test", read_text(os.path.join(self.run_dir(), "grade", "hidden-try1.txt")))
 
 
+class BestTryTest(unittest.TestCase):
+    @staticmethod
+    def parse(text):
+        return dict(line.split(":") for line in text.split() if ":" in line)
+
+    def test_a_try_with_no_rows_does_not_beat_a_try_with_one_real_failure(self):
+        timed_out = (124, "timed out after 60 s\n")
+        one_fail = (1, "a:pass b:fail")
+        self.assertIs(HR.best_try([timed_out, one_fail], self.parse, ["a", "b"]), one_fail)
+        self.assertIs(HR.best_try([one_fail, timed_out], self.parse, ["a", "b"]), one_fail)
+
+    def test_with_no_expected_tests_an_empty_try_has_no_failures(self):
+        timed_out = (124, "")
+        one_fail = (1, "a:fail")
+        self.assertIs(HR.best_try([timed_out, one_fail], self.parse, []), timed_out)
+
+    def test_the_first_try_wins_a_tie(self):
+        a, b = (1, "a:fail"), (1, "b:fail")
+        self.assertIs(HR.best_try([a, b], self.parse, []), a)
+
+
 class IsolationTest(RunnerCase):
     def test_the_installed_mods_the_source_repo_its_worktree_folder_and_old_results_are_unreadable(self):
         wt_parent = os.path.join(self.tmp, "source-wt")
@@ -1577,6 +1618,10 @@ class IsolationTest(RunnerCase):
         mods = os.path.join(os.path.realpath(self.cfgdir), "mods")
         for want in (mods, self.src, wt_parent, old):
             self.assertIn(want, paths)
+        plugins = os.path.join(os.path.realpath(self.cfgdir), "plugins")
+        for name in ("cache", "marketplaces", "store"):
+            self.assertIn(os.path.join(plugins, name), paths)
+        self.assertNotIn(plugins, paths)  # `claude plugin test` may need installed_plugins.json
         repo = os.path.realpath(HR.REPO)  # this runner's repo: listed, or inside a listed folder
         self.assertTrue(any(repo == p or repo.startswith(p + os.sep) for p in paths), paths)
         self.assertNotIn(os.path.join(self.tmp, "not-results"), paths)
@@ -1619,36 +1664,90 @@ class IsolationTest(RunnerCase):
 
 
 class CheckIsolationTest(RunnerCase):
+    # Prompt paths in order: 0 ls mods, 1 cat mods, 2 ls other, 3 Read mods, 4 Grep mods, 5 cat through the link,
+    # 6 Read through the link.
     REFUSED = [["Bash", "command", 0, "ls: PATH: Operation not permitted", True],
                ["Bash", "command", 1, "cat: PATH: Operation not permitted", True],
                ["Read", "file_path", 3, "Permission to read PATH has been denied.", True]]
+    LINK_REFUSED = [["Bash", "command", 5, "cat: PATH: Operation not permitted", True],
+                    ["Read", "file_path", 6, "Permission to read PATH has been denied.", True]]
+    GOOD = dict(write=True, shell=True)
 
     def probe(self, **beh):
         self.behave(probe=beh)
+        self.make_scenario(grade={"cmd": ["python3", "-c", "pass"], "parser": "unittest", "timeout": 60})
         return self.matrix("--check-isolation")
 
+    def good(self, **more):
+        return self.probe(tools=self.REFUSED + self.LINK_REFUSED, **{**self.GOOD, **more})
+
     def test_every_refused_read_and_a_working_write_pass(self):
-        code, out, _ = self.probe(tools=self.REFUSED, write=True)
+        code, out, _ = self.good()
         self.assertEqual(code, 0, out)
         self.assertIn("isolation holds", out)
         self.assertIn(": refused", out)
+        self.assertIn("Bash through the symlink: refused", out)
+        self.assertIn("Read through the symlink: refused", out)
+        self.assertIn("git commit and push to the local remote: worked", out)
+        self.assertIn("the scenario's test command: passed", out)
         probe = self.fake_calls()[0]
         settings = json.loads(next(a for a in probe["argv"] if a.startswith("--settings="))[len("--settings="):])
         self.assertTrue(settings["sandbox"]["enabled"])
 
     def test_a_read_that_came_back_fails(self):
-        tools = self.REFUSED + [["Bash", "command", 0, "herdr-agents\nherdr-agents-view", False]]
-        code, out, _ = self.probe(tools=tools, write=True)
+        tools = self.REFUSED + self.LINK_REFUSED + [["Bash", "command", 0, "herdr-agents\nherdr-agents-view", False]]
+        code, out, _ = self.probe(tools=tools, **self.GOOD)
         self.assertEqual(code, 1)
         self.assertIn(": READ", out)
         self.assertIn("ISOLATION FAILED", out)
 
     def test_no_try_or_no_write_fails(self):
-        self.assertEqual(self.probe(tools=[], write=True)[0], 1)
+        self.assertEqual(self.probe(tools=[], **self.GOOD)[0], 1)
         shutil.rmtree(self.results)
-        code, out, _ = self.probe(tools=self.REFUSED, write=False)
+        code, out, _ = self.good(write=False)
         self.assertEqual(code, 1)
         self.assertIn("Bash write into the run folder: FAILED", out)
+
+    def test_a_bash_cat_through_the_symlink_that_came_back_fails(self):
+        leak = [["Bash", "command", 5, '{"name": "herdr-agents"}', False], self.LINK_REFUSED[1]]
+        code, out, _ = self.probe(tools=self.REFUSED + leak, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn("Bash through the symlink: READ", out)
+        self.assertIn("Read through the symlink: refused", out)
+
+    def test_a_read_through_the_symlink_that_came_back_fails(self):
+        leak = [self.LINK_REFUSED[0], ["Read", "file_path", 6, '{"name": "herdr-agents"}', False]]
+        code, out, _ = self.probe(tools=self.REFUSED + leak, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn("Read through the symlink: READ", out)
+        self.assertIn("Bash through the symlink: refused", out)
+
+    def test_a_symlink_that_was_not_tried_fails(self):
+        code, out, _ = self.probe(tools=self.REFUSED, **self.GOOD)
+        self.assertEqual(code, 1)
+        self.assertIn("Bash through the symlink: not tried", out)
+        self.assertIn("Read through the symlink: not tried", out)
+
+    def test_no_symlink_made_fails(self):
+        code, out, _ = self.good(shell=False)
+        self.assertEqual(code, 1)
+        self.assertIn("symlink to the mods folder: NOT MADE", out)
+        self.assertIn("git commit and push to the local remote: FAILED", out)
+
+    def test_a_failing_test_command_fails(self):
+        self.behave(probe=dict(tools=self.REFUSED + self.LINK_REFUSED, **self.GOOD))
+        self.make_scenario(grade={"cmd": ["python3", "-c", "raise SystemExit(3)"], "parser": "unittest", "timeout": 60})
+        code, out, _ = self.matrix("--check-isolation")
+        self.assertEqual(code, 1)
+        self.assertIn("the scenario's test command: FAILED (exit 3)", out)
+
+    def test_the_prompt_names_the_symlink_and_the_flow_steps(self):
+        text = HR.isolation_prompt(["/x/mods", "/y"], "/r", "python3 -m unittest")
+        for want in ("ln -s /x/mods /r/link-mods", "cat /r/link-mods/herdr-agents/package.json",
+                     "Read: /r/link-mods/herdr-agents/package.json", "git push -q origin probe-branch",
+                     "(python3 -m unittest) > /r/test-out.txt"):
+            self.assertIn(want, text)
+        self.assertNotIn("test-exit", HR.isolation_prompt(["/x/mods", "/y"], "/r"))
 
 
 @unittest.skipUnless(sys.platform == "darwin" and shutil.which("sandbox-exec"), "macOS seatbelt")
