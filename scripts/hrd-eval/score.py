@@ -217,7 +217,7 @@ def refused(tool, res, pattern, isolated):
     text = result_text(res)
     if isolated and not text.strip():
         return True
-    if CC_DENIED.search(text):
+    if res.get("is_error") and CC_DENIED.search(text):
         return True
     if tool != "Bash":
         return bool(res.get("is_error")) or bool(REFUSED.search(text))

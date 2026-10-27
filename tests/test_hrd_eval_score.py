@@ -508,6 +508,14 @@ class Leaks(Folders):
         ]}
         self.assertTrue(self.score(jobs, leaks=["~/.claude/mods/herdr-agents"])["invalid"])
 
+    def test_output_that_starts_like_a_denial_is_not_one_without_is_error(self):
+        # Claude Code marks its own denials is_error; a command that ran can print the same words first.
+        jobs = {"01-build": [
+            tool("Bash", _id="a", command='echo "Permission was denied"; ls ~/.claude/mods/herdr-agents'),
+            result("a", "Permission was denied\nindex.d.ts"),
+        ]}
+        self.assertTrue(self.score(jobs, leaks=["~/.claude/mods/herdr-agents"])["invalid"])
+
     def test_a_refusal_that_names_another_path_does_not_block_a_read(self):
         # replay-15/B (20261026-172215): the listing came back; an error elsewhere in the output says nothing.
         jobs = {"01-build": [
