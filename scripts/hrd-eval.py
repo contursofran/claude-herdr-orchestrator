@@ -13,7 +13,7 @@ repo: Read and Edit are denied there, and Bash runs in Claude Code's sandbox wit
   scripts/hrd-eval.py --check-scenarios --scenarios replay-13 [--update-expected] [--flake-runs 5]
                                                                grade the base and the reference; no model call
   scripts/hrd-eval.py --check-isolation [--arms A]               one real call: the worker sandbox refuses each read (also through a symlink)
-  scripts/hrd-eval.py [--arms A,C] [--repeats 3] [--parallel 1] [--max-cost 30] [--max-call-cost 5] [--call-timeout 20]
+  scripts/hrd-eval.py [--arms A,C] [--repeats 3] [--jobs 4] [--max-cost 30] [--max-call-cost 5] [--call-timeout 20]
                       [--results DIR] [--config PATH] [--claude PATH] [--json]
 
 A real run ends with the score table of its results folder (scripts/hrd-eval/score.py); --json prints the aggregate.
@@ -290,20 +290,60 @@ def clean_env(folder):
     return env
 
 
+# Every child the runner starts (claude calls, grades, setup commands) runs in its own process group, so that one
+# kill reaches whatever it started in turn. The live groups are listed here: on Ctrl-C or SIGTERM they are killed.
+LIVE = set()
+LIVE_LOCK = threading.Lock()
+STOPPING = threading.Event()
+
+
+def spawn(argv, cwd, env, stdin=None):
+    """Popen in a new session (so a new process group), listed in LIVE. Refused once the runner is stopping."""
+    with LIVE_LOCK:
+        if STOPPING.is_set():
+            raise RunnerError("interrupted")
+        proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True)
+        LIVE.add(proc)
+    return proc
+
+
+def reap(proc, data=None, timeout=None):
+    try:
+        return proc.communicate(data, timeout=timeout)
+    finally:
+        if proc.poll() is not None:
+            with LIVE_LOCK:
+                LIVE.discard(proc)
+
+
+def kill_live():
+    """Stop the runner's children: no new one starts, and every live group gets SIGKILL."""
+    with LIVE_LOCK:
+        STOPPING.set()
+        procs = list(LIVE)
+    for proc in procs:
+        signal_group(proc, signal.SIGKILL)
+
+
 def run_setup(cmds, cwd, env):
     for argv in cmds:
-        p = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
-        if p.returncode != 0:
-            tail = (p.stderr or p.stdout).strip()[-300:]
-            raise RunnerError(f"setup {shlex.join(argv)} failed in {cwd} (exit {p.returncode}): {tail}")
+        proc = spawn(argv, cwd, env)
+        out, err = reap(proc)
+        if proc.returncode != 0:
+            tail = ((err or out).decode("utf-8", "replace")).strip()[-300:]
+            raise RunnerError(f"setup {shlex.join(argv)} failed in {cwd} (exit {proc.returncode}): {tail}")
 
 
 def run_grade(cmd, cwd, timeout_s, env):
+    proc = spawn(cmd, cwd, env)
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout_s)
+        out, err = reap(proc, timeout=timeout_s)
     except subprocess.TimeoutExpired:
+        signal_group(proc, signal.SIGKILL)
+        reap(proc)
         return 124, f"timed out after {timeout_s} s\n"
-    return p.returncode, p.stdout + p.stderr
+    return proc.returncode, out.decode("utf-8", "replace") + err.decode("utf-8", "replace")
 
 
 def changed_files(grade_dir, base):
@@ -320,20 +360,18 @@ def signal_group(proc, sig):
 
 def run_claude(argv, prompt, cwd, env, timeout_s):
     """One claude call, the prompt on stdin. Past the timeout: SIGINT to its group, KILL_GRACE_S, then SIGKILL."""
-    proc = subprocess.Popen(
-        argv, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
-    )
+    proc = spawn(argv, cwd, env, stdin=subprocess.PIPE)
     timed_out = False
     try:
-        out, err = proc.communicate(prompt.encode("utf-8"), timeout=timeout_s)
+        out, err = reap(proc, prompt.encode("utf-8"), timeout_s)
     except subprocess.TimeoutExpired:
         timed_out = True
         signal_group(proc, signal.SIGINT)
         try:
-            out, err = proc.communicate(timeout=KILL_GRACE_S)
+            out, err = reap(proc, timeout=KILL_GRACE_S)
         except subprocess.TimeoutExpired:
             signal_group(proc, signal.SIGKILL)
-            out, err = proc.communicate()
+            out, err = reap(proc)
     return proc.returncode, out, err, timed_out
 
 
@@ -1422,10 +1460,13 @@ def run_one(ctx, sc, arm, k):
     }
 
 
-def run_matrix(ctx, scenarios, arms, repeats, parallel, quiet):
+def run_matrix(ctx, scenarios, arms, repeats, jobs_limit, quiet):
+    """The runs of the matrix, at most `jobs_limit` at a time. Only the hidden-test grade is one at a time (ctx.grade_lock).
+    On Ctrl-C or SIGTERM the live children are killed and no new one starts."""
     jobs = [(sc, arm, k) for sc in scenarios for arm in arms.values() for k in range(1, repeats + 1)]
     rows = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs_limit)
+    try:
         futures = [pool.submit(run_one, ctx, sc, arm, k) for sc, arm, k in jobs]
         for fut in concurrent.futures.as_completed(futures):
             row = fut.result()
@@ -1437,6 +1478,11 @@ def run_matrix(ctx, scenarios, arms, repeats, parallel, quiet):
                     + ("  unparsed review" if row["review_unparsed"] else "")
                     + (f"  ({row['error']})" if row["error"] else "")
                 )
+    except BaseException:
+        kill_live()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown()
     return sorted(rows, key=lambda r: (r["scenario"], r["arm"], r["repeat"]))
 
 
@@ -1598,7 +1644,7 @@ def print_check(r):
 def dry_run_data(args, source, scenarios, arms, results):
     max_call = min(args.max_call_cost, args.max_cost)
     data = {"results": results, "repo": source, "max_cost": args.max_cost, "max_call_cost": args.max_call_cost,
-            "repeats": args.repeats, "parallel": args.parallel, "call_timeout_min": args.call_timeout,
+            "repeats": args.repeats, "jobs": args.jobs, "call_timeout_min": args.call_timeout,
             "arms": {}, "scenarios": {}, "estimate": 0.0, "runs": 0}
     deny_read = isolation_paths(source, results)
     data["isolation"] = {"deny_read": deny_read, "settings": worker_settings(deny_read, "<run folder>")}
@@ -1629,7 +1675,7 @@ def print_dry(data, args):
     lines = [
         "hrd-eval --dry-run: nothing is called",
         f"results: {data['results']} (not created)",
-        f"repeats {args.repeats}, parallel {args.parallel}, max cost ${args.max_cost:g} "
+        f"repeats {args.repeats}, jobs {args.jobs}, max cost ${args.max_cost:g} "
         f"(per call ${args.max_call_cost:g}), call timeout {args.call_timeout:g} min",
         f"worker settings: {data['isolation']['settings']}",
         "unreadable for workers (Read/Edit deny rules and the Bash sandbox): " + ", ".join(data["isolation"]["deny_read"]),
@@ -1661,6 +1707,8 @@ def print_dry(data, args):
 # --check-isolation
 
 
+# The probe's own `ln -s <mods> <link>`: it names the mods folder, prints nothing and is not refused, but reads nothing.
+LN_S = re.compile(r"ln -s \S+ \S+")
 LINK = "link-mods"  # the symlink the probe's worker makes in the run folder, pointing at the mods folder
 PROBE_BRANCH = "probe-branch"
 
@@ -1704,7 +1752,7 @@ def isolation_verdict(transcript, deny_read, run, test_cmd=None):
     if transcript:
         shutil.copyfile(transcript, os.path.join(path, "transcript.jsonl"))
     link = os.path.join(run, LINK)
-    found, _ = scorer.scan_transcripts(run, deny_read, isolated=True)
+    found, _ = scorer.scan_transcripts(run, deny_read, isolated=True, skip_bash=LN_S)
     for h in found:
         hits += 1
         state = "refused" if h["blocked"] else "READ"
@@ -1720,7 +1768,7 @@ def isolation_verdict(transcript, deny_read, run, test_cmd=None):
     if not os.path.islink(link):
         ok = False
         lines.append("  symlink to the mods folder: NOT MADE")
-    through, _ = scorer.scan_transcripts(run, [link + os.sep], isolated=True)
+    through, _ = scorer.scan_transcripts(run, [link + os.sep], isolated=True, skip_bash=LN_S)
     for tool in ("Bash", "Read"):
         mine = [h for h in through if h["tool"] == tool]
         state = "not tried" if not mine else ("refused" if all(h["blocked"] for h in mine) else "READ")
@@ -1789,7 +1837,8 @@ def parse_args(argv):
     p.add_argument("--scenarios", help="comma-separated scenario ids (default: all)")
     p.add_argument("--arms", help="comma-separated arm ids (default: all)")
     p.add_argument("--repeats", type=int, default=3)
-    p.add_argument("--parallel", type=int, default=1)
+    p.add_argument("--jobs", "--parallel", dest="jobs", type=int, default=4,
+                   help="runs at a time (default 4); the hidden-test grade is still one at a time")
     p.add_argument("--dry-run", action="store_true", help="print the matrix and each role's command; call nothing")
     p.add_argument("--check-scenarios", action="store_true", help="grade base and reference; no model call")
     p.add_argument("--update-expected", action="store_true", help="with --check-scenarios: write expected.json")
@@ -1815,8 +1864,8 @@ def cli(args):
     source = os.path.realpath(args.source_repo)
     if args.update_expected and not args.check_scenarios:
         raise RunnerError("--update-expected goes with --check-scenarios")
-    if args.repeats < 1 or args.parallel < 1 or args.flake_runs < 1:
-        raise RunnerError("--repeats, --parallel and --flake-runs must be at least 1")
+    if args.repeats < 1 or args.jobs < 1 or args.flake_runs < 1:
+        raise RunnerError("--repeats, --jobs and --flake-runs must be at least 1")
     if args.flake_runs > 1 and not args.check_scenarios:
         raise RunnerError("--flake-runs goes with --check-scenarios")
     if args.max_cost <= 0 or args.max_call_cost <= 0 or args.call_timeout <= 0:
@@ -1871,7 +1920,7 @@ def cli(args):
     }
     write_json(os.path.join(results, "matrix.json"), matrix)
     ctx = Ctx(results, args.claude, args.call_timeout * 60, Budget(args.max_cost, args.max_call_cost), source)
-    rows = run_matrix(ctx, scenarios, arms, args.repeats, args.parallel, args.json)
+    rows = run_matrix(ctx, scenarios, arms, args.repeats, args.jobs, args.json)
     agg = score_rows(results, rows, matrix)
     if args.json:
         print(json.dumps(agg, indent=2))
@@ -1880,12 +1929,26 @@ def cli(args):
     return 2 if any(r["status"] == "budget" for r in rows) else 0
 
 
+def on_sigterm(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main(argv=None):
+    STOPPING.clear()
+    main_thread = threading.current_thread() is threading.main_thread()
+    old = signal.signal(signal.SIGTERM, on_sigterm) if main_thread else None
     try:
         return cli(parse_args(argv))
     except RunnerError as e:
         print(f"hrd-eval: {e}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        kill_live()
+        print("hrd-eval: interrupted; the live workers were killed", file=sys.stderr)
+        return 130
+    finally:
+        if main_thread:
+            signal.signal(signal.SIGTERM, old)
 
 
 if __name__ == "__main__":
