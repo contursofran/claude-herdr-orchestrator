@@ -485,6 +485,29 @@ class Leaks(Folders):
             {"job": "jobs/01-build", "tool": "Read", "pattern": f"{home}/.claude/mods/herdr-agents"},
         ])
 
+    def test_a_claude_code_permission_denial_is_blocked_not_a_leak(self):
+        # replay-15/B and B2 (20261026-201836): the auto mode classifier refused the grep, and its text names no path.
+        classifier = ("Permission for this action was denied by the Claude Code auto mode classifier. Reason: The "
+                      "server-side auto mode classifier judged this action dangerous (it gave no explanation).")
+        mods = "~/.claude/mods/herdr-agents"
+        for text in (classifier, "Permission to use Bash with command ls has been denied.",
+                     "Permission for this action has been denied."):
+            jobs = {"01-build": [
+                tool("Bash", _id="a", command=f"grep -rn store {mods} | head"),
+                result("a", text, is_error=True),
+            ]}
+            s = self.score(jobs, leaks=[mods])
+            self.assertFalse(s["invalid"], text)
+            self.assertEqual(s["leak"], [])
+            self.assertEqual(s["leak_blocked"], [{"job": "jobs/01-build", "tool": "Bash", "pattern": mods}])
+
+    def test_a_denial_quoted_inside_other_output_is_not_a_refusal(self):
+        jobs = {"01-build": [
+            tool("Bash", _id="a", command="ls ~/.claude/mods/herdr-agents"),
+            result("a", "index.d.ts\nnote: Permission for this action was denied earlier"),
+        ]}
+        self.assertTrue(self.score(jobs, leaks=["~/.claude/mods/herdr-agents"])["invalid"])
+
     def test_a_refusal_that_names_another_path_does_not_block_a_read(self):
         # replay-15/B (20261026-172215): the listing came back; an error elsewhere in the output says nothing.
         jobs = {"01-build": [

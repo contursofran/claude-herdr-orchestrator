@@ -12,9 +12,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
@@ -85,9 +87,12 @@ for root, dirs, names in os.walk(cwd):
     files += [os.path.relpath(os.path.join(root, n), cwd) for n in names]
 with open(os.environ["FAKE_CLAUDE_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps({"kind": kind, "sid": sid, "resumed": resumed, "argv": argv, "cwd": cwd, "files": sorted(files),
-                        "gh": shutil.which("gh"), "git_config": os.environ.get("GIT_CONFIG_GLOBAL"), "prompt": prompt}) + "\n")
+                        "pid": os.getpid(), "gh": shutil.which("gh"), "git_config": os.environ.get("GIT_CONFIG_GLOBAL"), "prompt": prompt}) + "\n")
 if beh.get("sleep"):
+    t0 = time.time()
     time.sleep(beh["sleep"])
+    with open(os.environ["FAKE_CLAUDE_LOG"] + ".spans", "a", encoding="utf-8") as f:
+        f.write(json.dumps([t0, time.time()]) + "\n")
 if beh.get("plan") is not None:
     open(os.path.join(job, "PLAN.md"), "w").write(beh["plan"])
 if beh.get("branch"):
@@ -132,8 +137,9 @@ with open(os.path.join(proj, sid + ".jsonl"), "a", encoding="utf-8") as f:
                                     "usage": {"input_tokens": 0, "output_tokens": round(cost * 1e6 / price_out),
                                               "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}}) + "\n")
     paths = re.findall(r"(?:ls|cat|Read:|in) (/\S+)", prompt)
-    for i, (name, field, path_i, text, err) in enumerate(beh.get("tools", [])):
-        use = {"type": "tool_use", "id": f"u{i}", "name": name, "input": {field: paths[path_i]}}
+    for i, (name, field, path_i, text, err, *tmpl) in enumerate(beh.get("tools", [])):
+        value = tmpl[0].replace("PATH", paths[path_i]) if tmpl else paths[path_i]
+        use = {"type": "tool_use", "id": f"u{i}", "name": name, "input": {field: value}}
         f.write(json.dumps({"type": "assistant", "timestamp": now, "message": {"role": "assistant", "content": [use]}}) + "\n")
         res = {"type": "tool_result", "tool_use_id": f"u{i}", "content": text.replace("PATH", paths[path_i]), "is_error": err}
         f.write(json.dumps({"type": "user", "timestamp": now, "message": {"role": "user", "content": [res]}}) + "\n")
@@ -1034,7 +1040,7 @@ class MatrixTest(RunnerCase):
         # arm A: plan (2.5, estimate 0.60) then the build (0.08) fit under 2.65; the reviewer (0.60) does not.
         # arm B starts after that and is refused before any setup.
         self.behave(plan={"cost": 2.5}, build={"cost": 0.01})
-        code, _, _ = self.matrix("--arms", "A,B", "--max-cost", "2.65")
+        code, _, _ = self.matrix("--arms", "A,B", "--max-cost", "2.65", "--jobs", "1")  # B starts after A
         self.assertEqual(code, 2)
         self.assertEqual(self.run_json("A")["status"], "budget")
         self.assertEqual(self.run_json("B")["status"], "budget")
@@ -1293,10 +1299,40 @@ class MatrixTest(RunnerCase):
         self.assertIn("Split it into these slices, one PR each: S1: the total; S2: the client.", plan_prompt)
 
     def test_two_arms_at_once_each_get_their_run(self):
-        code, _, _ = self.matrix("--parallel", "2", arms="A,B")
+        code, _, _ = self.matrix("--jobs", "2", arms="A,B")
         self.assertEqual(code, 0)
         self.assertEqual(self.run_json("A")["status"], "done")
         self.assertEqual(self.run_json("B")["status"], "done")
+
+    def test_two_runs_call_the_model_at_once_but_their_grades_take_turns(self):
+        spans = os.path.join(self.tmp, "grade-spans")
+        grader = (f"import time, json\nt = time.time()\ntime.sleep(0.6)\n"
+                  f"open({spans!r}, 'a').write(json.dumps([t, time.time()]) + '\\n')\nprint('(pass) own test [1ms]')")
+        self.make_scenario(grade={"cmd": ["python3", "-c", grader], "parser": "plugin-test", "timeout": 60})
+        self.behave(build={"sleep": 1.5})
+        code, out, err = self.matrix("--jobs", "2", arms="A,B")
+        self.assertEqual(code, 0, err)
+
+        def read_spans(path):
+            with open(path, encoding="utf-8") as f:
+                return sorted(json.loads(line) for line in f if line.strip())
+
+        calls = read_spans(self.log + ".spans")
+        self.assertEqual(len(calls), 2)
+        self.assertLess(calls[1][0], calls[0][1])  # the second build started before the first one ended
+        grades = read_spans(spans)
+        self.assertGreaterEqual(len(grades), 2)  # own tests and hidden tests, per run
+        for before, after in zip(grades, grades[1:]):
+            self.assertGreaterEqual(after[0], before[1])  # no two grades overlap
+
+    def test_jobs_is_shown_in_the_dry_run_and_defaults_to_four(self):
+        _, out, _ = self.matrix("--dry-run")
+        self.assertIn("jobs 4", out)
+        _, out, _ = self.matrix("--dry-run", "--jobs", "2")
+        self.assertIn("jobs 2", out)
+        code, _, err = self.matrix("--jobs", "0")
+        self.assertEqual(code, 1)
+        self.assertIn("--jobs", err)
 
     def test_results_inside_the_repo_are_refused(self):
         code, _, err = self.matrix("--results", os.path.join(self.src, "out"))
@@ -1694,6 +1730,18 @@ class CheckIsolationTest(RunnerCase):
         settings = json.loads(next(a for a in probe["argv"] if a.startswith("--settings="))[len("--settings="):])
         self.assertTrue(settings["sandbox"]["enabled"])
 
+    def test_the_probes_own_ln_s_is_not_a_read_of_the_mods_folder(self):
+        # 20261026-195710: `ln -s <mods> <link>` names the mods folder, prints nothing and is not refused.
+        ln = ["Bash", "command", 0, "(Bash completed with no output)", False, "ln -s PATH /link"]
+        code, out, _ = self.probe(tools=self.REFUSED + [ln] + self.LINK_REFUSED, **self.GOOD)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("READ", out)
+        # the same text in a command that also reads is still a hit
+        shutil.rmtree(self.results)
+        chained = ["Bash", "command", 0, "herdr-agents", False, "ln -s PATH /link && ls PATH"]
+        code, out, _ = self.probe(tools=self.REFUSED + [chained] + self.LINK_REFUSED, **self.GOOD)
+        self.assertEqual(code, 1)
+
     def test_a_read_that_came_back_fails(self):
         tools = self.REFUSED + self.LINK_REFUSED + [["Bash", "command", 0, "herdr-agents\nherdr-agents-view", False]]
         code, out, _ = self.probe(tools=tools, **self.GOOD)
@@ -1769,6 +1817,57 @@ class SeatbeltTest(unittest.TestCase):
         self.assertNotIn("export const store", p.stdout)
         self.assertIn("Operation not permitted", p.stderr)
         self.assertEqual(read_text(os.path.join(run, "x")), "ok\n")
+
+
+class InterruptTest(RunnerCase):
+    """Ctrl-C or SIGTERM on the runner kills the workers it started: each runs in its own process group."""
+
+    def alive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    def interrupt(self, sig):
+        self.behave(plan={"sleep": 120})
+        argv = [sys.executable, RUNNER, "--claude", self.fake, "--scenarios-dir", self.scen, "--arms-dir", ARMS,
+                "--arms", "A", "--config", self.config, "--source-repo", self.src, "--results", self.results,
+                "--scenarios", "replay-test", "--repeats", "1"]
+        env = {**os.environ, "FAKE_CLAUDE_SCRIPT": self.script_path, "FAKE_CLAUDE_LOG": self.log}
+        proc = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.kill)
+        deadline = time.time() + 30
+        while not self.fake_calls() and time.time() < deadline and proc.poll() is None:
+            time.sleep(0.1)
+        calls = self.fake_calls()
+        self.assertTrue(calls, "the fake claude never started")
+        pid = calls[0]["pid"]
+        self.assertTrue(self.alive(pid))
+        proc.send_signal(sig)
+        _, err = proc.communicate(timeout=30)
+        self.addCleanup(lambda: self.alive(pid) and os.kill(pid, signal.SIGKILL))
+        deadline = time.time() + 10
+        while self.alive(pid) and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(self.alive(pid), "the worker is still running")
+        self.assertEqual(proc.returncode, 130, err)
+        self.assertEqual(len(self.fake_calls()), 1)  # no new call after the kill
+
+    def test_ctrl_c_kills_the_running_worker(self):
+        self.interrupt(signal.SIGINT)
+
+    def test_sigterm_kills_the_running_worker(self):
+        self.interrupt(signal.SIGTERM)
+
+    def test_a_child_runs_in_its_own_process_group(self):
+        proc = HR.spawn([sys.executable, "-c", "import time; time.sleep(30)"], None, None)
+        self.addCleanup(HR.kill_live)
+        self.assertNotEqual(os.getpgid(proc.pid), os.getpgid(0))
+        HR.kill_live()
+        proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, -signal.SIGKILL)
+        HR.STOPPING.clear()
 
 
 class ScoreTableTest(RunnerCase):

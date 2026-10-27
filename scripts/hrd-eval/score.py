@@ -67,6 +67,12 @@ WRITES_MD = re.compile(r"(?:>>?|\btee\s+(?:-a\s+)?)\s*[\"']?[^\s;&|<>\"']*\.md\b
 REFUSED = re.compile(r"(?i)operation not permitted|permission denied|has been denied|denied by|no such file or directory")
 
 
+# A refusal from Claude Code's permission system ("Permission for this action was denied by the Claude Code auto mode
+# classifier. ...", "Permission to use Bash has been denied."). It is the whole result and names no path: the command
+# did not run, so it holds for every path in it.
+CC_DENIED = re.compile(r"(?i)\A\s*permission\b[^\n.]{0,80}\b(?:was|has been|been) denied")
+
+
 def parse_plugin_test(text):
     """{name: "pass"|"fail"|"skip"} from `claude plugin test` output: one `(pass) <name> [ms]` or `(fail) <name>` row
     per test. The summary lines (` N pass`, ` N fail`, `Ran …`) are not rows. A crashed file has its own row,
@@ -211,17 +217,19 @@ def refused(tool, res, pattern, isolated):
     text = result_text(res)
     if isolated and not text.strip():
         return True
+    if CC_DENIED.search(text):
+        return True
     if tool != "Bash":
         return bool(res.get("is_error")) or bool(REFUSED.search(text))
     tail = pattern_tail(pattern)
     return any(REFUSED.search(line) and tail in line for line in text.splitlines())
 
 
-def scan_transcripts(run_dir, patterns, isolated=False):
+def scan_transcripts(run_dir, patterns, isolated=False, skip_bash=None):
     """Leak hits and Bash commands, from the tool calls in every job's transcript. Text a worker writes into a .md
     file through a quoted heredoc (its RESULT.md, PLAN.md) is not looked at. A hit is `blocked` when its result shows
     the read was refused (see refused(); isolated: run.json's isolation, the paths the worker's tools and sandbox
-    cannot read)."""
+    cannot read). skip_bash: a compiled regex; a Bash command it matches (a whole-command match) is not scanned for hits."""
     hits, commands = [], []
     for path in sorted(glob.glob(os.path.join(run_dir, "jobs", "*", "transcript.jsonl"))):
         job = os.path.relpath(os.path.dirname(path), run_dir)
@@ -244,6 +252,8 @@ def scan_transcripts(run_dir, patterns, isolated=False):
                 if not isinstance(value, str):
                     continue
                 if name == "Bash":
+                    if skip_bash and skip_bash.fullmatch(value.strip()):
+                        continue
                     value = strip_md_heredocs(value)
                 res = results.get(block.get("id"))
                 for p in patterns:
