@@ -1,0 +1,45 @@
+== hrd-eval: 19 runs, 5 scenarios, 4 arms, repeats 1, started 10-26 20:18
+scenario             arm    pass decision     cost wall s   fix blockers outside invalid
+contract             A       1/1        -    $0.90    177  0.00      0.0       0       0
+contract             B       1/1        -    $0.57    114  0.00      0.0       0       0
+contract             B2      1/1        -    $1.70    253  1.00      1.0       0       0
+contract             R       1/1        -    $1.23    213  1.00      1.0       0       0
+decision-rule        A       1/1      1/1    $0.16     35  0.00        -       0       0
+decision-rule        B       1/1      1/1    $0.07     22  0.00        -       0       0
+decision-rule        B2      1/1      1/1    $0.16     31  0.00        -       0       0
+decision-rule        R       1/1      1/1    $0.16     35  0.00        -       0       0
+replay-13            A       1/1        -    $0.60    188  0.00      0.0       0       0
+replay-13            B       1/1        -    $0.25     97  0.00      0.0       0       0
+replay-13            B2      1/1        -    $0.58    155  0.00      0.0       0       0
+replay-13            R       1/1        -    $0.65    186  0.00      0.0       0       0
+replay-14            A       1/1        -    $1.18    515  0.00      0.0       1       0
+replay-14            B       0/1        -    $1.40   1474  1.00      1.0       0       0
+replay-14            B2      1/1        -    $1.31    539  0.00      0.0       0       0
+replay-14            R       1/1        -    $1.52    603  0.00      0.0       2       0
+replay-15            A       0/1        -    $0.94    791  0.00      0.0       2       0
+replay-15            B       1/1        -    $1.12    798  1.00      1.0       0       0
+replay-15            B2      0/1        -    $1.32    573  0.00      0.0       2       0
+   pass: valid runs that pass the rule; decision: valid runs with an expected DECISION that matched; outside: changed files no allowed glob matches
+   cost: all runs; wall: median seconds; fix: mean fix rounds; blockers: mean of the first reviews' blockers
+
+== per arm (cost by the role that made each call)
+arm   runs  valid   pass      cost   planner   builder  reviewer
+A        5      5      4     $3.78     $1.61     $1.16     $1.02
+B        5      5      4     $3.40     $0.00     $1.95     $1.45
+B2       5      5      4     $5.07     $0.00     $3.95     $1.12
+R        4      4      4     $3.57     $1.30     $0.91     $1.36
+
+== disagreements: scenarios whose pass counts differ between arms
+   replay-14: A 1/1, B 0/1, B2 1/1, R 1/1
+      B ~/.cache/hrd-eval/20261026-201836/replay-14/B/r1: failing tests: a worker that stops without a report is reported once its screen sits still; background work of its own buys it an hour
+   replay-15: A 0/1, B 1/1, B2 0/1
+      A ~/.cache/hrd-eval/20261026-201836/replay-15/A/r1: failing tests: a reported worker's tab closes once it has sat idle, unless its question is still open, a worker that stops without a report is reported once its screen sits still; background work of its own buys it an hour
+      B2 ~/.cache/hrd-eval/20261026-201836/replay-15/B2/r1: failing tests: a worker that stops without a report is reported once its screen sits still; background work of its own buys it an hour
+
+   2 runs asked past the answer cap; auto: answered with no owner answer, unanswered: left so:
+      ~/.cache/hrd-eval/20261026-201836/replay-14/B/r1: auto 1, unanswered 0
+      ~/.cache/hrd-eval/20261026-201836/replay-14/R/r1: auto 1, unanswered 0
+
+   2 runs tried to read a leak path and were refused (not invalid):
+      ~/.cache/hrd-eval/20261026-201836/replay-15/B/r1: Bash ~/.claude/mods/herdr-agents
+      ~/.cache/hrd-eval/20261026-201836/replay-15/B2/r1: Bash ~/.claude/mods/herdr-agents
