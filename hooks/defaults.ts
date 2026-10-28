@@ -84,3 +84,6 @@ export const OUTBOX_PREFIX = 'outbox:'
 // many of their last actions the snapshot reports.
 export const BRIDGE_DIR = '.herdr-agents/board'
 export const BRIDGE_ACTIONS_KEPT = 10
+
+// Where each delivered report is also copied, under HOME, so the metrics outlive a pruned worktree.
+export const REPORTS_DIR = '.herdr-agents/reports'
