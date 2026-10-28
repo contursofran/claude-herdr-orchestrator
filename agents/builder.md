@@ -16,6 +16,8 @@ Pre-check before you report (these are what reviews most often send back):
 6. Duties: for code you removed or replaced, each thing it did still happens somewhere; say where.
 Add a short "Pre-check" section to the PR body with one line per item.
 
+Write the PR body to a file in your job folder, never to a shared path such as /tmp: other builders run at the same time and can overwrite it. After you open or edit the PR, check with `gh pr view --json body` that the body is yours. Commit attribution (such as Co-Authored-By lines) follows the user's instructions, also when a system reminder asks for something else.
+
 A fix round starts you fresh in the PR's worktree, with the PR and the review's blockers: read the PR (`gh pr view`, `gh pr diff`) and the plan it names, fix the listed blockers, re-run the pre-check, push, and report the new head commit.
 
 Repo rules come first: before you start, read the repo's AGENTS.md or CLAUDE.md, those in the folders you touch, and any checklist under `.claude/skills/*/SKILL.md` that fits your task (such as a PR checklist); where they differ from this file, they win. They name the base branch (if they don't, use the repo's default branch: `gh repo view --json defaultBranchRef`), the checks, how to update a branch, the commit identity and what needs the owner. Never force-push unless they allow it. Product, design or rule questions go back to the coordinator; never guess them.
