@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Job } from '../types'
-import { JOBS_KEEP_MS, JOBS_PREFIX } from './defaults'
+import { JOBS_DROP_MS, JOBS_KEEP_MS, JOBS_PREFIX } from './defaults'
 
 // The workers this session started, kept in $.state so a reload keeps them. Each
 // module keeps its own values the same way, as atoms only it reads and writes.
@@ -46,4 +46,21 @@ export async function restoreJobs($: EngineInterface): Promise<number> {
   if (Object.keys(back).length === 0) return 0
   await update($, jobsAtom, all => ({ ...back, ...all }))
   return Object.keys(back).length
+}
+
+// Reported jobs that ended more than JOBS_DROP_MS ago leave $.state and $.store, so the jobs
+// map (and the prune scan over it) does not grow for good. Returns how many were dropped.
+export async function dropOldJobs($: EngineInterface): Promise<number> {
+  const now = await $.clock.now()
+  let dropped = 0
+  await update($, jobsAtom, all => {
+    const next: Record<string, Job> = {}
+    for (const [name, j] of Object.entries(all)) {
+      if (j.status === 'reported' && j.endedAt !== undefined && now - j.endedAt > JOBS_DROP_MS) dropped++
+      else next[name] = j
+    }
+    return dropped ? next : all
+  })
+  if (dropped) await keep($)
+  return dropped
 }

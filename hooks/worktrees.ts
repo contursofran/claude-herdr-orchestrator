@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import { herdr, type HerdrAgent } from './herdr'
-import { jobs } from './state'
+import { dropOldJobs, jobs } from './state'
 
 // Every `pruneMinutes`, and on the prune command: removes the linked worktrees of the
 // repos this session's workers used once their branch's PR is merged on GitHub, the
@@ -18,10 +18,12 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
       const r = await $.process.run(args, { timeoutMs })
       return r.exitCode === 0 ? r.stdout.trim() : undefined
     }
+    await dropOldJobs($)
     const commons = new Set<string>()
-    for (const j of Object.values(await jobs($))) {
-      if (!(await $.fs.exists(j.cwd))) continue
-      const c = await run(['git', '-C', j.cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    // One rev-parse per folder, however many jobs ran there.
+    for (const cwd of new Set(Object.values(await jobs($)).map(j => j.cwd))) {
+      if (!(await $.fs.exists(cwd))) continue
+      const c = await run(['git', '-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
       if (c) commons.add(c)
     }
     if (commons.size === 0) return done

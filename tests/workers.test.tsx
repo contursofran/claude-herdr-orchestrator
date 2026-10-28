@@ -526,12 +526,44 @@ test("a worker's own session whose jobs are all reported makes no herdr call, at
     startedAt: 900_000,
     endedAt: 950_000,
     status: 'reported',
+    closed: true,
     token: 'tok-done',
   }
   const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': job } } }
   const { clock, calls } = await start($, on, {}, kept, { HERDR_AGENTS_ROLE: 'worker' })
   await clock.advance(10 * 60_000)
   expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+})
+
+const reportedJob = {
+  name: 'w-done',
+  profile: 'builder',
+  cwd: '/repo/wt',
+  dir: '/repo/wt/.herdr-agents/w-done',
+  startedAt: 900_000,
+  endedAt: 950_000,
+  status: 'reported',
+  token: 'tok-done',
+}
+
+test("a worker's own session closes a nested tab once it has sat idle after its report, then makes no herdr call", async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const { clock, calls, closed } = await start($, on, { closeIdleMinutes: 1 }, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.settle()
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  await clock.advance(2 * 60_000)
+  expect(closed).toContain('t-w-done')
+  calls.length = 0
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+})
+
+test('with closeIdleMinutes 0 a worker session with only reported jobs makes no herdr call', async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const { clock, calls, closed } = await start($, on, { closeIdleMinutes: 0 }, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  expect(closed).toEqual([])
 })
 
 test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env", async ($, on) => {
@@ -730,4 +762,47 @@ test("a delivered report and a stopped worker's screen are copied to the reports
   const own = Object.keys(files).find(f => f.startsWith('/repo-w-quiet/.herdr-agents/w-quiet/SCREEN-'))!
   expect(files[copies[0]!]).toBe(files[own])
   await stopAll($, clock, ['w-busy', 'w-quiet'])
+})
+
+// The jobs map does not grow for good: reported jobs leave it a week after they ended.
+test('reported jobs older than 7 days are dropped from the state and the store; newer and running ones stay', async ($, on) => {
+  const day = 24 * 60 * 60_000
+  const job = (name: string, over: object) => ({
+    name,
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: `/repo/wt/.herdr-agents/${name}`,
+    startedAt: 900_000,
+    token: `tok-${name}`,
+    ...over,
+  })
+  const jobs = {
+    'w-old': job('w-old', { status: 'reported', endedAt: 1_000_000 - 8 * day }),
+    'w-new': job('w-new', { status: 'reported', endedAt: 1_000_000 - 6 * day }),
+    'w-run': job('w-run', { status: 'running', startedAt: 1_000_000 - 30 * day }),
+  }
+  const { clock, store } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs } })
+  await clock.settle()
+  const kept = store.get('jobs:session-1234') as { jobs: Record<string, unknown> }
+  expect(Object.keys(kept.jobs).sort()).toEqual(['w-new', 'w-run'])
+  await stopAll($, clock, ['w-run'])
+})
+
+test('prune runs git rev-parse once per folder', async ($, on) => {
+  const job = (name: string) => ({
+    name,
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: `/repo/wt/.herdr-agents/${name}`,
+    startedAt: 900_000,
+    endedAt: 950_000,
+    status: 'reported',
+    token: `tok-${name}`,
+  })
+  const jobs = { 'w-a': job('w-a'), 'w-b': job('w-b'), 'w-c': job('w-c') }
+  const { clock, shell, files } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs } })
+  files['/repo/wt/x'] = ''
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(shell.filter(c => c.includes('rev-parse') && c.includes('--git-common-dir'))).toHaveLength(1)
 })
