@@ -82,7 +82,7 @@ export function reportReminder(job: Job) {
 // to end, which delivers its report.
 export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false) {
   const token = crypto.randomUUID().slice(0, 8)
-  const next: Job = { ...job, token, status: 'running', endedAt: undefined }
+  const next: Job = { ...job, token, status: 'running', endedAt: undefined, tail: undefined }
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   await saveJob($, next)
   // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
@@ -134,6 +134,22 @@ export async function reported($: EngineInterface, job: Job) {
   return !job.token || (await $.fs.read(path)).trimStart().startsWith(`<!-- report ${job.token} -->`)
 }
 
+// The text of a report as deliver archives it: RESULT.md without its token line.
+const reportBody = (text: string) => text.replace(/^\s*<!-- report \S+ -->\s*/, '')
+
+// Whether RESULT.md is a report not yet delivered: this prompt's token, and a body that
+// differs from the RESULT-<token>.md deliver wrote, so a delivered report is never sent twice.
+export async function fresh($: EngineInterface, job: Job) {
+  if (!job.token || !(await reported($, job))) return false
+  const archived = `${job.dir}/RESULT-${job.token}.md`
+  if (!(await $.fs.exists(archived))) return true
+  return reportBody(await $.fs.read(`${job.dir}/RESULT.md`)) !== (await $.fs.read(archived))
+}
+
+// Messages held for a non-Claude worker, sent when its turn ends (deliver, endTail).
+const heldPrompt = (queued: string[]) =>
+  `Messages from your coordinator, sent while you worked, are in ${queued.join(', ')}. Read them and do what they ask.`
+
 // Runs fn once the worker's earlier steps are done, so a wait and a sweep never deliver,
 // prompt or check the same job twice. An error ends that step only.
 function serial(name: string, fn: () => Promise<void>): Promise<void> {
@@ -184,6 +200,7 @@ export function arm($: EngineInterface, job: Job, mode: 'finish' | 'resume') {
 // turn without a report is waited on for its next turn. The sweep judges a quiet one.
 async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', status: string) {
   const current = (await jobs($))[job.name]
+  if (current?.status === 'reported' && current.tail && current.token === job.token) return await settleTail($, current, status)
   // A stale child: its job was reported, stopped or prompted again since it was armed.
   if (!current || current.status !== 'running' || current.token !== job.token) return
   if (await reported($, current)) return await deliver($, current, 'done')
@@ -197,6 +214,43 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
   arm($, current, 'resume')
 }
 
+// A reported job whose turn was not over (see Job.tail), when herdr's wait for it settles.
+async function settleTail($: EngineInterface, job: Job, status: string) {
+  if (await fresh($, job)) return await deliver($, job, 'done')
+  if (status === 'blocked') {
+    if (job.tail === 'early') await blockedAfterReport($, job)
+    return
+  }
+  // It works again (the owner answered): its turn's end is the one to wait for next.
+  if (status === 'working') return arm($, job, 'finish')
+  await endTail($, job)
+}
+
+// A worker that reported early, then waits at an approval or question: the coordinator is told once.
+async function blockedAfterReport($: EngineInterface, job: Job) {
+  const { after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked' } : undefined,
+  )
+  if (!after) return
+  await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
+  arm($, after, 'resume')
+  await post(
+    $,
+    `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\nAfter its report, the worker waits at an approval or question in its herdr tab. Ask the person to answer it there, or send the answer with the message tool. Its report above still stands; a new RESULT.md from this turn is delivered as a further report.\n</herdr-agent>`,
+    true,
+  )
+}
+
+// The turn of a reported job ended with no new report: it is no longer watched, and the
+// messages held for it go out as a prompt (which submits no report of its own).
+async function endTail($: EngineInterface, job: Job) {
+  const { before, after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && j.tail ? { ...j, tail: undefined, queued: [] } : undefined,
+  )
+  const queued = before?.queued ?? []
+  if (after && queued.length > 0 && !after.closed) await prompt($, { ...after, queued: [] }, heldPrompt(queued))
+}
+
 // Every 3 s (register): a running worker whose RESULT.md carries its token is delivered as
 // soon as the file is there, though the worker may still be finishing its turn. The wait
 // and the sweep stay for a blocked worker and for a turn that ends with no report. It makes
@@ -204,12 +258,19 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
 // step queued behind a slow one does not hold up the band's tick.
 export async function checkReports($: EngineInterface) {
   for (const job of Object.values(await jobs($))) {
-    if (job.status !== 'running' || !(await reported($, job))) continue
+    const running = job.status === 'running'
+    // A job blocked after its report is watched for a new one too.
+    if (running ? !(await reported($, job)) : job.tail !== 'blocked' || !(await fresh($, job))) continue
     void serial(job.name, async () => {
       const current = (await jobs($))[job.name]
-      // A worker with messages held for it is left to its turn's end: deliver sends them then.
-      if (!current || current.status !== 'running' || current.queued?.length) return
-      if (await reported($, current)) await deliver($, current, 'done')
+      if (!current) return
+      if (current.status === 'running') {
+        // A worker with messages held for it is left to its turn's end: deliver sends them then.
+        if (current.queued?.length) return
+        if (await reported($, current)) await deliver($, current, 'done', QUIET_MS, undefined, { early: true })
+      } else if (current.tail === 'blocked' && (await fresh($, current))) {
+        await deliver($, current, 'done', QUIET_MS, undefined, { early: true })
+      }
     })
   }
 }
@@ -231,14 +292,16 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   const byName = new Map<string, HerdrAgent>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
   for (const job of Object.values(await jobs($))) {
-    if (job.status !== 'running') continue
+    if (job.status !== 'running' && !job.tail) continue
     await serial(job.name, async () => {
       const current = (await jobs($))[job.name]
-      if (!current || current.status !== 'running') return
-      if (await reported($, current)) return await deliver($, current, 'done')
+      if (!current) return
+      const a = byName.get(job.name)
+      const early = a?.agent_status === 'working'
+      if (current.status === 'reported') return current.tail ? await sweepTail($, current, agents, a, early) : undefined
+      if (await reported($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
       // A CLI error is not evidence of anything.
       if (agents === undefined) return
-      const a = byName.get(job.name)
       if (!a) {
         const n = (misses.get(job.name) ?? 0) + 1
         misses.set(job.name, n)
@@ -275,6 +338,30 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   }
   if (closeMinutes > 0) await closeIdle($, closeMinutes, agents)
   void refresh($)
+}
+
+// A reported job still watched (see Job.tail), as the sweep sees it. No quiet-screen rule:
+// the report is out, so only herdr's state says whether the turn goes on.
+async function sweepTail($: EngineInterface, job: Job, agents: HerdrAgent[] | undefined, a: HerdrAgent | undefined, early: boolean) {
+  if (await fresh($, job)) return await deliver($, job, 'done', QUIET_MS, undefined, { early })
+  if (agents === undefined) return
+  if (!a) {
+    const n = (misses.get(job.name) ?? 0) + 1
+    misses.set(job.name, n)
+    // Its tab is gone: nothing more will come, and held messages have nowhere to go.
+    if (n >= GONE_MISSES) {
+      misses.delete(job.name)
+      await updateJob($, job.name, j =>
+        j.token === job.token && j.status === 'reported' && j.tail ? { ...j, tail: undefined } : undefined,
+      )
+    }
+    return
+  }
+  misses.delete(job.name)
+  lastStatus.set(job.name, a.agent_status)
+  if (a.agent_status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
+  if (a.agent_status !== 'working' && a.agent_status !== 'blocked') return await endTail($, job)
+  if (!armed.has(job.name)) arm($, job, a.agent_status === 'working' ? 'finish' : 'resume')
 }
 
 // A Claude worker waiting on its own background shell, monitor or subagent keeps a
@@ -376,9 +463,19 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
 }
 
 // `why` says why a worker stopped when herdr's status alone doesn't (a prompt that never arrived).
-export async function deliver($: EngineInterface, job: Job, status: string, quietMs = QUIET_MS, why?: string) {
+// `opts.early`: the worker may still be in its turn, so its job stays watched (Job.tail).
+export async function deliver(
+  $: EngineInterface,
+  job: Job,
+  status: string,
+  quietMs = QUIET_MS,
+  why?: string,
+  opts: { early?: boolean } = {},
+) {
   const current = (await jobs($))[job.name]
-  if (!current || current.status !== 'running') return
+  if (!current) return
+  // A reported job still watched may deliver again, but only a report it has not delivered.
+  if (current.status !== 'running' && !(current.tail && (await fresh($, current)))) return
   // A caller holding an earlier prompt's token does nothing: that prompt has been replaced.
   if (job.token !== undefined && current.token !== job.token) return
   if (status === 'gone') lastStatus.set(job.name, 'gone')
@@ -390,8 +487,10 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
   let prs: number[] = []
   // A report's header (see report.ts): its status and PRs go on the prompt's tag.
   let header: Header | undefined
+  let tail: Job['tail']
   if (await reported($, current)) {
-    body = (await $.fs.read(resultPath)).replace(/^\s*<!-- report \S+ -->\s*/, '')
+    if (status === 'done' && opts.early) tail = 'early'
+    body = reportBody(await $.fs.read(resultPath))
     header = parseHeader(body)
     const linked = Number(body.match(/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/)?.[1]) || undefined
     prs = header?.prs.length ? header.prs : linked ? [linked] : []
@@ -432,17 +531,18 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     if (ids.length)
       body += `\n\n[Pinned for the owner as ${ids.join(', ')}. The owner is pinged when this turn ends. Settle any that is not theirs (not a product rule, design choice or approval) now, with decided and your answer; the band shows them what you chose.]`
   } else if (status === 'blocked' && !why) {
+    tail = 'blocked'
     body =
       'The worker is waiting at an approval or question in its herdr tab. Ask the person to answer it there, or send the answer with the message tool.'
     await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   } else {
-    let tail = ''
+    let lines = ''
     try {
-      tail = (await $.process.run(['herdr', 'agent', 'read', job.name, '--lines', '40'])).stdout.trim()
+      lines = (await $.process.run(['herdr', 'agent', 'read', job.name, '--lines', '40'])).stdout.trim()
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
-    await $.fs.write(screen, tail.slice(-4000))
-    await archive($, job.dir, screen.slice(job.dir.length + 1), tail.slice(-4000))
+    await $.fs.write(screen, lines.slice(-4000))
+    await archive($, job.dir, screen.slice(job.dir.length + 1), lines.slice(-4000))
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
 
@@ -450,22 +550,30 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
   const endedAt = await $.clock.now()
   const { before, after } = await updateJob($, job.name, j =>
     j.token === current.token
-      ? { ...prs.reduce((x, n) => withPr(x, n), j), status: 'reported', queued: [], wait: undefined, endedAt }
+      ? {
+          ...prs.reduce((x, n) => withPr(x, n), j),
+          status: 'reported',
+          queued: tail === 'early' ? (j.queued ?? []) : [],
+          wait: undefined,
+          endedAt,
+          tail,
+        }
       : undefined,
   )
   if (!after) return
+  // A worker blocked at a question may carry on once the owner answers: its next turn is the one to watch.
+  if (tail === 'blocked') arm($, after, 'resume')
+  // An early report leaves the turn's end to be waited on (a no-op while that wait is still armed).
+  if (tail === 'early') arm($, after, 'finish')
   misses.delete(job.name)
   quiet.delete(job.name)
   $.ui.toast(`herdr worker ${job.name}: ${status}`)
-  const queued = before?.queued ?? []
+  // An early report leaves held messages for the turn's end (endTail).
+  const queued = tail === 'early' ? [] : (before?.queued ?? [])
   if (queued.length > 0) {
     if (status === 'done' && !after.closed) {
       // Messages held while a non-Claude worker worked go out now.
-      await prompt(
-        $,
-        { ...after, queued: [] },
-        `Messages from your coordinator, sent while you worked, are in ${queued.join(', ')}. Read them and do what they ask.`,
-      )
+      await prompt($, { ...after, queued: [] }, heldPrompt(queued))
       body += `\n\n[The ${queued.length} message(s) queued for it were sent now; its next report follows.]`
     } else {
       body += `\n\n[${queued.length} message(s) held for it were not sent, as it did not finish (${status}): ${queued.join(', ')}.]`
@@ -482,7 +590,10 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
 
 // session.start: each running worker gets its wait back, since a reload killed the children.
 export function resumeWatching($: EngineInterface, list: Job[]) {
-  for (const job of list) if (job.status === 'running') arm($, job, 'finish')
+  for (const job of list) {
+    if (job.status === 'running') arm($, job, 'finish')
+    else if (job.tail) arm($, job, job.tail === 'blocked' ? 'resume' : 'finish')
+  }
 }
 
 export type SpawnArgs = { worker: string; profile: string; cwd: string; task: string }
@@ -611,6 +722,20 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
       }
       if (result) return
     }
+    if (latest.tail === 'early' && kind !== 'claude') {
+      // Its report is out but its turn is not over: the message waits for that turn's end (settleTail).
+      const { after } = await updateJob($, job.name, j =>
+        j.token === latest.token && j.status === 'reported' && j.tail === 'early'
+          ? { ...j, queued: [...(j.queued ?? []), path] }
+          : undefined,
+      )
+      if (after) {
+        result = {
+          result: `${e.worker} (${kind}) is still finishing its turn after its report, so the message is held and sent when that turn ends.`,
+        }
+        return
+      }
+    }
     await prompt(
       $,
       latest,
@@ -626,7 +751,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
 export async function stopWorker($: EngineInterface, e: { worker: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
-  await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now() })
+  await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now(), tail: undefined })
   try {
     const agent = await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])
     await herdr($, ['tab', 'close', agent.agent.tab_id])
@@ -648,7 +773,7 @@ export async function closeIdle($: EngineInterface, minutes: number, agents?: He
   const asking = new Set((await openQuestions($)).map(d => d.from))
   const closed: string[] = []
   for (const job of Object.values(await jobs($))) {
-    if (job.status !== 'reported' || job.closed || asking.has(job.name)) continue
+    if (job.status !== 'reported' || job.tail || job.closed || asking.has(job.name)) continue
     if (job.endedAt === undefined || now - job.endedAt < minutes * 60_000) continue
     // A tab herdr no longer lists is marked closed without a close call.
     const agent = agents.find(a => a.name === job.name)

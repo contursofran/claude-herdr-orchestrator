@@ -481,7 +481,7 @@ test("a worker's own session with no running job makes no herdr call, opens no s
 })
 
 test("a worker's own session sweeps the workers it started while they run, and delivers each report at the next tick", async ($, on) => {
-  const { clock, submitted, typed, files, calls, kill } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
+  const { clock, submitted, typed, files, calls, kill, status } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
   // herdr ends the wait with an error: the child is gone, and nothing reports for it.
   await kill('w-busy')
@@ -492,7 +492,9 @@ test("a worker's own session sweeps the workers it started while they run, and d
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
   await clock.advance(3000 + BATCH_MS)
   expect(submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))).toHaveLength(1)
-  // Its report was its last running job: from then on the session makes no herdr call.
+  // Reported while its turn went on, it is still watched; its turn ends, and from then on the session makes no herdr call.
+  status['w-busy'] = 'idle'
+  await clock.advance(60_000)
   calls.length = 0
   await clock.advance(10 * 60_000)
   expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
@@ -921,4 +923,153 @@ test('prune runs git rev-parse once per folder', async ($, on) => {
   await clock.settle()
   await command($, 'hrd-prune')
   expect(shell.filter(c => c.includes('rev-parse') && c.includes('--git-common-dir'))).toHaveLength(1)
+})
+
+// A reported job stays watched until its turn ends (Job.tail).
+const reportsOf = (submitted: string[]) => submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))
+
+test('a non-Claude worker reported early gets messages held until its turn ends', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on, codex)
+  await spawnBusy($, 'x')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  expect(reportsOf(submitted)).toHaveLength(1)
+  const before = typed.length
+  const held = await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  expect(JSON.stringify(held)).toMatch(/still finishing its turn after its report/)
+  expect(typed.length).toBe(before)
+  await finish('w-busy')
+  await clock.advance(BATCH_MS)
+  expect(typed.at(-1)).toMatch(/Messages from your coordinator, sent while you worked, are in .*MESSAGE-/)
+  // Sent as a prompt: no further report.
+  expect(reportsOf(submitted)).toHaveLength(1)
+})
+
+test('a Claude worker reported early still gets its message typed in', async ($, on) => {
+  const { clock, typed, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  const before = typed.length
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  expect(typed.length).toBe(before + 1)
+  expect(typed.at(-1)).toMatch(/Also check the docs\./)
+})
+
+test('a worker that blocks after its early report is reported blocked once', async ($, on) => {
+  const { clock, submitted, typed, files, calls, emit, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', tail: 'early' })
+  await emit('w-busy', 'blocked')
+  await clock.advance(BATCH_MS)
+  const reports = reportsOf(submitted)
+  expect(reports).toHaveLength(2)
+  expect(reports[1]).toMatch(/status="blocked">\nAfter its report/)
+  expect(calls.filter(c => c[1] === 'notification' && c[3] === 'w-busy is blocked')).toHaveLength(1)
+  expect(jobOf(store, 'w-busy')).toMatchObject({ tail: 'blocked' })
+  await clock.advance(3 * 60_000)
+  expect(reportsOf(submitted)).toHaveLength(2)
+})
+
+test('a worker blocked without a report is collected once the owner answers in its tab', async ($, on) => {
+  const { clock, submitted, typed, files, emit, finish, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  await emit('w-busy', 'blocked')
+  await clock.advance(BATCH_MS)
+  expect(reportsOf(submitted)[0]).toMatch(/status="blocked">\nThe worker is waiting at an approval/)
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', tail: 'blocked' })
+  await emit('w-busy', 'working')
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nAnswered, and done.`
+  // The report check finds it while the worker still works; its turn's end then closes the watch.
+  await clock.advance(2 * BATCH_MS)
+  const reports = reportsOf(submitted)
+  expect(reports).toHaveLength(2)
+  expect(reports[1]).toMatch(/status="done">\nAnswered, and done\./)
+  expect(jobOf(store, 'w-busy').tail).toBe('early')
+  await finish('w-busy')
+  await clock.advance(BATCH_MS)
+  expect(reportsOf(submitted)).toHaveLength(2)
+  expect(jobOf(store, 'w-busy').tail).toBeUndefined()
+})
+
+test('a worker blocked after its early report that ends its turn without a new report sends nothing more', async ($, on) => {
+  const { clock, submitted, typed, files, emit, finish, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  await emit('w-busy', 'blocked')
+  await clock.advance(BATCH_MS)
+  expect(reportsOf(submitted)).toHaveLength(2)
+  await finish('w-busy')
+  await clock.advance(3 * 60_000)
+  expect(reportsOf(submitted)).toHaveLength(2)
+  expect(jobOf(store, 'w-busy').tail).toBeUndefined()
+})
+
+test('a tail job whose wait child died is flushed by the sweep', async ($, on) => {
+  const { clock, typed, files, kill, status, store } = await start($, on, codex)
+  await spawnBusy($, 'x')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  const before = typed.length
+  await kill('w-busy')
+  status['w-busy'] = 'idle'
+  await clock.advance(60_000)
+  expect(typed.length).toBe(before + 1)
+  expect(typed.at(-1)).toMatch(/Messages from your coordinator/)
+  expect(jobOf(store, 'w-busy').tail).toBeUndefined()
+})
+
+test('stop clears the tail: a later block is not reported', async ($, on) => {
+  const { clock, submitted, typed, files, emit, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  expect(jobOf(store, 'w-busy').tail).toBeUndefined()
+  await emit('w-busy', 'blocked')
+  await clock.advance(BATCH_MS + 3 * 60_000)
+  expect(reportsOf(submitted)).toHaveLength(1)
+})
+
+test('a held message to a tail job whose tab is gone is not typed', async ($, on) => {
+  const { clock, typed, files, gone, store } = await start($, on, codex)
+  await spawnBusy($, 'x')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  const before = typed.length
+  gone.add('w-busy')
+  await clock.advance(3 * 60_000)
+  expect(jobOf(store, 'w-busy').tail).toBeUndefined()
+  expect(typed.length).toBe(before)
+})
+
+test('the prune of old jobs and the idle close both leave a watched job alone', async ($, on) => {
+  const day = 24 * 60 * 60_000
+  const job = {
+    name: 'w-tail',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: '/repo/wt/.herdr-agents/w-tail',
+    startedAt: 1_000_000 - 30 * day,
+    endedAt: 1_000_000 - 8 * day,
+    status: 'reported',
+    token: 'tok',
+    tail: 'early',
+  }
+  const { clock, store } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs: { 'w-tail': job } } })
+  await clock.settle()
+  expect(Object.keys((store.get('jobs:session-1234') as { jobs: object }).jobs)).toEqual(['w-tail'])
 })
