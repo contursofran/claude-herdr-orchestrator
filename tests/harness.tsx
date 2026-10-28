@@ -116,7 +116,7 @@ export async function start(
   const CONFIG = '/home/t/.claude/herdr-agents.json'
   const files: Record<string, string> = { [CONFIG]: JSON.stringify({ repos: { web: 'acme/website' }, ...config }) }
   // The clone install.sh recorded in the mod's folder (its `clone` file, read by /hrd-update); '' for none.
-  const recorded = { clone: '/src/herdr' }
+  const recorded = { clone: '/src/herdr', modPlugin: '' }
   // Calls held by gate(): each waits for its release function, then runs as usual.
   const gates: { match: (argv: string[]) => boolean; release: () => void; held: Promise<void>; used: boolean }[] = []
   const gate = (match: (argv: string[]) => boolean) => {
@@ -133,7 +133,12 @@ export async function start(
       .map(f => ({ name: f.slice(e.path!.length + 1), kind: 'file' as const, size: files[f]!.length, mtimeMs: 0, isLink: false })),
   }))
   // The mod's `clone` file is read from wherever the test loads the mod, so any path ending in /clone is it.
-  on('fs.read', (_, e) => ({ value: e.path.endsWith('/clone') ? recorded.clone : (files[e.path] ?? '') }))
+  // Likewise the mod's own .claude-plugin/plugin.json (read for the band's version): recorded.modPlugin, unless the test put a file there.
+  on('fs.read', (_, e) => ({
+    value: e.path.endsWith('/clone')
+      ? recorded.clone
+      : (files[e.path] ?? (e.path.endsWith('/.claude-plugin/plugin.json') ? recorded.modPlugin : '')),
+  }))
   on('fs.write', async (_, e) => {
     const hold = gates.find(g => !g.used && g.match(['fs.write', e.path]))
     if (hold) {
