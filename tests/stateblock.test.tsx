@@ -62,6 +62,10 @@ test('a second write replaces the block in place', async ($, on) => {
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
   await clock.advance(12_000)
+  // The report is delivered while the worker still works: it stays under Running until its turn ends.
+  expect(files[STATE]).toMatch(/### Running\n- w-a .* · finishing its turn since .*\n### Waiting\n- none\n### Recent reports\n- .* w-a /)
+  await emit('w-a', 'done')
+  await clock.advance(3000)
   const text = files[STATE]!
   expect(text.startsWith('# S\n## Ready\n- a\n')).toBe(true)
   expect(text.split(AUTO_START)).toHaveLength(2)
@@ -140,6 +144,17 @@ test('renderBlock orders running by start and reports by end, newest first, and 
   expect(text).toContain(
     '### Recent reports\n- 2026-10-03 08:00 new (builder) blocked: no report file\n- 2026-10-01 12:00 old (builder) done: /f/old.md\n',
   )
+})
+
+test('renderBlock lists a reported job that is still watched as running, by what it waits at', () => {
+  const text = renderBlock([
+    job({ name: 'a', status: 'reported', tail: 'early', endedAt: 5, startedAt: 1 }),
+    job({ name: 'b', status: 'reported', tail: 'blocked', endedAt: 6, startedAt: 2 }),
+  ])
+  expect(text).toContain(
+    '### Running\n- a (builder) in /r · finishing its turn since 1970-01-01 00:00\n- b (builder) in /r · blocked after its report since 1970-01-01 00:00\n### Waiting\n- none\n',
+  )
+  expect(text).toContain('### Recent reports\n- 1970-01-01 00:00 b (builder) reported:')
 })
 
 test('renderBlock lists only the newest RECENT_REPORTS reports', () => {

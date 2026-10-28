@@ -79,7 +79,7 @@ export async function dropOldJobs($: EngineInterface): Promise<number> {
   await update($, jobsAtom, all => {
     const next: Record<string, Job> = {}
     for (const [name, j] of Object.entries(all)) {
-      if (j.status === 'reported' && j.endedAt !== undefined && now - j.endedAt > JOBS_DROP_MS) dropped++
+      if (j.status === 'reported' && !j.tail && j.endedAt !== undefined && now - j.endedAt > JOBS_DROP_MS) dropped++
       else next[name] = j
     }
     return dropped ? next : all

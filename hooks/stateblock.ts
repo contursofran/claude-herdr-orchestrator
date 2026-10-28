@@ -16,12 +16,16 @@ const utc = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T',
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 export function renderBlock(list: Job[]): string {
-  const running = list.filter(j => j.status === 'running').sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name))
-  const waiting = running.filter(j => j.wait)
+  const running = list
+    .filter(j => j.status === 'running' || j.tail)
+    .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name))
+  const waiting = running.filter(j => j.status === 'running' && j.wait)
   const recent = list
     .filter(j => j.status === 'reported' && j.endedAt !== undefined)
     .sort((a, b) => b.endedAt! - a.endedAt! || a.name.localeCompare(b.name))
     .slice(0, RECENT_REPORTS)
+  const state = (j: Job) =>
+    j.status === 'running' ? (j.wait ? 'waiting' : 'running') : j.tail === 'blocked' ? 'blocked after its report' : 'finishing its turn'
   const runningLine = (j: Job) => {
     const prs = j.prs ?? []
     const issues = (j.refs ?? []).filter(n => !prs.includes(n))
@@ -30,7 +34,7 @@ export function renderBlock(list: Job[]): string {
       j.branch ? ` on ${j.branch}` : '',
       issues.length ? ` · ${issues.map(n => `#${n}`).join(', ')}` : '',
       prs.length ? ` · PR ${prs.map(n => `#${n}`).join(', ')}` : '',
-      ` · ${j.wait ? 'waiting' : 'running'} since ${utc(j.startedAt)}`,
+      ` · ${state(j)} since ${utc(j.startedAt)}`,
     ].join('')
   }
   const section = (title: string, lines: string[]) => [`### ${title}`, ...(lines.length ? lines : ['- none'])]

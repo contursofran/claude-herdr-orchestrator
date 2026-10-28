@@ -13,6 +13,9 @@ export type Job = {
   queued?: string[]
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
+  // set while a reported job's turn is not over, so it is still watched: 'early' = reported before its
+  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report
+  tail?: 'early' | 'blocked'
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
   // the brief's first line: the sidebar's task title (TASK.md changes with follow-ups)
