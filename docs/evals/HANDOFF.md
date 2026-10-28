@@ -1,4 +1,4 @@
-# Evals handoff (#28), 2026-10-27
+# Evals handoff (#28), 2026-10-28
 
 Where the eval suite stands, what the runs show, and what to run next. The full plan and the settled design answers are in [PLAN.md](PLAN.md). The scored runs are in [runs/](runs/): a `.txt` table and a `.json` file per results folder.
 
@@ -13,11 +13,11 @@ Should the mod fold the planner into the builder, following the article "Buildin
 | A | Baseline: planner → builder → reviewer |
 | B | No planner. The builder plans for itself |
 | B2 | No planner, builder on Opus medium |
-| BH | No planner, builder on Haiku xhigh (the mod's default builder; not run yet) |
+| BH | No planner, builder on Haiku xhigh (the mod's default builder until 0.14.0) |
 | C | Fix rounds resume the same builder (not run yet) |
 | R | Reviewer on Opus medium instead of low |
 
-Every run so far used the profiles in [`scripts/hrd-eval/config.json`](../../scripts/hrd-eval/config.json): builder Sonnet medium, planner Opus low, reviewer Opus low. Pass it with `--config scripts/hrd-eval/config.json`, so a run does not depend on the machine's `~/.claude/herdr-agents.json`. The runner rejects profiles without `--model`, such as the mod's own `herdr-agents:` profiles. These are **not** the mod's defaults (`agents/*.md`: builder Haiku xhigh, planner and reviewer Opus high).
+Every run so far used the profiles in [`scripts/hrd-eval/config.json`](../../scripts/hrd-eval/config.json): builder Sonnet medium, planner Opus low, reviewer Opus low. Pass it with `--config scripts/hrd-eval/config.json`, so a run does not depend on the machine's `~/.claude/herdr-agents.json`. The runner rejects profiles without `--model`, such as the mod's own `herdr-agents:` profiles. Since #50 the mod's default builder is the same (Sonnet medium); its planner and reviewer stay on Opus high.
 
 `--agent builder` loads `~/.claude/agents/builder.md` (the mod is off in workers), not the repo's `agents/builder.md`. Today both have the same text. To eval a change to `agents/*.md`, copy it to `~/.claude/agents/` first.
 
@@ -30,6 +30,7 @@ Every run so far used the profiles in [`scripts/hrd-eval/config.json`](../../scr
 | 20261026-201836 | A, B, B2, R | All scenarios but replay-26. Stopped by hand after 19 runs |
 | 20261027-173615 | A, B, B2, R | replay-26, one repeat. Fills the gap of 20261026-201836 |
 | 20261027-175250 | A, B | replay-14, -15, -26, three repeats. The A vs B run |
+| 20261028-000352 | BH | replay-14, -15, -26, three repeats. Haiku builder without a planner |
 
 A vs B over the three valid runs (all scenarios, so not one repeat each):
 
@@ -58,7 +59,12 @@ B            3/3   3/3   3/3   9/9   $6.02    $0.00    $3.98    $2.03
 5. **The decision rule works without a planner.** Every arm stopped and asked the owner on decision-rule (10-26).
 6. **Only replay-14, -15 and -26 separate the arms**, and on 10-27 only replay-26 did. contract, decision-rule and replay-13 are smoke tests.
 
-What this means for the mod: the builder plans for itself, the planner is kept for work that needs several PRs or leaves the approach open, and the savings go to verification. The open risk: B is proven with a Sonnet builder, and the mod ships Haiku. Run BH before the mod drops the planner by default.
+7. **A Haiku builder does not plan well for itself** (BH, 20261028-000352: 3/9 scored, $7.03, $0.78 a run against B's $0.67).
+   - replay-14 and -15: the code passed the hidden tests in all 6 runs. 3 of them timed out at the 20 min call limit after the PR was open: the builder polled `gh pr checks`, and the eval's gh shim reports no checks, as GitHub does for a repo with no CI. A harness gap (see Known gaps), but these runs were never reviewed.
+   - replay-26: 0/3, and real. Two builders had no PR after 20 min; one pushed and failed the band and bridge tests.
+   - Haiku is not cheaper: it spends more tokens and 2–4 times the wall time of Sonnet (median 16–21 min against 3–9).
+
+What this means for the mod (#50, owner 10-28): the builder runs on Sonnet medium and plans for itself; the planner is kept for work that needs several PRs or leaves the approach open, and the savings go to verification (#49). Haiku with a planner was never measured; the owner chose the measured B setup instead.
 
 ## What this means for v2 (#23)
 
@@ -69,11 +75,8 @@ What this means for the mod: the builder plans for itself, the planner is kept f
 
 ## Next runs, in order
 
-1. **BH vs B: does the Haiku builder plan for itself?** (~$5, ~30 min). Decides whether the mod drops the planner by default:
-   `python3 scripts/hrd-eval.py --config scripts/hrd-eval/config.json --arms B,BH --scenarios replay-14,replay-15,replay-26 --repeats 3 --max-cost 15`
-   (B is already in 20261027-175250; run `--arms BH` alone to save ~$6.)
-2. **Reviewer catch rate** (new scenario type, needs a PR). Give the reviewer PRs with a seeded bug: half an issue built, a removed duty (like A/r3's bridge inbox), a regression of an existing test. Compare reviewer configs (low vs medium, the reviewer prompt before and after its change). Reviewer calls only, so it's cheap.
-3. **2–4 more replay scenarios** from harder merged PRs. One scenario that separates the arms is too few.
+1. **Reviewer catch rate** (new scenario type, needs a PR). Give the reviewer PRs with a seeded bug: half an issue built, a removed duty (like A/r3's bridge inbox), a regression of an existing test. Compare reviewer configs (low vs medium, the reviewer prompt before and after its change). Reviewer calls only, so it's cheap.
+2. **2–4 more replay scenarios** from harder merged PRs. One scenario that separates the arms is too few.
 
 Score a folder with `python3 scripts/hrd-eval/score.py <results folder>`. Add `--dry-run` to any run to see the matrix and the cost estimate first.
 
@@ -91,4 +94,5 @@ Score a folder with `python3 scripts/hrd-eval/score.py <results folder>`. Add `-
 - Workers can run whole-disk searches (`find / …`), which load the CPU for a few minutes. Not blocked yet.
 - Within one matrix, a worker could read another run's `grade/` folder in the seconds before its hidden tests are removed.
 - `npm run typecheck` has a TS2589 error on main, unrelated to the evals.
+- The gh shim reports no checks for a PR, so a builder that waits for CI polls until the call timeout (3 BH runs). Tell the builder the eval remote runs no CI, or have the shim report the scenario's test command as the PR's check.
 - `tests/test_hrd_eval_runner.py` failed once in three full runs on 10-27 and passed the other two: a timing-sensitive test, not yet named.

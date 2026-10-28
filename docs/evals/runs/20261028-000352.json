@@ -1,0 +1,868 @@
+{
+  "matrix": {
+    "started": 1793156632.432954,
+    "repo_root": "~/Documents/code/personal/claude-herdr-orchestrator",
+    "scenarios": ["replay-14", "replay-15", "replay-26"],
+    "arms": {
+      "BH": {
+        "id": "BH",
+        "note": "no planner, builder on Haiku xhigh (the mod's default builder)",
+        "fixRound": "fresh",
+        "maxFixRounds": 2,
+        "disable": ["planner"],
+        "profiles": {
+          "builder": {
+            "kind": "claude",
+            "args": ["--agent", "builder", "--model", "haiku", "--effort", "xhigh", "--permission-mode", "auto"]
+          },
+          "reviewer": {
+            "kind": "claude",
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
+            "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
+          }
+        },
+        "warnings": []
+      }
+    },
+    "repeats": 3,
+    "max_cost": 15.0,
+    "estimate": 4.86
+  },
+  "runs": [
+    {
+      "scenario": "replay-14",
+      "arm": "BH",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-14/BH/r1",
+      "status": "done",
+      "pass": true,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [],
+      "hidden": {
+        "new_pass": 1,
+        "new_total": 1,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": 0,
+        "total": 0
+      },
+      "decision": {
+        "expected": false,
+        "raised": true,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 2,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [".claude-plugin/plugin.json"],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 0.38109497,
+          "cost_reported": 0.38109497,
+          "tokens": {
+            "inp": 116,
+            "out": 85837,
+            "cr": 5463795,
+            "cw": 148259
+          },
+          "secs": 815.4901850223541
+        },
+        "reviewer": {
+          "calls": 2,
+          "cost": 0.35302920000000004,
+          "cost_reported": 0.35302920000000004,
+          "tokens": {
+            "inp": 16,
+            "out": 3533,
+            "cr": 172326,
+            "cw": 30980
+          },
+          "secs": 58.26295614242554
+        }
+      },
+      "cost": 0.73412417,
+      "wall": 884.9758901596069,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-14",
+      "arm": "BH",
+      "repeat": 2,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-14/BH/r2",
+      "status": "done",
+      "pass": true,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [],
+      "hidden": {
+        "new_pass": 1,
+        "new_total": 1,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": 0,
+        "total": 0
+      },
+      "decision": {
+        "expected": false,
+        "raised": true,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 2,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 2,
+          "cost": 0.40146932999999996,
+          "cost_reported": 0.40146932999999996,
+          "tokens": {
+            "inp": 96,
+            "out": 98669,
+            "cr": 4812011,
+            "cw": 162314
+          },
+          "secs": 916.5926110744476
+        },
+        "reviewer": {
+          "calls": 1,
+          "cost": 0.2398528,
+          "cost_reported": 0.2398528,
+          "tokens": {
+            "inp": 8,
+            "out": 2198,
+            "cr": 62744,
+            "cw": 22914
+          },
+          "secs": 30.767422914505005
+        }
+      },
+      "cost": 0.6413221299999999,
+      "wall": 961.8505189418793,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-14",
+      "arm": "BH",
+      "repeat": 3,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-14/BH/r3",
+      "status": "timeout",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": ["status timeout", "no PR: S1"],
+      "hidden": {
+        "new_pass": 1,
+        "new_total": 1,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": null,
+        "total": null
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": false,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [".claude-plugin/plugin.json"],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 0.45278089,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 120,
+            "out": 89985,
+            "cr": 6231087,
+            "cw": 157559
+          },
+          "secs": 1200.5789768695831
+        },
+        "reviewer": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        }
+      },
+      "cost": 0.45278089,
+      "wall": 1210.7629868984222,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-15",
+      "arm": "BH",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-15/BH/r1",
+      "status": "done",
+      "pass": true,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [],
+      "hidden": {
+        "new_pass": 1,
+        "new_total": 1,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": 0,
+        "total": 0
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [".claude-plugin/plugin.json", "hooks/workers.ts"],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 0.45208874,
+          "cost_reported": 0.45208874,
+          "tokens": {
+            "inp": 130,
+            "out": 86248,
+            "cr": 6460986,
+            "cw": 155909
+          },
+          "secs": 947.5878331661224
+        },
+        "reviewer": {
+          "calls": 1,
+          "cost": 0.208028,
+          "cost_reported": 0.208028,
+          "tokens": {
+            "inp": 8,
+            "out": 1811,
+            "cr": 57400,
+            "cw": 20037
+          },
+          "secs": 39.25194501876831
+        }
+      },
+      "cost": 0.66011674,
+      "wall": 997.4124653339386,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-15",
+      "arm": "BH",
+      "repeat": 2,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-15/BH/r2",
+      "status": "timeout",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": ["status timeout", "no PR: S1"],
+      "hidden": {
+        "new_pass": 1,
+        "new_total": 1,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": null,
+        "total": null
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": false,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [".claude-plugin/plugin.json"],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 0.56909062,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 112,
+            "out": 109568,
+            "cr": 6576646,
+            "cw": 180848
+          },
+          "secs": 1200.5792269706726
+        },
+        "reviewer": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        }
+      },
+      "cost": 0.56909062,
+      "wall": 1211.3864402770996,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-15",
+      "arm": "BH",
+      "repeat": 3,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-15/BH/r3",
+      "status": "timeout",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": ["status timeout", "no PR: S1"],
+      "hidden": {
+        "new_pass": 1,
+        "new_total": 1,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": null,
+        "total": null
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": false,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [".claude-plugin/plugin.json"],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 0.36011592,
+          "cost_reported": 0.36011592,
+          "tokens": {
+            "inp": 120,
+            "out": 84461,
+            "cr": 5334698,
+            "cw": 141435
+          },
+          "secs": 1200.4250180721283
+        },
+        "reviewer": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        }
+      },
+      "cost": 0.36011592,
+      "wall": 1214.008334159851,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "BH",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-26/BH/r1",
+      "status": "timeout",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [
+        "status timeout",
+        "no PR: S1",
+        "not merged: issue-18-eval: no branch on the remote (no PR)",
+        "failing tests: a status a wait or the sweep sees reaches the band row, with no agent get, a worker's own session sweeps the workers it started, so a dead wait child still gets its report, a worker's own session whose jobs are all reported makes no herdr call, at start-up or after, a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board, one failed sweep keeps the band's last state, spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env, the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute",
+        "no test file changed"
+      ],
+      "hidden": {
+        "new_pass": 0,
+        "new_total": 8,
+        "failed": [
+          "a status a wait or the sweep sees reaches the band row, with no agent get",
+          "a worker's own session sweeps the workers it started, so a dead wait child still gets its report",
+          "a worker's own session whose jobs are all reported makes no herdr call, at start-up or after",
+          "a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board",
+          "one failed sweep keeps the band's last state",
+          "spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env",
+          "the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute"
+        ],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": null,
+        "total": null
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": false,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 1.12557742,
+          "cost_reported": 1.12557742,
+          "tokens": {
+            "inp": 140,
+            "out": 172702,
+            "cr": 12261706,
+            "cw": 273492
+          },
+          "secs": 1200.3879251480103
+        },
+        "reviewer": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        }
+      },
+      "cost": 1.12557742,
+      "wall": 1272.9301118850708,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "BH",
+      "repeat": 2,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-26/BH/r2",
+      "status": "timeout",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [
+        "status timeout",
+        "no PR: S1",
+        "not merged: issue-18-eval: no branch on the remote (no PR)",
+        "failing tests: a status a wait or the sweep sees reaches the band row, with no agent get, a worker's own session sweeps the workers it started, so a dead wait child still gets its report, a worker's own session whose jobs are all reported makes no herdr call, at start-up or after, a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board, one failed sweep keeps the band's last state, spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env, the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute",
+        "no test file changed"
+      ],
+      "hidden": {
+        "new_pass": 0,
+        "new_total": 8,
+        "failed": [
+          "a status a wait or the sweep sees reaches the band row, with no agent get",
+          "a worker's own session sweeps the workers it started, so a dead wait child still gets its report",
+          "a worker's own session whose jobs are all reported makes no herdr call, at start-up or after",
+          "a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board",
+          "one failed sweep keeps the band's last state",
+          "spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env",
+          "the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute"
+        ],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": null,
+        "total": null
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": false,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 1.29479599,
+          "cost_reported": 1.29479599,
+          "tokens": {
+            "inp": 172,
+            "out": 170286,
+            "cr": 15123147,
+            "cw": 276667
+          },
+          "secs": 1200.4321949481964
+        },
+        "reviewer": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        }
+      },
+      "cost": 1.29479599,
+      "wall": 1288.1638839244843,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "BH",
+      "repeat": 3,
+      "folder": "~/.cache/hrd-eval/20261028-000352/replay-26/BH/r3",
+      "status": "timeout",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [
+        "status timeout",
+        "no PR: S1",
+        "failing tests: a status a wait or the sweep sees reaches the band row, with no agent get, the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute, the board is written for outside apps, and their action files answer and tick as the sidebar does"
+      ],
+      "hidden": {
+        "new_pass": 5,
+        "new_total": 8,
+        "failed": [
+          "a status a wait or the sweep sees reaches the band row, with no agent get",
+          "the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute",
+          "the board is written for outside apps, and their action files answer and tick as the sidebar does"
+        ],
+        "flaky_failed": []
+      },
+      "own_tests": "fail",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": null,
+        "total": null
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": false,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": ["hooks/band.tsx", "hooks/refresh.ts", "hooks/session.ts", "hooks/side.tsx"],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 1.19496684,
+          "cost_reported": 1.17937484,
+          "tokens": {
+            "inp": 154,
+            "out": 167708,
+            "cr": 12872732,
+            "cw": 271307
+          },
+          "secs": 1200.408290863037
+        },
+        "reviewer": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        }
+      },
+      "cost": 1.19496684,
+      "wall": 1233.9266498088837,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    }
+  ],
+  "cells": [
+    {
+      "scenario": "replay-14",
+      "arm": "BH",
+      "runs": 3,
+      "valid": 3,
+      "invalid": 0,
+      "pass": 2,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 0.6094090633333332,
+      "wall": 961.85,
+      "fix_rounds": 0.0,
+      "blockers": 0.0,
+      "outside": 2
+    },
+    {
+      "scenario": "replay-15",
+      "arm": "BH",
+      "runs": 3,
+      "valid": 3,
+      "invalid": 0,
+      "pass": 1,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 0.5297744266666666,
+      "wall": 1211.39,
+      "fix_rounds": 0.0,
+      "blockers": 0.0,
+      "outside": 4
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "BH",
+      "runs": 3,
+      "valid": 3,
+      "invalid": 0,
+      "pass": 0,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 1.2051134166666666,
+      "wall": 1272.93,
+      "fix_rounds": 0.0,
+      "blockers": null,
+      "outside": 4
+    }
+  ],
+  "arms": {
+    "BH": {
+      "runs": 9,
+      "valid": 9,
+      "invalid": 0,
+      "pass": 3,
+      "cost": 7.032890719999999
+    }
+  },
+  "roles": {
+    "BH": {
+      "planner": 0,
+      "builder": 6.231980719999999,
+      "reviewer": 0.80091
+    }
+  },
+  "disagreements": []
+}
