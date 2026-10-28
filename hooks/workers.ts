@@ -87,8 +87,8 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
   const token = crypto.randomUUID().slice(0, 8)
   seenReport.delete(job.name)
   const next: Job = { ...job, token, status: 'running', endedAt: undefined, tail: undefined }
-  await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   await saveJob($, next)
+  await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
   // A job folder outlives its job, so a spawn cannot rely on that file. REPORTING.md keeps the full rule
   // for the prompts after it, which get the reminder.
@@ -233,7 +233,7 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
 // A worker that reported early, then waits at an approval or question: the coordinator is told once.
 async function blockedAfterReport($: EngineInterface, job: Job) {
   const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked', reportStatus: 'blocked' } : undefined,
+    j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked' } : undefined,
   )
   if (!after) return
   await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
@@ -308,7 +308,8 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
       const current = (await jobs($))[job.name]
       if (!current) return
       const a = byName.get(job.name)
-      const early = a?.agent_status === 'working'
+      // With no agent list the turn's end was not seen: a report found then stays a tail until a list call succeeds.
+      const early = agents === undefined || a?.agent_status === 'working'
       if (current.status === 'reported') return current.tail ? await sweepTail($, current, agents, a, early) : undefined
       if (await reported($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
       // A CLI error is not evidence of anything.
@@ -362,9 +363,16 @@ async function sweepTail($: EngineInterface, job: Job, agents: HerdrAgent[] | un
     // Its tab is gone: nothing more will come, and held messages have nowhere to go.
     if (n >= GONE_MISSES) {
       misses.delete(job.name)
-      await updateJob($, job.name, j =>
-        j.token === job.token && j.status === 'reported' && j.tail ? { ...j, tail: undefined } : undefined,
+      const { before, after } = await updateJob($, job.name, j =>
+        j.token === job.token && j.status === 'reported' && j.tail ? { ...j, tail: undefined, queued: [] } : undefined,
       )
+      const queued = before?.queued ?? []
+      if (after && queued.length > 0)
+        await post(
+          $,
+          `<herdr-agent name="${job.name}" profile="${job.profile}" status="gone">\n[${queued.length} message(s) held for it were not sent, as its tab is gone: ${queued.join(', ')}.]\n</herdr-agent>`,
+          true,
+        )
     }
     return
   }
@@ -915,8 +923,7 @@ export async function closeIdle($: EngineInterface, minutes: number, agents?: He
       closed.push(job.name)
     }
     // A message may have woken it meanwhile.
-    const current = (await jobs($))[job.name]
-    if (current?.status === 'reported') await saveJob($, { ...current, closed: true })
+    await updateJob($, job.name, j => (j.status === 'reported' ? { ...j, closed: true } : undefined))
   }
   if (closed.length) $.ui.toast(`Closed ${closed.length} idle worker tab${closed.length === 1 ? '' : 's'}: ${closed.join(', ')}`)
 }

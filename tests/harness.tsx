@@ -109,7 +109,14 @@ export async function start(
   on('turn.complete', (_, e) => ({ text: e.answer }))
   mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock', ...env })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('tool.register', (_, e) => ({ value: { tool: e.name } }))
+  // The spec of each tool the mod registered, and how often.
+  const tools: Record<string, { description: string }> = {}
+  const toolCalls: string[] = []
+  on('tool.register', (_, e) => {
+    tools[e.name] = e
+    toolCalls.push(e.name)
+    return { value: { tool: e.name } }
+  })
   // The names the mod registered as slash commands, in order.
   const registered: string[] = []
   on('command.register', (_, e) => {
@@ -340,6 +347,8 @@ export async function start(
     runs,
     recorded,
     registered,
+    tools,
+    toolCalls,
     status,
     fail,
     gone,

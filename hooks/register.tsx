@@ -14,7 +14,7 @@ import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
 import { active, dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
-import { registerTools } from './tools'
+import { refreshSpawnTool, registerTools } from './tools'
 import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
 import type { SpawnArgs } from './workers'
 import { pruneMerged } from './worktrees'
@@ -133,6 +133,7 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       noteReports(e.turnId, e.text)
       turnStarted()
+      void refreshSpawnTool($).catch(() => {})
     }
     return next(e)
   })
