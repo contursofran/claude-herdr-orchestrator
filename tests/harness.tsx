@@ -12,6 +12,11 @@ export const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 140, scroll: { offset: 0, bodyRows: 29 }, view: {} },
 } as const
 
+// The clock of the session start() began last: tests run one at a time.
+let latest: MockClock | undefined
+// Lets the background start of the workers just spawned finish.
+export const settled = () => latest!.settle()
+
 // What a test answers for one command the mod runs (process.run): its exit code and output, or a
 // rejection (a command that cannot start).
 export type Answer = { exitCode: number; stdout?: string; stderr?: string; reject?: string }
@@ -62,8 +67,8 @@ export async function start(
   // herdr's status for each worker it knows: the stored jobs' workers from the start, then each
   // `agent start`, then what emit sets.
   const status: Record<string, string> = {}
-  // How many more `agent list`, `agent get` and `pane read` calls fail, by the next calls; the test sets them.
-  const fail = { list: 0, get: 0, pane: 0 }
+  // How many more `agent list`, `agent get`, `pane read` and `agent start` calls fail, by the next calls; the test sets them.
+  const fail = { list: 0, get: 0, pane: 0, start: 0 }
   const waits: Wait[] = []
   const end = (match: (w: Wait) => boolean, code: number, out: string) => {
     for (const w of waits.filter(match)) {
@@ -81,6 +86,7 @@ export async function start(
   }
   const gone = new Gone()
   const clock = mock.clock(on, { now: 1_000_000 })
+  latest = clock
   // The workers the stored jobs name are herdr's already, listed at their status.
   for (const [key, value] of Object.entries(stored))
     if (key.startsWith('jobs:'))
@@ -225,6 +231,10 @@ export async function start(
       }
     }
     if (sub === 'agent' && verb === 'start') {
+      if (fail.start > 0) {
+        fail.start--
+        return exit(1, failure('agent_start_failed', 'the CLI would not start'))
+      }
       status[name] = STATUS[name] ?? 'idle'
       gone.delete(name)
       return ok({})
@@ -259,7 +269,10 @@ export async function start(
       }
       return exit(0, screens[name] ?? '')
     }
-    if (sub === 'tab' && verb === 'create') return ok({ root_pane: { pane_id: 'p1' } })
+    if (sub === 'tab' && verb === 'create') {
+      const label = e.argv[e.argv.indexOf('--label') + 1]
+      return ok({ tab: { tab_id: `t-${label}` }, root_pane: { pane_id: 'p1' } })
+    }
     return ok({})
   })
   // `herdr agent wait` runs as a child process. Like herdr's wait, it answers at once when the worker
@@ -340,9 +353,12 @@ export async function start(
 // A row is one Text per column; its name is padded.
 export const row = (ui: Mounted<'terminal', 'AbovePrompt'>, name: string) => ui.find({ type: 'Text', text: new RegExp(`^${name} +$`) })
 
-export async function spawn($: Engine, names: string[], cwd?: string) {
-  for (const worker of names)
+// Spawn returns at once; `clock.settle()` then lets each worker's background start finish.
+export async function spawn($: Engine, names: string[], cwd?: string, clock: MockClock = latest!) {
+  for (const worker of names) {
     await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker, profile: 'reviewer', cwd: cwd ?? `/repo-${worker}`, task: 'x' })
+    await clock.settle()
+  }
 }
 // Settles until `done` holds, up to 200 times. Work the mod leaves running unawaited (a refresh
 // learning a repo's remote, the sidebar's PR poll) waits on a process.run answer that can land

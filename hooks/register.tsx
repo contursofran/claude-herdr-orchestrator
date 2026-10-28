@@ -12,7 +12,7 @@ import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
-import { dropOldJobs, jobs, restoreJobs } from './state'
+import { active, dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
 import { registerTools } from './tools'
 import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
@@ -48,7 +48,7 @@ export const register: Register = on => {
       // with no running job either. The other timers stay with the coordinator.
       const sweepIfNeeded = async () => {
         const all = Object.values(await jobs($))
-        let needed = all.some(j => j.status === 'running' || j.tail)
+        let needed = all.some(j => active(j) || j.tail)
         if (!needed && closeMinutes > 0) {
           const now = await $.clock.now()
           const asking = new Set((await openQuestions($)).map(d => d.from))

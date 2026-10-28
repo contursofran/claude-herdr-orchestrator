@@ -6,7 +6,7 @@ import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath } 
 import { AUTO_END, AUTO_START, SAVE_WAIT_MS, WRAP_UP } from './defaults'
 import { pinned } from './owner'
 import { cmd, session } from './session'
-import { jobs } from './state'
+import { active, jobs } from './state'
 
 // The coordinator's side: the playbook it follows, the worker target and wrap-up,
 // and keeping its context small.
@@ -69,7 +69,7 @@ export async function playbook($: EngineInterface, statePath: string) {
 // Turns wrap-up on or off and, in a session that has started workers, tells its model.
 export async function toggleWrapUp($: EngineInterface, on: boolean) {
   await setWrapUp($, on)
-  const live = Object.values(await jobs($)).filter(j => j.status === 'running')
+  const live = Object.values(await jobs($)).filter(active)
   if (Object.keys(await jobs($)).length > 0) {
     void $.prompt.submit({
       text: on
@@ -86,7 +86,7 @@ export async function toggleWrapUp($: EngineInterface, on: boolean) {
 // The live workers, for the compaction summary to keep.
 export async function roster($: EngineInterface) {
   return Object.values(await jobs($))
-    .filter(j => j.status === 'running')
+    .filter(active)
     .map(j => `- ${j.name} (${j.profile}) in ${j.cwd}, job folder ${j.dir}`)
     .join('\n')
 }

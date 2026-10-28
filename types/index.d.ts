@@ -7,8 +7,12 @@ export type Job = {
   endedAt?: number
   // the current prompt's report token (see reportRule)
   token?: string
-  // 'running' until the worker settles; 'reported' once its report was delivered
-  status: 'running' | 'reported'
+  // 'starting' while spawn's background start makes the tab and the CLI (no token yet); 'running' until
+  // the worker settles; 'reported' once its report was delivered
+  status: 'starting' | 'running' | 'reported'
+  // the herdr tab and pane of the worker, set while it starts
+  tab?: string
+  pane?: string
   // message files held for a non-Claude worker until it reports
   queued?: string[]
   // the WAIT.json the worker is waiting on, read once (see waiting)
@@ -28,6 +32,7 @@ export type Job = {
   branch?: string
   // the file deliver wrote for the last report (RESULT-<token>.md or SCREEN-<token>.txt), and its status
   reportFile?: string
+  // also 'failed' (it did not start) and 'stopped' (stopped while it started)
   reportStatus?: string
 }
 

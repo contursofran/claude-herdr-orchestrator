@@ -8,6 +8,9 @@ import { JOBS_DROP_MS, JOBS_KEEP_MS, JOBS_PREFIX } from './defaults'
 
 export const jobsAtom = atom({ plugin: 'herdr-agents', key: 'jobs' } as const, {} as Record<string, Job>)
 
+// A worker that holds a slot: running, or still starting.
+export const active = (j: Job) => j.status === 'running' || j.status === 'starting'
+
 export async function jobs($: EngineInterface): Promise<Record<string, Job>> {
   return read($, jobsAtom)
 }

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
-import { command, spawn, start, stopAll } from './harness'
+import { command, settled, spawn, start, stopAll } from './harness'
 
 // Starting workers: the rules spawn applies, from the built-in profiles in effect. A report
 // reaches the coordinator once its batch goes out (see outbox.ts), BATCH_MS after it.
@@ -20,6 +20,7 @@ test('a turned-off built-in cannot start, and the rules name what replaces it', 
   expect(JSON.stringify(denied)).toMatch(/reviewer is turned off/)
   // The builder cannot be turned off; a second writer in its worktree waits until the first is stopped.
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'x' })
+  await settled()
   const again = await $.tool.call({
     tool: 'mcp__herdr-agents__spawn',
     worker: 'w-two',
@@ -40,6 +41,7 @@ test('a turned-off built-in cannot start, and the rules name what replaces it', 
 test('a message after a report with DECISION lines reaches the worker as new text, not TASK.md again', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-done', profile: 'builder', cwd: '/repo/wt', task: 'Fix the nits.' })
+  await settled()
   // herdr's wait answers at once for a worker that is already done: the mod sees that before the report is written.
   await clock.settle()
   const dir = '/repo/wt/.herdr-agents/w-done'
@@ -79,6 +81,7 @@ test('a message after a report with DECISION lines reaches the worker as new tex
 test('a DECISION line that says none is not pinned for the owner', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-none', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   await clock.settle()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-none/RESULT.md'] =
@@ -96,6 +99,7 @@ test('a prompt that starts no work is typed again, and a worker it never reaches
   // The first try stalls; the second starts work, so the worker runs on and reports.
   stalls['w-late'] = 1
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-late', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   await clock.settle()
   expect(typed).toHaveLength(2)
   expect(typed[1]).toBe(typed[0])
@@ -108,6 +112,7 @@ test('a prompt that starts no work is typed again, and a worker it never reaches
   // Every try stalls: reported blocked at once, not idle five minutes later.
   stalls['w-lost'] = 3
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  await settled()
   expect(typed).toHaveLength(5)
   await clock.advance(10_000)
   await clock.advance(BATCH_MS)
@@ -208,6 +213,7 @@ const RESUME = (name: string) => ['herdr', 'agent', 'wait', name, '--until', 'wo
 test('a report is delivered the moment herdr sees the worker finish, and only once', async ($, on) => {
   const { clock, submitted, calls, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   expect(calls).toContainEqual(FINISH('w-busy'))
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
@@ -225,6 +231,7 @@ test('a report is delivered the moment herdr sees the worker finish, and only on
 test("a report that lands while its worker still works is delivered within two ticks, and its turn's end adds nothing", async ($, on) => {
   const { clock, submitted, typed, closed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   // herdr still shows the worker working: its wait has not ended, and its turn goes on after the report.
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
@@ -246,6 +253,7 @@ test("a report that lands while its worker still works is delivered within two t
 test("a RESULT.md with another prompt's token is not delivered; this prompt's is, within two ticks", async ($, on) => {
   const { clock, submitted, typed, files } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   const reports = () => submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = '<!-- report 0ld0ld00 -->\nReviewed: approve.'
@@ -261,6 +269,7 @@ test("a RESULT.md with another prompt's token is not delivered; this prompt's is
 test('an early report written in two parts is delivered whole, once', async ($, on) => {
   const { clock, submitted, typed, files } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   const reports = () => submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))
   const file = '/repo/wt/.herdr-agents/w-busy/RESULT.md'
@@ -280,6 +289,7 @@ test('an early report written in two parts is delivered whole, once', async ($, 
 test('a report found at turn end is delivered at once, without waiting a tick', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
   await finish('w-busy')
@@ -291,6 +301,7 @@ test('a report found at turn end is delivered at once, without waiting a tick', 
 test('a report that lands while a non-Claude worker has messages held waits for its turn to end', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on, { profiles: { x: { kind: 'codex', args: [] } } })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'x', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   // Held: a codex worker takes no typed input mid-task, so the message goes out once it reports.
   await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
@@ -312,6 +323,7 @@ test(
   async ($, on) => {
     const { clock, submitted, typed, closed, files, emit } = await start($, on, { closeIdleMinutes: 1 })
     await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+    await settled()
     const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
     files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
     await clock.advance(2 * 3000 + BATCH_MS)
@@ -329,6 +341,7 @@ test(
 test("a worker's own session delivers its report within two ticks, with no herdr call", async ($, on) => {
   const { clock, submitted, typed, files, calls } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
   calls.length = 0
@@ -353,6 +366,7 @@ test('a worker herdr shows blocked is reported blocked at once', async ($, on) =
 test('a worker that ends its turn without a report is woken by its next turn, not polled', async ($, on) => {
   const { clock, submitted, calls, typed, files, emit, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   // The turn ends with no report: the wait ends, and the next one waits for the next turn to start.
   await emit('w-busy', 'idle')
   expect(submitted.filter(t => t.includes('<herdr-agent'))).toEqual([])
@@ -368,6 +382,7 @@ test('a worker that ends its turn without a report is woken by its next turn, no
 test('a wait child that dies does not hold up its report: the report check delivers it within two ticks', async ($, on) => {
   const { clock, submitted, typed, files, kill } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   // herdr ends the wait with an error: the child is gone, and nothing reports for it.
   await kill('w-busy')
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
@@ -381,6 +396,7 @@ test('a wait child that dies does not hold up its report: the report check deliv
 test('one failed herdr call does not end a job; a tab missing from two sweeps does', async ($, on) => {
   const { clock, submitted, typed, fail, gone, kill } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   // The sweep's list and the board's get both fail once: the job stays as it is.
   fail.get = 1
   fail.list = 1
@@ -458,6 +474,7 @@ test('a failed pane read starts no quiet clock', { timeoutMs: 20_000 }, async ($
 test('a sweep arms a new wait for a worker whose wait child died while it still works', async ($, on) => {
   const { clock, submitted, calls, typed, files, kill, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const armedFinish = () => calls.filter(c => c.join(' ') === FINISH('w-busy').join(' ')).length
   expect(armedFinish()).toBe(1)
   await kill('w-busy')
@@ -493,9 +510,11 @@ test('a prompt that never arrived is not reported over a newer prompt to the sam
   const { clock, submitted, stalls } = await start($, on)
   stalls['w-lost'] = 3
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  await settled()
   // Stopped and spawned again before the lost report is due: the new prompt is the one running.
   await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-lost' })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it again.' })
+  await settled()
   await clock.advance(10_000)
   expect(submitted.filter(t => t.includes('<herdr-agent name="w-lost"'))).toEqual([])
   await stopAll($, clock, ['w-lost'])
@@ -513,6 +532,7 @@ test("a worker's own session with no running job makes no herdr call, opens no s
 test("a worker's own session sweeps the workers it started while they run, and delivers each report within two ticks", async ($, on) => {
   const { clock, submitted, typed, files, calls, kill, status } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   // herdr ends the wait with an error: the child is gone, and nothing reports for it.
   await kill('w-busy')
   calls.length = 0
@@ -601,6 +621,7 @@ test('with closeIdleMinutes 0 a worker session with only reported jobs makes no 
 test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env", async ($, on) => {
   const { clock, calls } = await start($, on, { profiles: { x: { kind: 'claude', args: [], env: { A: '1' } } } })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'x', cwd: '/repo/wt', task: 'x' })
+  await settled()
   const create = calls.find(c => c[1] === 'tab' && c[2] === 'create') ?? []
   expect(create.slice(-4)).toEqual(['--env', 'A=1', '--env', 'HERDR_AGENTS_ROLE=worker'])
   await stopAll($, clock, ['w-env'])
@@ -611,6 +632,7 @@ test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profil
 test('a report with a header reaches the coordinator as its summary, pinned questions and the file path', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   const body = [
     '```report',
@@ -640,6 +662,7 @@ test('a report with a header reaches the coordinator as its summary, pinned ques
 test('a header report pins its questions inline, in report order, with the title of each that has one', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = [
     `<!-- report ${token} -->`,
@@ -661,6 +684,7 @@ test('a header report pins its questions inline, in report order, with the title
 test('a header with nothing after it has no pointer to the file, and an unknown status is no result attribute', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
     `<!-- report ${token} -->\n\`\`\`report\nstatus: Maybe\nsummary: Nothing to add.\n\`\`\``
@@ -674,6 +698,7 @@ test('a header with nothing after it has no pointer to the file, and an unknown 
 test('a header names the PRs a report opens, on the prompt tag; a report without a header is delivered with no pr', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
     `<!-- report ${token} -->\n\`\`\`report\nstatus: done\npr: #12, 13\nsummary: Two PRs.\n\`\`\``
@@ -694,8 +719,10 @@ test('a header names the PRs a report opens, on the prompt tag; a report without
 test('a report without a header is delivered as before: a long one as a pointer to its file, a short one inline', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const longToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-short', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  await settled()
   const shortToken = typed[1]?.match(/<!-- report (\S+) -->/)?.[1]
   const lines = Array.from({ length: 9 }, (_, i) => `Line ${i + 2}.`)
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${longToken} -->\nReviewed the change.\n${lines.join('\n')}`
@@ -720,6 +747,7 @@ test('a report without a header is delivered as before: a long one as a pointer 
 test('the full report rule goes in the first prompt only; follow-ups and wake-ups get a one-line reminder', async ($, on) => {
   const { clock, submitted, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   expect(typed[0]).toContain('Right below that line, put this header')
   expect(files['/repo/wt/.herdr-agents/w-busy/REPORTING.md']).toContain('<!-- report TOKEN -->')
@@ -748,12 +776,14 @@ test('the full report rule goes in the first prompt only; follow-ups and wake-up
 test('a worker spawned again with the same name in the same folder gets the full rule in its first prompt', async ($, on) => {
   const { clock, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${firstToken} -->\nDone.`
   await finish('w-busy')
   // The job folder outlives the job: the same name spawned again finds the old REPORTING.md there.
   await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it again.' })
+  await settled()
   const again = typed.at(-1) ?? ''
   expect(again).toContain('Your task is in /repo/wt/.herdr-agents/w-busy/TASK.md')
   expect(again).toContain('Right below that line, put this header')
@@ -764,6 +794,7 @@ test('a worker spawned again with the same name in the same folder gets the full
 test('the report rule says to write RESULT.md in one write, as the last step, in the full rule and the reminder', async ($, on) => {
   const { clock, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   expect(typed[0]).toContain('write your final report to /repo/wt/.herdr-agents/w-busy/RESULT.md in one write, as your last step')
   expect(files['/repo/wt/.herdr-agents/w-busy/REPORTING.md']).toContain('in one write, as your last step')
   const firstToken = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
@@ -780,8 +811,10 @@ test('the report rule says to write RESULT.md in one write, as the last step, in
 const W = '/repo/wt/.herdr-agents/w-busy'
 const check = (argv: string[]) => argv[0] === '/bin/bash' && argv[2] === 'ci'
 const codex = { profiles: { x: { kind: 'codex', args: [] } } }
-const spawnBusy = async ($: Parameters<typeof start>[0], profile: string) =>
-  $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile, cwd: '/repo/wt', task: 'Fix it.' })
+const spawnBusy = async ($: Parameters<typeof start>[0], profile: string) => {
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile, cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
+}
 const jobOf = (store: Map<string, unknown>, name: string) =>
   (store.get('jobs:session-1234') as { jobs: Record<string, Record<string, unknown>> }).jobs[name]!
 
@@ -893,6 +926,7 @@ test('a message to a worker reported meanwhile does not bring back running', asy
 test("a delivered report and a stopped worker's screen are copied to the reports archive", async ($, on) => {
   const { clock, typed, files, finish, screens } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   const dir = '/home/t/.herdr-agents/reports/repo/wt/.herdr-agents/w-busy'
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nDone, all green.`
@@ -1102,4 +1136,130 @@ test('the prune of old jobs and the idle close both leave a watched job alone', 
   const { clock, store } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs: { 'w-tail': job } } })
   await clock.settle()
   expect(Object.keys((store.get('jobs:session-1234') as { jobs: object }).jobs)).toEqual(['w-tail'])
+})
+
+// Non-blocking spawn (#21, S2): spawn saves a 'starting' job and returns; the tab, the CLI and the
+// first prompt follow in the background.
+const tabCreate = (argv: string[]) => argv[1] === 'tab' && argv[2] === 'create'
+const agentStart = (argv: string[]) => argv[1] === 'agent' && argv[2] === 'start'
+const spawnArgs = { tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' } as const
+
+test('spawn returns starting at once, before the tab is made', async ($, on) => {
+  const { clock, typed, gate, store } = await start($, on)
+  const release = gate(tabCreate)
+  const res = await $.tool.call(spawnArgs)
+  expect(JSON.stringify(res)).toMatch(/\\"status\\":\\"starting\\"/)
+  await clock.settle()
+  expect(typed).toEqual([])
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'starting' })
+  release()
+  await clock.settle()
+  expect(typed[0]).toContain('Your task is in /repo/wt/.herdr-agents/w-busy/TASK.md')
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'running', tab: 't-w-busy', pane: 'p1' })
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a start failure reaches the coordinator as a failed report and its tab is closed', async ($, on) => {
+  const { clock, submitted, closed, fail, store, files, screens } = await start($, on)
+  fail.start = 1
+  screens.p1 = 'shell: command not found'
+  await $.tool.call(spawnArgs)
+  await clock.settle()
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/status="failed">\nThe worker did not start/)
+  expect(closed).toContain('t-w-busy')
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', closed: true, reportStatus: 'failed' })
+  const screen = Object.keys(files).find(f => f.includes('/w-busy/SCREEN-start-'))
+  expect(screen).toBeDefined()
+  expect(submitted.at(-1)).toContain(screen!)
+})
+
+test('a stop while the worker starts closes its tab and sends no prompt', async ($, on) => {
+  const { clock, typed, submitted, closed, gate, store } = await start($, on)
+  const release = gate(agentStart)
+  await $.tool.call(spawnArgs)
+  await clock.settle()
+  const stopped = await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  expect(JSON.stringify(stopped)).toContain('Stopped w-busy while it was starting.')
+  release()
+  await clock.settle()
+  await clock.advance(BATCH_MS)
+  expect(typed).toEqual([])
+  expect(closed).toContain('t-w-busy')
+  expect(submitted).toEqual([])
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', reportStatus: 'stopped', closed: true })
+})
+
+test('a message to a starting worker goes in with its task', async ($, on) => {
+  const { clock, typed, gate, store } = await start($, on)
+  const release = gate(agentStart)
+  await $.tool.call(spawnArgs)
+  await clock.settle()
+  const sent = await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  expect(JSON.stringify(sent)).toContain('w-busy is still starting; the message is handed to it with its task.')
+  release()
+  await clock.settle()
+  expect(typed[0]).toMatch(/Your coordinator also sent 1 message\(s\) after the task: \S+MESSAGE-\S+\.md\. Read them after TASK\.md\./)
+  expect(jobOf(store, 'w-busy').queued).toEqual([])
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a message held for a worker that fails to start is listed in the failed report', async ($, on) => {
+  const { clock, submitted, gate, fail } = await start($, on)
+  fail.start = 1
+  const release = gate(agentStart)
+  await $.tool.call(spawnArgs)
+  await clock.settle()
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  release()
+  await clock.settle()
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/1 message\(s\) held for it were not sent: \S+MESSAGE-/)
+})
+
+test('a starting job is not swept as gone and an old RESULT.md in its folder is not delivered', async ($, on) => {
+  const { clock, submitted, files, gate } = await start($, on)
+  files[`${W}/RESULT.md`] = 'Old report.'
+  const release = gate(tabCreate)
+  await $.tool.call(spawnArgs)
+  await clock.advance(200_000)
+  expect(submitted).toEqual([])
+  release()
+  await clock.settle()
+  await stopAll($, clock, ['w-busy'])
+})
+
+test('a starting worker counts toward the target and holds its name', async ($, on) => {
+  const { clock, gate } = await start($, on)
+  await spawn($, ['w-a'], '/repo-a', clock)
+  const release = gate(tabCreate)
+  await $.tool.call({ ...spawnArgs, worker: 'w-b', cwd: '/repo-b' })
+  const stopped = await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
+  expect(JSON.stringify(stopped)).toMatch(/1 of \d+ workers working/)
+  // A second spawn under the same name is denied while the first still starts.
+  const again = await $.tool.call({ ...spawnArgs, worker: 'w-b', profile: 'reviewer', cwd: '/repo-b' })
+  expect(JSON.stringify(again)).toContain('worker w-b is still running')
+  release()
+  await clock.settle()
+  await stopAll($, clock, ['w-b'])
+})
+
+test('a reload during start reports it failed and closes its tab', async ($, on) => {
+  const job = {
+    name: 'w',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: '/repo/wt/.herdr-agents/w',
+    startedAt: 1,
+    status: 'starting',
+    tab: 't-w',
+  }
+  const { clock, submitted, closed, store } = await start($, on, {}, { 'jobs:session-1234': { at: 1, jobs: { w: job } } })
+  await clock.settle()
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(
+    /name="w" profile="builder" status="failed">\nThe worker did not start: the mod reloaded while it started/,
+  )
+  expect(closed).toContain('t-w')
+  expect(jobOf(store, 'w')).toMatchObject({ status: 'reported', reportStatus: 'failed', closed: true })
 })
