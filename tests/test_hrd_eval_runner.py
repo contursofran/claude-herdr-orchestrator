@@ -57,7 +57,7 @@ sys.exit(1 if any(s == "fail" for s, _ in rows) else 0)
 
 # The fake claude. Behaviour per call comes from FAKE_CLAUDE_SCRIPT, one entry per call of that kind (the last repeats).
 FAKE = r"""#!__PYTHON__
-import json, os, re, shutil, subprocess, sys, time, uuid
+import fcntl, json, os, re, shutil, subprocess, sys, time, uuid
 from datetime import datetime, timezone
 
 argv = sys.argv[1:]
@@ -70,10 +70,28 @@ sid = argv[argv.index("--resume") + 1] if resumed else argv[argv.index("--sessio
 model_arg = argv[argv.index("--model") + 1]
 cfg_dir = os.environ["CLAUDE_CONFIG_DIR"]
 state_path = os.path.join(cfg_dir, "fake-state.json")
-state = json.load(open(state_path)) if os.path.exists(state_path) else {"counts": {}, "cost": {}}
+
+
+# The call counts and costs, which every run's fakes share: change(state) runs under a lock, so a parallel run's fake
+# never reads the file while it is half written, and no call's update is lost.
+def update_state(change):
+    with open(state_path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = json.load(open(state_path)) if os.path.exists(state_path) else {"counts": {}, "cost": {}}
+        out = change(state)
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+        return out
+
+
+def take_count(state):
+    count = state["counts"].get(kind, 0)
+    state["counts"][kind] = count + 1
+    return count
+
+
 script = json.load(open(os.environ["FAKE_CLAUDE_SCRIPT"]))
-count = state["counts"].get(kind, 0)
-state["counts"][kind] = count + 1
+count = update_state(take_count)
 cwd = os.getcwd()
 by_dir = script.get("by_dir", {}).get(os.path.basename(cwd), {}).get(kind)
 beh = by_dir if by_dir is not None else script[kind][min(count, len(script[kind]) - 1)]
@@ -122,8 +140,14 @@ if beh.get("write"):
 if not beh.get("no_result"):
     open(os.path.join(job, "RESULT.md"), "w").write(f"<!-- report {token} -->\n{beh.get('report', '')}\n")
 cost = float(beh.get("cost", 0.1))
-total = float(state["cost"].get(sid, 0.0)) + cost
-state["cost"][sid] = total
+
+
+def add_cost(state):
+    state["cost"][sid] = float(state["cost"].get(sid, 0.0)) + cost
+    return state["cost"][sid]
+
+
+total = update_state(add_cost)
 model = "claude-haiku-5-5" if "haiku" in model_arg else ("claude-sonnet-5-5" if "sonnet" in model_arg else "claude-opus-5-5")
 price_out = {"claude-opus-5-5": 20, "claude-sonnet-5-5": 10, "claude-haiku-5-5": 0.5}[model]
 proj = os.path.join(cfg_dir, "projects", "-fake-project")
@@ -143,7 +167,6 @@ with open(os.path.join(proj, sid + ".jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps({"type": "assistant", "timestamp": now, "message": {"role": "assistant", "content": [use]}}) + "\n")
         res = {"type": "tool_result", "tool_use_id": f"u{i}", "content": text.replace("PATH", paths[path_i]), "is_error": err}
         f.write(json.dumps({"type": "user", "timestamp": now, "message": {"role": "user", "content": [res]}}) + "\n")
-json.dump(state, open(state_path, "w"))
 print(json.dumps({"type": "result", "subtype": beh.get("subtype", "success"), "is_error": bool(beh.get("is_error")),
                   "result": beh.get("result", beh.get("report", "")), "session_id": sid, "total_cost_usd": total}))
 sys.exit(beh.get("exit", 0))
@@ -1323,8 +1346,9 @@ class MatrixTest(RunnerCase):
     def test_two_arms_at_once_each_get_their_run(self):
         code, _, _ = self.matrix("--jobs", "2", arms="A,B")
         self.assertEqual(code, 0)
-        self.assertEqual(self.run_json("A")["status"], "done")
-        self.assertEqual(self.run_json("B")["status"], "done")
+        for arm in ("A", "B"):
+            run = self.run_json(arm)
+            self.assertEqual(run["status"], "done", f"arm {arm}: {run['error']}")
 
     def test_two_runs_call_the_model_at_once_but_their_grades_take_turns(self):
         spans = os.path.join(self.tmp, "grade-spans")
