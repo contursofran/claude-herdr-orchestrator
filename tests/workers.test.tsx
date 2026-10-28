@@ -742,6 +742,28 @@ test('the report rule says to write RESULT.md in one write, as the last step, in
   await stopAll($, clock, ['w-busy'])
 })
 
+test("a delivered report and a stopped worker's screen are copied to the reports archive", async ($, on) => {
+  const { clock, typed, files, finish, screens } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  const dir = '/home/t/.herdr-agents/reports/repo/wt/.herdr-agents/w-busy'
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nDone, all green.`
+  await finish('w-busy')
+  await clock.advance(BATCH_MS)
+  expect(files[`/repo/wt/.herdr-agents/w-busy/RESULT-${token}.md`]).toContain('Done, all green.')
+  expect(files[`${dir}/RESULT-${token}.md`]).toBe(files[`/repo/wt/.herdr-agents/w-busy/RESULT-${token}.md`])
+
+  screens['p-w-quiet'] = '⏺ Done.\n────\n❯ \n────\n  aerolab · wt · Haiku 5.5 (xhigh)'
+  await spawn($, ['w-quiet'])
+  await clock.advance(7 * 60_000)
+  await clock.advance(BATCH_MS)
+  const copies = Object.keys(files).filter(f => f.startsWith('/home/t/.herdr-agents/reports/repo-w-quiet/.herdr-agents/w-quiet/SCREEN-'))
+  expect(copies).toHaveLength(1)
+  const own = Object.keys(files).find(f => f.startsWith('/repo-w-quiet/.herdr-agents/w-quiet/SCREEN-'))!
+  expect(files[copies[0]!]).toBe(files[own])
+  await stopAll($, clock, ['w-busy', 'w-quiet'])
+})
+
 // The jobs map does not grow for good: reported jobs leave it a week after they ended.
 test('reported jobs older than 7 days are dropped from the state and the store; newer and running ones stay', async ($, on) => {
   const day = 24 * 60 * 60_000
