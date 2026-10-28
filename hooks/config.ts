@@ -17,8 +17,8 @@ export const PROFILES: Record<string, Profile> = {
   },
   builder: {
     kind: 'claude',
-    args: ['--agent', 'herdr-agents:builder', '--effort', 'xhigh', '--permission-mode', 'auto'],
-    note: 'Claude builder agent (Haiku xhigh)',
+    args: ['--agent', 'herdr-agents:builder', '--effort', 'medium', '--permission-mode', 'auto'],
+    note: 'Claude builder agent (Sonnet medium)',
   },
   reviewer: {
     kind: 'claude',

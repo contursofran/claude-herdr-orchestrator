@@ -76,7 +76,7 @@ What the sidebar shows is also kept in `~/.herdr-agents/board/<session id>.json`
 
 - **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.
 - **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
-- **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus high), `builder` (Haiku xhigh) and `reviewer` (Opus high); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
+- **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus high), `builder` (Sonnet medium) and `reviewer` (Opus high); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 
 ## Install
 
