@@ -7,12 +7,12 @@ import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS, TICK_MS } from './defaults'
 import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
-import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
+import { askOwner, noteReports, openQuestions, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
-import { jobs, restoreJobs } from './state'
+import { dropOldJobs, jobs, restoreJobs } from './state'
 import { registerTools } from './tools'
 import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
 import type { SpawnArgs } from './workers'
@@ -36,19 +36,35 @@ export const register: Register = on => {
     await registerCommands($)
     const restored = await restoreJobs($)
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
+    await dropOldJobs($)
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
     await restoreOutbox($)
     if (isWorker) {
-      // A worker's own session sweeps the workers it started, but only while one of them runs:
-      // with no running job it makes no herdr call. Its report check does nothing with no running
-      // job either. The other timers stay with the coordinator.
-      const sweepIfRunning = async () => {
-        if (Object.values(await jobs($)).some(j => j.status === 'running')) await sweep($, closeMinutes)
+      // A worker's own session sweeps the workers it started, but only while one of them runs,
+      // or while a reported one with an open tab is due to close (closeIdleMinutes). Until then it
+      // makes no herdr call, and none once the last tab is closed. Its report check does nothing
+      // with no running job either. The other timers stay with the coordinator.
+      const sweepIfNeeded = async () => {
+        const all = Object.values(await jobs($))
+        let needed = all.some(j => j.status === 'running')
+        if (!needed && closeMinutes > 0) {
+          const now = await $.clock.now()
+          const asking = new Set((await openQuestions($)).map(d => d.from))
+          needed = all.some(
+            j =>
+              j.status === 'reported' &&
+              !j.closed &&
+              !asking.has(j.name) &&
+              j.endedAt !== undefined &&
+              now - j.endedAt >= closeMinutes * 60_000,
+          )
+        }
+        if (needed) await sweep($, closeMinutes)
       }
-      void sweepIfRunning().catch(() => {})
+      void sweepIfNeeded().catch(() => {})
       $.clock.every(SWEEP_MS, () => {
-        void sweepIfRunning().catch(() => {})
+        void sweepIfNeeded().catch(() => {})
         retry($)
       })
       $.clock.every(TICK_MS, () => void checkReports($).catch(() => {}))
