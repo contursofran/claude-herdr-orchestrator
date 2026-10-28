@@ -5,7 +5,7 @@ import { registerCommands, runCommand } from './commands'
 import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
-import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS } from './defaults'
+import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS, TICK_MS } from './defaults'
 import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, openQuestions, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
@@ -67,18 +67,18 @@ export const register: Register = on => {
         void sweepIfNeeded().catch(() => {})
         retry($)
       })
-      $.clock.every(3000, () => void checkReports($).catch(() => {}))
+      $.clock.every(TICK_MS, () => void checkReports($).catch(() => {}))
       return started
     }
     void sweep($, closeMinutes).catch(() => {})
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
-    // The band, the sidebar and the bridge's inbox, every 3 s with no herdr calls: refresh
+    // The band, the sidebar and the bridge's inbox, every TICK_MS with no herdr calls: refresh
     // reads the states the waits and the sweep last saw. The report check comes first, so a
     // RESULT.md that landed is delivered at this tick.
     $.clock.every(
-      3000,
+      TICK_MS,
       () =>
         void checkReports($)
           .catch(() => {})
