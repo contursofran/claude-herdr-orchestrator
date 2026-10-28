@@ -401,6 +401,8 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
   let prs: number[] = []
   // A report's header (see report.ts): its status and PRs go on the prompt's tag.
   let header: Header | undefined
+  // The file this report was kept in, for the state file's block.
+  let reportFile: string | undefined
   if (await reported($, current)) {
     body = (await $.fs.read(resultPath)).replace(/^\s*<!-- report \S+ -->\s*/, '')
     header = parseHeader(body)
@@ -417,6 +419,7 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     // is sent as its first line and the path the coordinator reads it from.
     const full = `${job.dir}/RESULT-${current.token ?? (await $.clock.now())}.md`
     await $.fs.write(full, body)
+    reportFile = full
     await archive($, job.dir, full.slice(job.dir.length + 1), body)
     const lines = body.split('\n').filter(l => l.trim())
     const ids: string[] = []
@@ -453,6 +456,7 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
     await $.fs.write(screen, tail.slice(-4000))
+    reportFile = screen
     await archive($, job.dir, screen.slice(job.dir.length + 1), tail.slice(-4000))
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
@@ -461,7 +465,15 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
   const endedAt = await $.clock.now()
   const { before, after } = await updateJob($, job.name, j =>
     j.token === current.token
-      ? { ...prs.reduce((x, n) => withPr(x, n), j), status: 'reported', queued: [], wait: undefined, endedAt }
+      ? {
+          ...prs.reduce((x, n) => withPr(x, n), j),
+          status: 'reported',
+          queued: [],
+          wait: undefined,
+          endedAt,
+          reportFile,
+          reportStatus: status,
+        }
       : undefined,
   )
   if (!after) return
@@ -497,6 +509,16 @@ export function resumeWatching($: EngineInterface, list: Job[]) {
 }
 
 export type SpawnArgs = { worker: string; profile: string; cwd: string; task: string }
+
+// The branch checked out in a folder, for the state file's block; undefined when git says none or fails.
+async function currentBranch($: EngineInterface, cwd: string) {
+  try {
+    const r = await $.process.run(['git', '-C', cwd, 'branch', '--show-current'], { timeoutMs: 10_000 })
+    return r.exitCode === 0 ? r.stdout.trim() || undefined : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   const { worker, profile, cwd, task } = e
@@ -553,7 +575,17 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
         await $.clock.sleep(1000)
       }
     }
-    const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'running', ...briefRefs(task, worker) }
+    const branch = await currentBranch($, cwd)
+    const job: Job = {
+      name: worker,
+      profile,
+      cwd,
+      dir,
+      startedAt: await $.clock.now(),
+      status: 'running',
+      ...(branch ? { branch } : {}),
+      ...briefRefs(task, worker),
+    }
     await prompt($, job, `Your task is in ${dir}/TASK.md. Read it and do it.`, true)
     void refresh($)
     return {

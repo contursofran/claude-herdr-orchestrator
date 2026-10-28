@@ -13,6 +13,7 @@ import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
 import { dropOldJobs, jobs, restoreJobs } from './state'
+import { writeBlock } from './stateblock'
 import { registerTools } from './tools'
 import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
 import type { SpawnArgs } from './workers'
@@ -76,11 +77,13 @@ export const register: Register = on => {
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
     // The band, the sidebar and the bridge's inbox, every TICK_MS with no herdr calls: refresh
     // reads the states the waits and the sweep last saw. The report check comes first, so a
-    // RESULT.md that landed is delivered at this tick.
+    // RESULT.md that landed is delivered at this tick, and the state file's block follows it.
     $.clock.every(
       TICK_MS,
       () =>
         void checkReports($)
+          .catch(() => {})
+          .then(() => writeBlock($))
           .catch(() => {})
           .then(() => refresh($))
           .then(() => syncSide($))

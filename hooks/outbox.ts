@@ -30,6 +30,11 @@ export async function turnEnded($: EngineInterface) {
   void kick($)
 }
 
+// Whether a main-loop turn runs (the state file's block is not written then, see stateblock.ts).
+export function turnRunning() {
+  return busy
+}
+
 // Queues a prompt for the coordinator. A batch with a report ends with the worker count (see flush).
 export async function post($: EngineInterface, text: string, report = false) {
   const item: OutboxItem = report ? { text, report: true } : { text }

@@ -21,6 +21,11 @@ export type Job = {
   refs?: number[]
   // the PRs among them: a brief's "PR #123", a report's /pull/123
   prs?: number[]
+  // the git branch checked out in `cwd` when the worker started (missing when git failed)
+  branch?: string
+  // the file deliver wrote for the last report (RESULT-<token>.md or SCREEN-<token>.txt), and its status
+  reportFile?: string
+  reportStatus?: string
 }
 
 // `every` and `max` in minutes; `lastAt` is when `check` last ran.
