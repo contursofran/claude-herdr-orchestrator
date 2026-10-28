@@ -526,12 +526,44 @@ test("a worker's own session whose jobs are all reported makes no herdr call, at
     startedAt: 900_000,
     endedAt: 950_000,
     status: 'reported',
+    closed: true,
     token: 'tok-done',
   }
   const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': job } } }
   const { clock, calls } = await start($, on, {}, kept, { HERDR_AGENTS_ROLE: 'worker' })
   await clock.advance(10 * 60_000)
   expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+})
+
+const reportedJob = {
+  name: 'w-done',
+  profile: 'builder',
+  cwd: '/repo/wt',
+  dir: '/repo/wt/.herdr-agents/w-done',
+  startedAt: 900_000,
+  endedAt: 950_000,
+  status: 'reported',
+  token: 'tok-done',
+}
+
+test("a worker's own session closes a nested tab once it has sat idle after its report, then makes no herdr call", async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const { clock, calls, closed } = await start($, on, { closeIdleMinutes: 1 }, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.settle()
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  await clock.advance(2 * 60_000)
+  expect(closed).toContain('t-w-done')
+  calls.length = 0
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+})
+
+test('with closeIdleMinutes 0 a worker session with only reported jobs makes no herdr call', async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const { clock, calls, closed } = await start($, on, { closeIdleMinutes: 0 }, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  await clock.advance(10 * 60_000)
+  expect(calls.filter(c => c[0] === 'herdr')).toEqual([])
+  expect(closed).toEqual([])
 })
 
 test("spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env", async ($, on) => {
