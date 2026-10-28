@@ -1,12 +1,14 @@
 import type { EngineInterface } from 'claude-code'
 import { profiles } from './config'
 
-// The tools the coordinator's model calls, as mcp__herdr-agents__<name>.
-export async function registerTools($: EngineInterface) {
+type ToolSpec = Parameters<EngineInterface['tool']['register']>[0]
+
+// The spawn tool's spec; its description lists the profiles in the config now.
+export async function spawnSpec($: EngineInterface): Promise<ToolSpec> {
   const list = Object.entries(await profiles($))
     .map(([name, p]) => `${name} = ${p.note ?? p.kind}`)
     .join(', ')
-  await $.tool.register({
+  return {
     name: 'spawn',
     description: [
       'Start a worker agent in a new herdr tab, on any provider, and return at once.',
@@ -27,7 +29,23 @@ export async function registerTools($: EngineInterface) {
       required: ['worker', 'profile', 'cwd', 'task'],
     },
     isDeferred: false,
-  })
+  }
+}
+
+// What the engine last got for spawn. A changed tool list rewrites the prompt cache, so spawn is
+// registered again only when its spec changed; the new one applies from the next prompt on.
+let lastSpawn = ''
+export async function refreshSpawnTool($: EngineInterface, force = false) {
+  const spec = await spawnSpec($)
+  const key = JSON.stringify(spec)
+  if (!force && key === lastSpawn) return
+  await $.tool.register(spec)
+  lastSpawn = key
+}
+
+// The tools the coordinator's model calls, as mcp__herdr-agents__<name>.
+export async function registerTools($: EngineInterface) {
+  await refreshSpawnTool($, true)
   await $.tool.register({
     name: 'message',
     description:

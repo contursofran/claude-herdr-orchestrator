@@ -8,6 +8,7 @@ import { CLOSE_IDLE_MINUTES, PREFIX, PRUNE_MINUTES, RESET_AT, TARGET } from './d
 import { tilde } from './format'
 import { session } from './session'
 import { sideOpen, toggleSide } from './side'
+import { refreshSpawnTool } from './tools'
 
 // /hrd-config: the settings, listed on the band above the prompt as /config lists
 // its own. Enter flips a switch, steps a choice (›) or opens a field; each change
@@ -254,6 +255,7 @@ export async function editConfig($: EngineInterface, fn: (c: Record<string, unkn
   }
   const note = fn(c)
   await $.fs.write(path, `${JSON.stringify(c, null, 2)}\n`)
+  await refreshSpawnTool($).catch(() => {})
   await loadSettings($, `${note} in ${path}.`)
   void refresh($)
 }
