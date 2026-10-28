@@ -117,6 +117,14 @@ export async function start(
   const files: Record<string, string> = { [CONFIG]: JSON.stringify({ repos: { web: 'acme/website' }, ...config }) }
   // The clone install.sh recorded in the mod's folder (its `clone` file, read by /hrd-update); '' for none.
   const recorded = { clone: '/src/herdr' }
+  // Calls held by gate(): each waits for its release function, then runs as usual.
+  const gates: { match: (argv: string[]) => boolean; release: () => void; held: Promise<void>; used: boolean }[] = []
+  const gate = (match: (argv: string[]) => boolean) => {
+    let release = () => {}
+    const held = new Promise<void>(resolve => (release = resolve))
+    gates.push({ match, release, held, used: false })
+    return release
+  }
   // A folder exists while a file is in it.
   on('fs.exists', (_, e) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
   on('fs.list', (_, e) => ({
@@ -126,7 +134,12 @@ export async function start(
   }))
   // The mod's `clone` file is read from wherever the test loads the mod, so any path ending in /clone is it.
   on('fs.read', (_, e) => ({ value: e.path.endsWith('/clone') ? recorded.clone : (files[e.path] ?? '') }))
-  on('fs.write', (_, e) => {
+  on('fs.write', async (_, e) => {
+    const hold = gates.find(g => !g.used && g.match(['fs.write', e.path]))
+    if (hold) {
+      hold.used = true
+      await hold.held
+    }
     files[e.path] = e.text
     return { value: undefined }
   })
@@ -148,7 +161,12 @@ export async function start(
     const { Text } = $.ui.resolve(e)
     return <Text>engine band</Text>
   })
-  on('process.run', (_, e) => {
+  on('process.run', async (_, e) => {
+    const hold = gates.find(g => !g.used && g.match([...e.argv]))
+    if (hold) {
+      hold.used = true
+      await hold.held
+    }
     const [cmd, sub, verb, name = ''] = e.argv
     if (cmd === 'herdr') calls.push([...e.argv])
     if (cmd !== 'herdr') shell.push(e.argv.join(' '))
@@ -307,6 +325,7 @@ export async function start(
     status,
     fail,
     gone,
+    gate,
     emit,
     finish,
     kill,

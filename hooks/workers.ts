@@ -20,7 +20,7 @@ import { ask, openQuestions } from './owner'
 import { post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd } from './session'
-import { jobs, saveJob } from './state'
+import { jobs, latestJob, patchJob, saveJob, updateJob } from './state'
 import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
 import { excludeFromGit } from './worktrees'
@@ -301,6 +301,9 @@ export function inBackground(screen: string) {
   return /\b\d+ (shells?|monitors?)\b|still running|^\s*◯ |← ([2-9]|\d{2,}) agents/m.test(footer)
 }
 
+// A patch for a job that still runs the prompt `job` was read for; anything else is left alone.
+const live = (job: Job, fn: (j: Job) => Job) => (j: Job) => (j.token === job.token && j.status === 'running' ? fn(j) : undefined)
+
 // A worker that wrote WAIT.json (see reportRule) waits with no model running:
 // this runs its check every few minutes and prompts it once the check passes or
 // times out. Returns whether the worker is waiting (or was just woken).
@@ -309,7 +312,12 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   const current = (await jobs($))[job.name]
   if (!current) return false
   if (!(await $.fs.exists(path))) {
-    if (current.wait) await saveJob($, { ...current, wait: undefined })
+    if (current.wait)
+      await updateJob(
+        $,
+        job.name,
+        live(job, j => ({ ...j, wait: undefined })),
+      )
     return false
   }
   let wait = current.wait
@@ -332,7 +340,12 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       await prompt($, current, `Your ${path} could not be read (${err}); it was moved to WAIT.bad.json. Write it again or carry on.`)
       return true
     }
-    await saveJob($, { ...current, wait })
+    const set = wait
+    await updateJob(
+      $,
+      job.name,
+      live(job, j => ({ ...j, wait: set })),
+    )
   }
   if (wait.lastAt !== undefined && now - wait.lastAt < wait.every * 60_000) return true
   const ran = await $.process.run(['/bin/bash', '-c', wait.check], { cwd: job.cwd, timeoutMs: 120_000 }).catch((err: unknown) => ({
@@ -345,16 +358,24 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   const passed = ran.exitCode === 0
   const timedOut = now - wait.since > wait.max * 60_000
   if (!passed && !timedOut) {
-    await saveJob($, { ...current, wait: { ...wait, lastAt: now } })
+    const next = { ...wait, lastAt: now }
+    await updateJob(
+      $,
+      job.name,
+      live(job, j => ({ ...j, wait: next })),
+    )
     return true
   }
   // A worker still working (it wrote WAIT.json mid-turn) is woken once it stops.
   if (status === 'working') return true
+  // The check may have run for minutes: a stop, a report or a new prompt since then ends this wait.
+  const latest = await latestJob($, job.name)
+  if (!latest || latest.status !== 'running' || latest.token !== job.token) return true
   await $.process.run(['rm', '-f', path])
   const mins = Math.round((now - wait.since) / 60_000)
   await prompt(
     $,
-    { ...current, wait: undefined },
+    { ...latest, wait: undefined },
     [
       `Your wait is over: ${wait.for} ${passed ? `is ready (the check passed after ${mins} min)` : `is still not ready after ${mins} min, so the wait timed out`}.`,
       out ? `The check's last output:\n${out}\n` : '',
@@ -436,25 +457,30 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
 
-  await saveJob($, {
-    ...prs.reduce((j, n) => withPr(j, n), current),
-    status: 'reported',
-    queued: [],
-    wait: undefined,
-    endedAt: await $.clock.now(),
-  })
+  // Patch the job as it is now: a message queued or a stop during the awaits above must stay.
+  const endedAt = await $.clock.now()
+  const { before, after } = await updateJob($, job.name, j =>
+    j.token === current.token
+      ? { ...prs.reduce((x, n) => withPr(x, n), j), status: 'reported', queued: [], wait: undefined, endedAt }
+      : undefined,
+  )
+  if (!after) return
   misses.delete(job.name)
   quiet.delete(job.name)
   $.ui.toast(`herdr worker ${job.name}: ${status}`)
-  // Messages held while a non-Claude worker worked go out now.
-  const queued = current.queued ?? []
-  if (queued.length > 0 && status === 'done') {
-    await prompt(
-      $,
-      { ...current, queued: [] },
-      `Messages from your coordinator, sent while you worked, are in ${queued.join(', ')}. Read them and do what they ask.`,
-    )
-    body += `\n\n[The ${queued.length} message(s) queued for it were sent now; its next report follows.]`
+  const queued = before?.queued ?? []
+  if (queued.length > 0) {
+    if (status === 'done' && !after.closed) {
+      // Messages held while a non-Claude worker worked go out now.
+      await prompt(
+        $,
+        { ...after, queued: [] },
+        `Messages from your coordinator, sent while you worked, are in ${queued.join(', ')}. Read them and do what they ask.`,
+      )
+      body += `\n\n[The ${queued.length} message(s) queued for it were sent now; its next report follows.]`
+    } else {
+      body += `\n\n[${queued.length} message(s) held for it were not sent, as it did not finish (${status}): ${queued.join(', ')}.]`
+    }
   }
   // The header's result and PRs, when it has them (see report.ts).
   const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}`
@@ -550,46 +576,75 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // The suffix keeps two messages sent in one millisecond apart.
   const path = `${job.dir}/MESSAGE-${await $.clock.now()}-${crypto.randomUUID().slice(0, 4)}.md`
   await $.fs.write(path, text)
+  const kind = (await profiles($))[job.profile]?.kind
+  const hold = async () => {
+    // Held only if the job still runs the prompt it was read for; deliver may have reported it meanwhile.
+    const { after } = await updateJob($, job.name, j =>
+      j.status === 'running' && j.token === job.token ? { ...j, queued: [...(j.queued ?? []), path] } : undefined,
+    )
+    return after !== undefined
+  }
+  const typeIn = () =>
+    herdr($, [
+      'agent',
+      'prompt',
+      job.name,
+      `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
+    ])
+  const heldResult = { result: `${e.worker} (${kind}) is mid-task, so the message is held and sent the moment it reports.` }
   if (job.status === 'running') {
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
-    const kind = (await profiles($))[job.profile]?.kind
     if (kind === 'claude') {
-      await herdr($, [
-        'agent',
-        'prompt',
-        job.name,
-        `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
-      ])
+      await typeIn()
       return { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
     }
-    await saveJob($, { ...job, queued: [...(job.queued ?? []), path] })
-    return { result: `${e.worker} (${kind}) is mid-task, so the message is held and sent the moment it reports.` }
+    if (await hold()) return heldResult
   }
   // A follow-up goes to a file of its own and, when short, into the prompt itself.
   // Told to read TASK.md again, a worker that read it for its first task took it
   // for that task resent, did not open it and asked its DECISION lines again.
-  await prompt(
-    $,
-    job,
-    text.length <= MESSAGE_CHARS
-      ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${text}\n\nDo what it says.`
-      : `New message from your coordinator in ${path}, a file you have not read yet. It is not your earlier task again: it answers or follows your last report. Read it now and do what it says.`,
-  )
-  return { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
+  // In the job's own step, so it cannot land between a report and the prompt that follows it.
+  let result: { result: string } | undefined
+  await serial(job.name, async () => {
+    const latest = await latestJob($, job.name)
+    if (!latest) return
+    if (latest.status === 'running') {
+      // deliver just sent its queued messages: this one waits for that turn.
+      if (kind === 'claude') {
+        await typeIn()
+        result = { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
+      } else {
+        const { after } = await updateJob($, job.name, j =>
+          j.status === 'running' ? { ...j, queued: [...(j.queued ?? []), path] } : undefined,
+        )
+        if (after) result = heldResult
+      }
+      if (result) return
+    }
+    await prompt(
+      $,
+      latest,
+      text.length <= MESSAGE_CHARS
+        ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${text}\n\nDo what it says.`
+        : `New message from your coordinator in ${path}, a file you have not read yet. It is not your earlier task again: it answers or follows your last report. Read it now and do what it says.`,
+    )
+    result = { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
+  })
+  return result ?? { deny: `could not send to ${e.worker}; try again` }
 }
 
 export async function stopWorker($: EngineInterface, e: { worker: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
-  await saveJob($, { ...job, status: 'reported', endedAt: await $.clock.now() })
+  await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now() })
   try {
     const agent = await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])
     await herdr($, ['tab', 'close', agent.agent.tab_id])
   } catch (err) {
     return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}` }
   }
-  await saveJob($, { ...(await jobs($))[job.name]!, closed: true })
+  await patchJob($, job.name, { closed: true })
   return { result: `Stopped ${e.worker} and closed its tab.${await belowTarget($)}` }
 }
 
