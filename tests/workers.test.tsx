@@ -1001,7 +1001,7 @@ test('a worker that blocks after its early report is reported blocked once', asy
   expect(reports).toHaveLength(2)
   expect(reports[1]).toMatch(/status="blocked">\nAfter its report/)
   expect(calls.filter(c => c[1] === 'notification' && c[3] === 'w-busy is blocked')).toHaveLength(1)
-  expect(jobOf(store, 'w-busy')).toMatchObject({ tail: 'blocked' })
+  expect(jobOf(store, 'w-busy')).toMatchObject({ tail: 'blocked', reportStatus: 'done' })
   await clock.advance(3 * 60_000)
   expect(reportsOf(submitted)).toHaveLength(2)
 })
@@ -1084,6 +1084,22 @@ test('a held message to a tail job whose tab is gone is not typed', async ($, on
   await clock.advance(3 * 60_000)
   expect(jobOf(store, 'w-busy').tail).toBeUndefined()
   expect(typed.length).toBe(before)
+})
+
+test('held messages of a tail job whose tab is gone are reported, and queued is cleared', async ($, on) => {
+  const { clock, submitted, typed, files, gone, store } = await start($, on, codex)
+  await spawnBusy($, 'x')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  await clock.advance(6000 + BATCH_MS)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Also check the docs.' })
+  expect(jobOf(store, 'w-busy').queued).toHaveLength(1)
+  gone.add('w-busy')
+  await clock.advance(3 * 60_000)
+  expect(jobOf(store, 'w-busy').tail).toBeUndefined()
+  expect(jobOf(store, 'w-busy').queued ?? []).toEqual([])
+  const notice = reportsOf(submitted).at(-1) ?? ''
+  expect(notice).toMatch(/1 message\(s\) held for it were not sent, as its tab is gone: .*MESSAGE-/)
 })
 
 test('the prune of old jobs and the idle close both leave a watched job alone', async ($, on) => {
