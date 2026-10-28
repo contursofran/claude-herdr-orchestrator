@@ -47,7 +47,7 @@ export const register: Register = on => {
       // with no running job either. The other timers stay with the coordinator.
       const sweepIfNeeded = async () => {
         const all = Object.values(await jobs($))
-        let needed = all.some(j => j.status === 'running')
+        let needed = all.some(j => j.status === 'running' || j.tail)
         if (!needed && closeMinutes > 0) {
           const now = await $.clock.now()
           const asking = new Set((await openQuestions($)).map(d => d.from))
