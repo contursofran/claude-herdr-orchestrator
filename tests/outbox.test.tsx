@@ -10,12 +10,13 @@ const INBOX = '/home/t/.herdr-agents/board/session-1234.actions'
 const turnEnd = (turnId: string) => ({ turnId, answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const })
 
 test('two reports that land together reach the coordinator as one prompt, with one worker count', async ($, on) => {
-  const { clock, submitted, typed, files } = await start($, on)
+  const { clock, emit, submitted, typed, files } = await start($, on)
   await spawn($, ['w-a', 'w-b'])
+  for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${tokenA} -->\nReviewed: approve.`
   files['/repo-w-b/.herdr-agents/w-b/RESULT.md'] = `<!-- report ${tokenB} -->\nReviewed: two blockers.`
-  await clock.advance(10_000)
+  await clock.advance(2 * 3000)
   await clock.advance(BATCH_MS)
   expect(submitted).toHaveLength(1)
   // Both elements in one prompt. Their order is the order the tick delivered them in, which the test does not fix.
@@ -26,8 +27,9 @@ test('two reports that land together reach the coordinator as one prompt, with o
 })
 
 test('a report that lands while a coordinator turn runs waits for the turn to end, and joins the next batch', async ($, on) => {
-  const { clock, submitted, typed, files } = await start($, on)
+  const { clock, emit, submitted, typed, files } = await start($, on)
   await spawn($, ['w-a', 'w-b'])
+  for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
   await $.turn.start({ text: 'Check the reports.', turnId: 't1' })
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${tokenA} -->\nReviewed: approve.`
@@ -35,8 +37,9 @@ test('a report that lands while a coordinator turn runs waits for the turn to en
   await clock.advance(30_000)
   // Held while the turn runs: a prompt sent now would only queue behind it.
   expect(submitted).toEqual([])
-  await $.turn.complete(turnEnd('t1'))
   files['/repo-w-b/.herdr-agents/w-b/RESULT.md'] = `<!-- report ${tokenB} -->\nReviewed: two blockers.`
+  await clock.advance(3000)
+  await $.turn.complete(turnEnd('t1'))
   await clock.advance(10_000)
   expect(submitted).toHaveLength(1)
   expect(submitted[0]).toMatch(/<herdr-agent name="w-a"/)
@@ -63,27 +66,31 @@ test("a held batch survives a reload and goes out once; other sessions' copies t
 })
 
 test('a prompt the session refuses is kept, and goes out with the next batch', async ($, on) => {
-  const { clock, submitted, typed, files, refuse } = await start($, on)
+  const { clock, emit, submitted, typed, files, refuse } = await start($, on)
   await spawn($, ['w-a', 'w-b'])
+  for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${tokenA} -->\nReviewed: approve.`
   refuse.next = 1
-  await clock.advance(3000 + BATCH_MS)
+  await clock.advance(2 * 3000 + BATCH_MS)
   expect(submitted).toEqual([])
   files['/repo-w-b/.herdr-agents/w-b/RESULT.md'] = `<!-- report ${tokenB} -->\nReviewed: two blockers.`
-  await clock.advance(3000 + BATCH_MS)
+  await clock.advance(2 * 3000 + BATCH_MS)
   expect(submitted).toHaveLength(1)
   expect(submitted[0]).toMatch(/^<herdr-agent name="w-a"[\s\S]*\n\n<herdr-agent name="w-b"/)
   await stopAll($, clock, ['w-a', 'w-b'])
 })
 
 test('an owner answer and a report that arrive together go out as one prompt', async ($, on) => {
-  const { clock, submitted, typed, files } = await start($, on)
+  const { clock, emit, submitted, typed, files } = await start($, on)
   await spawn($, ['w-a'])
+  for (const w of ['w-a']) await emit(w, 'working')
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: 'Ship it today?', options: ['Yes', 'No'], from: 'p-1' })
-  files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
+  // The first tick sees the report; the answer comes in at the second, with the report's delivery.
+  await clock.advance(3000)
+  files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
   await clock.advance(3000 + BATCH_MS)
   expect(submitted).toHaveLength(1)
   expect(submitted[0]).toMatch(/^<herdr-agent name="w-a"[\s\S]*\n\n<herdr-decision id="D1" from="p-1">[\s\S]*The owner chose: Yes/)
@@ -94,7 +101,7 @@ test('an owner answer that goes out alone carries no worker count', async ($, on
   const { clock, submitted, files } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: 'Ship it today?', options: ['Yes', 'No'], from: 'p-1' })
   files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
-  await clock.advance(3000 + BATCH_MS)
+  await clock.advance(2 * 3000 + BATCH_MS)
   expect(submitted).toHaveLength(1)
   expect(submitted[0]).toMatch(/^<herdr-decision id="D1" from="p-1">/)
   expect(submitted[0]).not.toContain('workers working')
@@ -152,7 +159,7 @@ test('a prompt the session refused goes out on the next sweep, with no new repor
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
   refuse.next = 1
-  await clock.advance(3000 + BATCH_MS)
+  await clock.advance(2 * 3000 + BATCH_MS)
   expect(submitted).toEqual([])
   // Nothing else comes in before the sweep at 60 s: it is what tries again.
   await clock.advance(50_000)
@@ -171,11 +178,12 @@ test('a turn whose decision ping throws still ends, so a report that comes later
     if (!read.value || !unreadable || e.key !== 'decisions') return read
     return { value: { value: null, version: read.value.version } }
   })
-  const { clock, submitted, typed, files } = await start($, on)
+  const { clock, emit, submitted, typed, files } = await start($, on)
   await spawn($, ['w-a', 'w-b'])
+  for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
   files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${tokenA} -->\nDECISION: Ship it today? | Yes | No`
-  await clock.advance(3000 + BATCH_MS)
+  await clock.advance(2 * 3000 + BATCH_MS)
   expect(submitted).toHaveLength(1)
   // The coordinator's turn reads the report; its end pings the person for the question, and the ping throws
   // (the engine skips the turn.complete hook, so the turn still ends).
@@ -184,7 +192,7 @@ test('a turn whose decision ping throws still ends, so a report that comes later
   await $.turn.complete(turnEnd('t1'))
   unreadable = false
   files['/repo-w-b/.herdr-agents/w-b/RESULT.md'] = `<!-- report ${tokenB} -->\nReviewed: approve.`
-  await clock.advance(3000 + BATCH_MS)
+  await clock.advance(2 * 3000 + BATCH_MS)
   expect(submitted).toHaveLength(2)
   expect(submitted[1]).toMatch(/^<herdr-agent name="w-b"/)
   await stopAll($, clock, ['w-a', 'w-b'])
