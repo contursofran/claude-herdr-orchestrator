@@ -29,6 +29,11 @@ Per report (one <herdr-agent> prompt from the mod):
 Reads of RESULT files (Read calls, and Bash cat/head/tail/sed/less on them) are counted per session;
 read% is the share of reports followed by one. COORDINATOR-STATE.md edits are counted per session and
 divided by its reports.
+Spawn lead is the coordinator's assistant turns before each successful spawn: from the last user or plugin
+prompt, or the previous spawn/message/stop result, up to the spawn call (that turn included).
+wt_calls counts Bash calls that run `git worktree add` or `git fetch`; wt/sp is wt_calls per successful spawn.
+branch% is the share of successful spawns that passed `branch`. start_failed counts <herdr-agent status="failed">
+prompts that start with "The worker did not start".
 Spawn time is the duration of each spawn call that succeeded; a denied one ("Wrapping up") is left out.
 Subagent transcripts (<session>/subagents/*.jsonl) are not top-level files and are not counted.
 """
@@ -73,6 +78,8 @@ TASK_IN_PROMPT = re.compile(r"(/\S*?)/\.herdr-agents/([^/\s]+)/TASK\.md")
 RESULT_FILE = re.compile(r"RESULT(?:-\w+)?\.md")
 REPORT_MARK = re.compile(r"^\s*<!-- report \S+ -->\s*")
 MARK = re.compile(r"<!-- report (\S+) -->")  # the token a worker puts on RESULT.md's first line
+WORKTREE_CMD = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(?:worktree\s+add|fetch)\b")
+START_FAILED = "The worker did not start"
 READ_CMDS = ("cat", "head", "tail", "sed", "less")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)^[ \t]*\2[ \t]*$", re.M | re.S)
 CD = re.compile(r"\s*cd\s+[\"']?([^\s\"';&|]+)[\"']?\s*(?:&&|;)")
@@ -269,6 +276,10 @@ class Session:
         self.spawn_cwd = {}
         self.spawn_folders = set()
         self.spawn_secs = []
+        self.spawn_lead = []  # assistant turns before each successful spawn, from the previous boundary
+        self.spawn_branch = 0  # successful spawns that passed `branch`
+        self.wt_calls = 0  # Bash calls running `git worktree add` or `git fetch`
+        self.start_failed = 0
         self.read_calls = 0  # Read calls on a RESULT file
         self.bash_reads = 0  # Bash cat/head/tail/sed/less on a RESULT file
         self.result_writes = []  # (worker folder, token, time) of each RESULT.md this session wrote
@@ -286,6 +297,8 @@ class Session:
         cwd = self.spawn_cwd.get(name) or self.cwd
         folder = os.path.normpath(os.path.join(cwd, ".herdr-agents", name)) if cwd else None
         r = Report(ts, folder, inner)
+        if dict(ATTR.findall(tag.group(1))).get("status") == "failed" and inner.startswith(START_FAILED):
+            self.start_failed += 1
         self.reports.append(r)
         return r
 
@@ -294,6 +307,7 @@ def scan(path, since):
     s = Session(path)
     seen, pending = set(), {}
     cur = None  # the report whose reaction is still running
+    lead = set()  # assistant turns since the last boundary (prompt, or spawn/message/stop result)
     prompts = 0
     for d in records(path):
         ts = epoch(d["timestamp"])
@@ -308,12 +322,16 @@ def scan(path, since):
             if text is None:  # tool results: a spawn's duration ends here
                 for b in content if isinstance(content, list) else []:
                     if isinstance(b, dict) and b.get("tool_use_id") in pending:
-                        started = pending.pop(b["tool_use_id"])
-                        if not b.get("is_error"):  # a denied spawn returns at once: it blocked nothing
+                        started, turns, branch = pending.pop(b["tool_use_id"])
+                        if turns is not None and not b.get("is_error"):  # a denied spawn returns at once: it blocked nothing
                             s.spawn_secs.append(ts - started)
+                            s.spawn_lead.append(turns)
+                            s.spawn_branch += branch
+                        lead = set()
                 continue
             if d.get("isMeta"):  # Claude Code's own context records, not a prompt
                 continue
+            lead = set()
             tag = PROMPT_TAG.match(text)
             if tag:
                 cur = s.report(ts, tag, text)
@@ -340,6 +358,7 @@ def scan(path, since):
             add(s.by_model.setdefault(model, new_tot()), u, c)
             if cur is not None:
                 add(cur.tot, u, c)
+        lead.add(mid)
         if cur is not None and cur.resp_open:
             cur.turns.add(mid)
         rcwd = d.get("cwd") or s.cwd  # the directory this record's Bash and file paths start from
@@ -350,8 +369,10 @@ def scan(path, since):
             if name in BOUNDARY and cur is not None and cur.resp_open:
                 cur.resp_open = False
                 cur.action = (name, ts)
+            if name in BOUNDARY and name != SPAWN:
+                pending[b.get("id")] = (ts, None, False)
             if name == SPAWN:
-                pending[b.get("id")] = ts
+                pending[b.get("id")] = (ts, len(lead), bool(args.get("branch")))
                 worker, cwd = args.get("worker"), args.get("cwd")
                 if worker and cwd:
                     s.spawn_cwd[worker] = cwd
@@ -362,6 +383,8 @@ def scan(path, since):
                     cur.read = True
             elif name == "Bash":
                 cmd = str(args.get("command") or "")
+                if WORKTREE_CMD.search(cmd):
+                    s.wt_calls += 1
                 if bash_reads(cmd):
                     s.bash_reads += 1
                     if cur is not None:
@@ -536,6 +559,11 @@ def coordinator_row(s):
         "queue_by": queue_by(reports),
         "action": dist([r.action[1] - r.ts for r in reports if r.action]),
         "spawn": dist(s.spawn_secs),
+        "spawn_lead": dist(s.spawn_lead),
+        "wt_calls": s.wt_calls,
+        "wt_per_spawn": share(s.wt_calls, len(s.spawn_secs)),
+        "branch_share": share(s.spawn_branch, len(s.spawn_secs)),
+        "start_failed": s.start_failed,
         "quiet": s.quiet,
         "tokens": dict(s.tot),
         "reaction_cost_per_report": share(sum(r.tot["cost"] for r in reports), n),
@@ -565,6 +593,11 @@ def totals(rows, coords):
         "queue_by": queue_by(reports),
         "action": dist([r.action[1] - r.ts for r in reports if r.action]),
         "spawn": dist([x for s in coords for x in s.spawn_secs]),
+        "spawn_lead": dist([x for s in coords for x in s.spawn_lead]),
+        "wt_calls": sum(s.wt_calls for s in coords),
+        "wt_per_spawn": share(sum(s.wt_calls for s in coords), sum(len(s.spawn_secs) for s in coords)),
+        "branch_share": share(sum(s.spawn_branch for s in coords), sum(len(s.spawn_secs) for s in coords)),
+        "start_failed": sum(s.start_failed for s in coords),
         "quiet": sum(s.quiet for s in coords),
         "tokens": tok,
         "reaction_cost_per_report": share(sum(r.tot["cost"] for r in reports), n),
@@ -620,7 +653,7 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
         print("   none: no transcript in the window got a <herdr-agent> prompt")
     else:
         print("start        session  cwd                              rpts turns read% ptr%  reads edit/r"
-              "  det med  p90  max  queue med  p90  max  act med  p90  spawn med  max quiet")
+              "  det med  p90  max  queue med  p90  max  act med  p90  spawn med  max lead med wt/sp br% sfail quiet")
         for r in rows + [None]:
             row = tot if r is None else r
             label = "total" if r is None else short(r["project"], 32)
@@ -633,11 +666,12 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
                   f"{fmt_ratio(row['edits_per_report']):>6s}  {fmt_s(det['median']):>7s} {fmt_s(det['p90']):>4s} "
                   f"{fmt_s(det['max']):>4s}  {fmt_s(queue['median']):>9s} {fmt_s(queue['p90']):>4s} {fmt_s(queue['max']):>4s}  "
                   f"{fmt_s(act['median']):>7s} {fmt_s(act['p90']):>4s}  "
-                  f"{fmt_s(spawn['median']):>9s} {fmt_s(spawn['max']):>4s} {row['quiet']:5d}")
+                  f"{fmt_s(spawn['median']):>9s} {fmt_s(spawn['max']):>4s} {fmt_1(row['spawn_lead']['median']):>8s} "
+                  f"{fmt_ratio(row['wt_per_spawn']):>5s} {fmt_pct(row['branch_share']):>4s} {row['start_failed']:5d} {row['quiet']:5d}")
         print("   turns: model turns per report up to its spawn/message/stop call; read%: reports followed by a RESULT read"
               " (Read or Bash); ptr%: reports whose prompt pointed at the file")
         print("   det s: the worker's earliest RESULT.md write to RESULT-<token>.md; queue s: RESULT-<token>.md to the prompt;"
-              " act s: prompt to its spawn/message/stop call; spawn: the tool call; quiet: SCREEN files (stopped without a report)")
+              " act s: prompt to its spawn/message/stop call; spawn: the tool call; lead: coordinator turns before a spawn; wt/sp: git worktree add/fetch calls per spawn; br%: spawns that passed branch; sfail: workers that did not start; quiet: SCREEN files (stopped without a report)")
         print("\n== tokens and cost (session = every turn in the window; $/rpt = cost inside each report's reaction)")
         print("start        session  rpts        input      cache-r      cache-w      output       cost  $/rpt")
         for r in rows + [None]:
