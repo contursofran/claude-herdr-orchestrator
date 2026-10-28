@@ -75,14 +75,34 @@ test('a second write replaces the block in place', async ($, on) => {
   await stopAll($, clock, ['w-a'])
 })
 
-test('no write during a main turn or while a reset waits for the save', async ($, on) => {
-  const { clock, files } = await start($, on, { resetAt: 1000 })
+test('no write during a main turn', async ($, on) => {
+  const { clock, files } = await start($, on)
   files[STATE] = '# S\n'
   await spawn($, ['w-a'])
   await $.turn.start({ text: 'Go.', turnId: 't1' })
   await clock.advance(9000)
   expect(files[STATE]).toBe('# S\n')
   await $.turn.complete(turnEnd('t1'))
+  await clock.advance(3000)
+  expect(files[STATE]).toContain(AUTO_START)
+  await stopAll($, clock, ['w-a'])
+})
+
+test('no write while a context reset waits for the save', async ($, on) => {
+  on('session.measure', () => ({ changed: ['context'] }))
+  const { clock, files, submitted } = await start($, on, { resetAt: 1000 })
+  files[STATE] = '# S\n'
+  await spawn($, ['w-a'])
+  const measure = (tokens: number) => $.session.measure({ context: { tokens, window: 200_000 }, rateLimits: [], changed: ['context'] })
+  // Past the limit the mod asks the model to save; the model's own write to the file would count
+  // as the save, so the mod writes no block until the reset is over.
+  await measure(5000)
+  await clock.advance(1000)
+  expect(submitted.join('\n')).toContain('<herdr-context tokens=')
+  await clock.advance(9000)
+  expect(files[STATE]).toBe('# S\n')
+  // The context is back under the limit: the reset is over and the block is written again.
+  await measure(100)
   await clock.advance(3000)
   expect(files[STATE]).toContain(AUTO_START)
   await stopAll($, clock, ['w-a'])
