@@ -141,7 +141,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `statePath` | `COORDINATOR-STATE.md` | The state file, relative to the folder (or absolute, or `~/…`). |
 | `trustRoots` | the folder and its parent | Folders where a worker's first-run "trust this folder?" prompt is answered for it. |
 | `commandPrefix` | `hrd-` | What every slash command starts with. Read when the session starts. |
-| `profiles` | see below | Worker profiles by name; one here replaces the built-in of that name. |
+| `profiles` | see below | Worker profiles by name; one here replaces the built-in of that name. The `spawn` tool's profile list follows the files: a change shows at the coordinator's next turn, or at once from `/hrd-config`. |
 | `disable` | none | Built-in profiles to turn off: any of `planner` (the builder plans first), `reviewer` (the coordinator reviews the PR itself), `debugger` (after two failed fix rounds the coordinator asks you). The builder always runs. |
 | `smallTasks` | none | A profile the coordinator may give small, well-defined tasks, e.g. `"deepseek"`. |
 | `playbook` | none | A line, or a list of lines, added to the coordinator playbook, e.g. `"Label every PR with the issue's area."` |
