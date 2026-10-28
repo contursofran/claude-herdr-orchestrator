@@ -1302,7 +1302,8 @@ class Run:
 
     def plan_text(self):
         n, title, work = self.sc["issue"]["number"], self.issue.get("title", ""), self.work
-        split = ""
+        # One builder per scenario slice: a plan with more PRs than that leaves the rest unbuilt
+        split = " Plan it as one PR: one builder builds all of it."
         if len(self.sc["slices"]) > 1:
             parts = "; ".join(f"{s['id']}: {s['brief']}" for s in self.sc["slices"])
             split = f" Split it into these slices, one PR each: {parts}. Write a Contract section for what they share."
