@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Baseline metrics for herdr-agents: how a coordinator and its workers spend time and tokens.
 
-Usage: hrd-metrics.py [--days N] [--since "YYYY-MM-DD HH:MM"] [--json]   (default 7 days)
+Usage: hrd-metrics.py [--days N] [--since "YYYY-MM-DD HH:MM"] [--reports DIR] [--json]   (default 7 days)
 
 Reads only what Claude Code and the mod already write:
   - transcripts: $CLAUDE_CONFIG_DIR/projects/*/*.jsonl (default ~/.claude/projects)
   - worker folders: <cwd>/.herdr-agents/<worker>/ with RESULT-<token>.md and SCREEN-<token>.txt
+  - the report archive: ~/.herdr-agents/reports/<worker folder>/ (--reports DIR), the mod's copy of each
+    report file; used when the worker folder is gone because its worktree was pruned
 A coordinator session got at least one <herdr-agent> prompt. A worker session's first prompt
 names .herdr-agents/<worker>/TASK.md. Everything counts inside the window, by record time.
 The window starts at --since (local time), at --days ago, or at the later of the two when both are given.
@@ -376,7 +378,7 @@ def scan(path, since):
     return s
 
 
-def collect(root, since):
+def collect(root, since, reports=None):
     """Scans every transcript written in the window; returns (coordinator sessions, worker sessions), resolved."""
     scanned = [
         scan(path, since)
@@ -387,7 +389,7 @@ def collect(root, since):
     workers = [s for s in scanned if not s.reports and s.worker]
     writes = write_index(scanned)  # a worker's RESULT.md write can only be found once every transcript is read
     for s in coords:
-        resolve(s, since, writes)
+        resolve(s, since, writes, reports)
     return coords, workers
 
 
@@ -415,22 +417,32 @@ def write_lag(r, writes):
         r.det_est = r.ts - wrote
 
 
-def resolve(s, since, writes):
+def archived(folder, reports):
+    """The archive copy of a worker folder (the mod copies each report there), or the folder itself when it exists."""
+    if os.path.isdir(folder) or not reports:
+        return folder
+    copy = os.path.join(reports, folder.lstrip("/"))
+    return copy if os.path.isdir(copy) else folder
+
+
+def resolve(s, since, writes, reports=None):
     """Fills each report's queue and det from the RESULT file the mod wrote for it, and counts quiet stops.
 
     With no queue lag, det_est is the prompt minus the worker's write (write_lag).
     writes is write_index() over every session: the worker's RESULT.md writes.
+    reports is the archive folder: a worker folder that is gone is read from its copy there.
     """
     texts = {}  # folder -> [(mtime, body, token)], read once per folder
     for r in s.reports:
         if not r.folder:
             r.queue_miss = "no cwd"
             continue
-        if not os.path.isdir(r.folder):
-            r.queue_miss = "folder gone"  # the worktree was pruned after its PR merged
+        where = archived(r.folder, reports)
+        if not os.path.isdir(where):
+            r.queue_miss = "folder gone"  # the worktree was pruned after its PR merged, and no archive copy is left
             continue
         if r.token:
-            path = os.path.join(r.folder, f"RESULT-{r.token}.md")
+            path = os.path.join(where, f"RESULT-{r.token}.md")
             if os.path.exists(path):
                 found(r, os.path.getmtime(path), "token", writes)
             else:
@@ -438,7 +450,7 @@ def resolve(s, since, writes):
             continue
         if r.folder not in texts:
             texts[r.folder] = []
-            for path in glob.glob(os.path.join(r.folder, "RESULT-*.md")):
+            for path in glob.glob(os.path.join(where, "RESULT-*.md")):
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     body = REPORT_MARK.sub("", fh.read()).strip()
                 token = os.path.basename(path)[len("RESULT-") : -len(".md")]
@@ -456,7 +468,7 @@ def resolve(s, since, writes):
     s.quiet = sum(
         1
         for cwd, worker in s.spawn_folders
-        for path in glob.glob(os.path.join(cwd, ".herdr-agents", worker, "SCREEN-*.txt"))
+        for path in glob.glob(os.path.join(archived(os.path.join(cwd, ".herdr-agents", worker), reports), "SCREEN-*.txt"))
         if os.path.getmtime(path) >= since
     )
 
@@ -662,6 +674,8 @@ def main():
     ap.add_argument("--days", type=int, help=f"count the last N days (default {DEFAULT_DAYS} when --since is not given)")
     ap.add_argument("--since", type=since_arg, metavar='"YYYY-MM-DD HH:MM"',
                     help="count from this local time on; with --days too, the later of the two starts the window")
+    ap.add_argument("--reports", default="~/.herdr-agents/reports", metavar="DIR",
+                    help="the mod's report archive, read for worker folders that were removed (default %(default)s)")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the tables")
     args = ap.parse_args()
     days = args.days
@@ -671,7 +685,7 @@ def main():
     label = f"last {days} days" if args.since is None else f"since {datetime.fromtimestamp(since):%Y-%m-%d %H:%M}"
     root = os.path.join(os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"), "projects")
 
-    coords, workers = collect(root, since)
+    coords, workers = collect(root, since, os.path.expanduser(args.reports))
     coords.sort(key=lambda s: s.start)
     rows = [coordinator_row(s) for s in coords]
     tot = totals(rows, coords)

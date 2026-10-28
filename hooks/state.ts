@@ -23,6 +23,29 @@ export async function patchJob($: EngineInterface, name: string, patch: Partial<
   await keep($)
 }
 
+// Applies `fn` to the job as it is at this moment, in one update, so a guard and its patch
+// cannot be split by an await. `fn` returns the new job, or undefined for no change.
+// `before` is the job the update saw; `after` is undefined when nothing changed.
+export async function updateJob($: EngineInterface, name: string, fn: (j: Job) => Job | undefined): Promise<{ before?: Job; after?: Job }> {
+  let before: Job | undefined
+  let after: Job | undefined
+  await update($, jobsAtom, all => {
+    before = all[name]
+    after = undefined
+    if (!before) return all
+    after = fn(before)
+    return after ? { ...all, [name]: after } : all
+  })
+  if (after) await keep($)
+  return { before, after }
+}
+
+// The job as it is at this moment. A plain read inside a long step can see the state as it
+// was when the step began; an update's callback always sees the latest.
+export async function latestJob($: EngineInterface, name: string): Promise<Job | undefined> {
+  return (await updateJob($, name, () => undefined)).before
+}
+
 // $.state should outlive /reload-plugins, yet a reload has come back with no jobs
 // while the workers ran on (#11), leaving stop, message and the watchers without
 // them. So every change is also kept in $.store under the session's id, and

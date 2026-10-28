@@ -18,7 +18,7 @@ The coordinator starts each worker in its own herdr tab, usually in its own git 
 
 ### Reports come back by themselves
 
-When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a `RESULT.md` is delivered within 3 seconds of landing, even while its worker is still finishing its turn (a worker with messages held for it waits for the end of its turn). A sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job. Reports, your answers and ticked to-dos that arrive within a few seconds, or while the coordinator is busy, reach it as one prompt.
+When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a `RESULT.md` is delivered within 6 seconds of landing, once the file has stopped changing, even while its worker is still finishing its turn (a worker with messages held for it waits for the end of its turn). A sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job. Reports, your answers and ticked to-dos that arrive within a few seconds, or while the coordinator is busy, reach it as one prompt.
 
 ### To-dos pinned for you
 
@@ -60,7 +60,7 @@ Builder, then reviewer; the builder plans for itself, and the planner goes first
 
 ### Wrap-up and cleanup
 
-`/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
+`/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches; each report is also kept in `~/.herdr-agents/reports/`, so the metrics outlive the worktree. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
 
 ### Settings in a list
 

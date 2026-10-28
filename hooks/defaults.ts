@@ -41,6 +41,8 @@ export const LOST_REPORT_MS = 10_000
 // Prompts for the coordinator (reports, owner answers) wait this long after the last one,
 // and after its turn ends, so the ones that arrive together go out as one prompt (see outbox.ts).
 export const BATCH_MS = 3000
+// The coordinator's tick: report check, band, sidebar and inbox.
+export const TICK_MS = 3000
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
 
@@ -84,3 +86,6 @@ export const OUTBOX_PREFIX = 'outbox:'
 // many of their last actions the snapshot reports.
 export const BRIDGE_DIR = '.herdr-agents/board'
 export const BRIDGE_ACTIONS_KEPT = 10
+
+// Where each delivered report is also copied, under HOME, so the metrics outlive a pruned worktree.
+export const REPORTS_DIR = '.herdr-agents/reports'
