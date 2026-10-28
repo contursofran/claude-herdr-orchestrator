@@ -1,0 +1,703 @@
+{
+  "matrix": {
+    "started": 1793133375.1054661,
+    "repo_root": "~/Documents/code/personal/claude-herdr-orchestrator",
+    "scenarios": [
+      "replay-26"
+    ],
+    "arms": {
+      "A": {
+        "id": "A",
+        "note": "baseline",
+        "fixRound": "fresh",
+        "maxFixRounds": 2,
+        "disable": [],
+        "profiles": {
+          "builder": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "builder",
+              "--model",
+              "sonnet",
+              "--effort",
+              "medium",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
+          },
+          "reviewer": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "reviewer",
+              "--model",
+              "opus",
+              "--effort",
+              "low",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
+          },
+          "planner": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "planner",
+              "--model",
+              "opus",
+              "--effort",
+              "low",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude planner agent (Opus 5.5 low; owner 10-26)"
+          }
+        },
+        "warnings": []
+      },
+      "B": {
+        "id": "B",
+        "note": null,
+        "fixRound": "fresh",
+        "maxFixRounds": 2,
+        "disable": [
+          "planner"
+        ],
+        "profiles": {
+          "builder": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "builder",
+              "--model",
+              "sonnet",
+              "--effort",
+              "medium",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
+          },
+          "reviewer": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "reviewer",
+              "--model",
+              "opus",
+              "--effort",
+              "low",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
+          }
+        },
+        "warnings": []
+      },
+      "B2": {
+        "id": "B2",
+        "note": null,
+        "fixRound": "fresh",
+        "maxFixRounds": 2,
+        "disable": [
+          "planner"
+        ],
+        "profiles": {
+          "builder": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "builder",
+              "--model",
+              "opus",
+              "--effort",
+              "medium",
+              "--permission-mode",
+              "auto"
+            ]
+          },
+          "reviewer": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "reviewer",
+              "--model",
+              "opus",
+              "--effort",
+              "low",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
+          }
+        },
+        "warnings": []
+      },
+      "R": {
+        "id": "R",
+        "note": "reviewer on Opus medium instead of low",
+        "fixRound": "fresh",
+        "maxFixRounds": 2,
+        "disable": [],
+        "profiles": {
+          "builder": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "builder",
+              "--model",
+              "sonnet",
+              "--effort",
+              "medium",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
+          },
+          "reviewer": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "reviewer",
+              "--model",
+              "opus",
+              "--effort",
+              "medium",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "eval arm R: Opus 5.5 medium"
+          },
+          "planner": {
+            "kind": "claude",
+            "args": [
+              "--agent",
+              "planner",
+              "--model",
+              "opus",
+              "--effort",
+              "low",
+              "--permission-mode",
+              "auto"
+            ],
+            "note": "Claude planner agent (Opus 5.5 low; owner 10-26)"
+          }
+        },
+        "warnings": []
+      }
+    },
+    "repeats": 1,
+    "max_cost": 8.0,
+    "estimate": 4.199999999999999
+  },
+  "runs": [
+    {
+      "scenario": "replay-26",
+      "arm": "A",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261027-173615/replay-26/A/r1",
+      "status": "done",
+      "pass": true,
+      "invalid": false,
+      "leak_blocked": [
+        {
+          "job": "jobs/02-builder-S1",
+          "tool": "Bash",
+          "pattern": "~/.claude/mods/herdr-agents"
+        },
+        {
+          "job": "jobs/03-builder-S1",
+          "tool": "Bash",
+          "pattern": "~/.claude/mods/herdr-agents"
+        }
+      ],
+      "reasons": [],
+      "hidden": {
+        "new_pass": 7,
+        "new_total": 8,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": 0,
+        "total": 0
+      },
+      "decision": {
+        "expected": false,
+        "raised": true,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 1,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [
+        "hooks/changed.ts",
+        "hooks/defaults.ts",
+        "hooks/session.ts"
+      ],
+      "roles": {
+        "planner": {
+          "calls": 1,
+          "cost": 0.366517,
+          "cost_reported": 0.366517,
+          "tokens": {
+            "inp": 16,
+            "out": 5460,
+            "cr": 136145,
+            "cw": 28753
+          },
+          "secs": 61.9513041973114
+        },
+        "builder": {
+          "calls": 2,
+          "cost": 0.9414795,
+          "cost_reported": 0.9414795,
+          "tokens": {
+            "inp": 82,
+            "out": 28142,
+            "cr": 2676155,
+            "cw": 98070
+          },
+          "secs": 454.92629957199097
+        },
+        "reviewer": {
+          "calls": 1,
+          "cost": 0.2488696,
+          "cost_reported": 0.2488696,
+          "tokens": {
+            "inp": 10,
+            "out": 2525,
+            "cr": 75928,
+            "cw": 22893
+          },
+          "secs": 61.21281409263611
+        }
+      },
+      "cost": 1.5568661000000001,
+      "wall": 636.8336560726166,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "B",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261027-173615/replay-26/B/r1",
+      "status": "done",
+      "pass": true,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [],
+      "hidden": {
+        "new_pass": 7,
+        "new_total": 8,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": 0,
+        "total": 0
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [
+        "hooks/session.ts"
+      ],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 0.7914061,
+          "cost_reported": 0.7914061,
+          "tokens": {
+            "inp": 72,
+            "out": 22916,
+            "cr": 2155021,
+            "cw": 86650
+          },
+          "secs": 529.8735139369965
+        },
+        "reviewer": {
+          "calls": 1,
+          "cost": 0.2373638,
+          "cost_reported": 0.2373638,
+          "tokens": {
+            "inp": 8,
+            "out": 2479,
+            "cr": 60239,
+            "cw": 21963
+          },
+          "secs": 56.419379234313965
+        }
+      },
+      "cost": 1.0287699,
+      "wall": 687.0608031749725,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "B2",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261027-173615/replay-26/B2/r1",
+      "status": "done",
+      "pass": true,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [],
+      "hidden": {
+        "new_pass": 7,
+        "new_total": 8,
+        "failed": [],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 0,
+      "blockers": {
+        "first": 0,
+        "total": 0
+      },
+      "decision": {
+        "expected": false,
+        "raised": false,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 0,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [
+        "hooks/session.ts"
+      ],
+      "roles": {
+        "planner": {
+          "calls": 0,
+          "cost": 0,
+          "cost_reported": null,
+          "tokens": {
+            "inp": 0,
+            "out": 0,
+            "cr": 0,
+            "cw": 0
+          },
+          "secs": 0
+        },
+        "builder": {
+          "calls": 1,
+          "cost": 1.426029,
+          "cost_reported": 1.426029,
+          "tokens": {
+            "inp": 54,
+            "out": 21326,
+            "cr": 1522265,
+            "cw": 86855
+          },
+          "secs": 314.2730951309204
+        },
+        "reviewer": {
+          "calls": 1,
+          "cost": 0.2428866,
+          "cost_reported": 0.2428866,
+          "tokens": {
+            "inp": 8,
+            "out": 1661,
+            "cr": 57933,
+            "cw": 24756
+          },
+          "secs": 45.89706516265869
+        }
+      },
+      "cost": 1.6689156,
+      "wall": 407.0233750343323,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "R",
+      "repeat": 1,
+      "folder": "~/.cache/hrd-eval/20261027-173615/replay-26/R/r1",
+      "status": "done",
+      "pass": false,
+      "invalid": false,
+      "leak_blocked": [],
+      "reasons": [
+        "failing tests: a worker's own session sweeps the workers it started, so a dead wait child still gets its report, a worker's own session whose jobs are all reported makes no herdr call, at start-up or after, a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board, spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env"
+      ],
+      "hidden": {
+        "new_pass": 3,
+        "new_total": 8,
+        "failed": [
+          "a worker's own session sweeps the workers it started, so a dead wait child still gets its report",
+          "a worker's own session whose jobs are all reported makes no herdr call, at start-up or after",
+          "a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board",
+          "spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env"
+        ],
+        "flaky_failed": []
+      },
+      "own_tests": "pass",
+      "fix_rounds": 1,
+      "blockers": {
+        "first": 1,
+        "total": 1
+      },
+      "decision": {
+        "expected": false,
+        "raised": true,
+        "matched": false
+      },
+      "pr_opened": true,
+      "plan_decisions": [],
+      "questions": {
+        "recommended": 1,
+        "auto": 0,
+        "unanswered": 0,
+        "stop": 0
+      },
+      "outside": [
+        "hooks/redraw.ts"
+      ],
+      "roles": {
+        "planner": {
+          "calls": 1,
+          "cost": 0.3835782,
+          "cost_reported": 0.3835782,
+          "tokens": {
+            "inp": 14,
+            "out": 4971,
+            "cr": 119231,
+            "cw": 32532
+          },
+          "secs": 63.833430767059326
+        },
+        "builder": {
+          "calls": 3,
+          "cost": 0.7025184,
+          "cost_reported": 0.7025184,
+          "tokens": {
+            "inp": 84,
+            "out": 17533,
+            "cr": 1568404,
+            "cw": 92545
+          },
+          "secs": 603.3258008956909
+        },
+        "reviewer": {
+          "calls": 2,
+          "cost": 0.8518938,
+          "cost_reported": 0.8518938,
+          "tokens": {
+            "inp": 40,
+            "out": 13267,
+            "cr": 489409,
+            "cw": 61064
+          },
+          "secs": 243.79285740852356
+        }
+      },
+      "cost": 1.9379904,
+      "wall": 984.7389843463898,
+      "leak": [],
+      "shim_bypassed": 0,
+      "unpriced": [],
+      "review_unparsed": false
+    }
+  ],
+  "cells": [
+    {
+      "scenario": "replay-26",
+      "arm": "A",
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 1,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 1.5568661000000001,
+      "wall": 636.83,
+      "fix_rounds": 0.0,
+      "blockers": 0.0,
+      "outside": 3
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "B",
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 1,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 1.0287699,
+      "wall": 687.06,
+      "fix_rounds": 0.0,
+      "blockers": 0.0,
+      "outside": 1
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "B2",
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 1,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 1.6689156,
+      "wall": 407.02,
+      "fix_rounds": 0.0,
+      "blockers": 0.0,
+      "outside": 1
+    },
+    {
+      "scenario": "replay-26",
+      "arm": "R",
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 0,
+      "decision": {
+        "k": 0,
+        "n": 0
+      },
+      "cost": 1.9379904,
+      "wall": 984.74,
+      "fix_rounds": 1.0,
+      "blockers": 1.0,
+      "outside": 1
+    }
+  ],
+  "arms": {
+    "A": {
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 1,
+      "cost": 1.5568661000000001
+    },
+    "B": {
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 1,
+      "cost": 1.0287699
+    },
+    "B2": {
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 1,
+      "cost": 1.6689156
+    },
+    "R": {
+      "runs": 1,
+      "valid": 1,
+      "invalid": 0,
+      "pass": 0,
+      "cost": 1.9379904
+    }
+  },
+  "roles": {
+    "A": {
+      "planner": 0.366517,
+      "builder": 0.9414795,
+      "reviewer": 0.2488696
+    },
+    "B": {
+      "planner": 0,
+      "builder": 0.7914061,
+      "reviewer": 0.2373638
+    },
+    "B2": {
+      "planner": 0,
+      "builder": 1.426029,
+      "reviewer": 0.2428866
+    },
+    "R": {
+      "planner": 0.3835782,
+      "builder": 0.7025184,
+      "reviewer": 0.8518938
+    }
+  },
+  "disagreements": [
+    {
+      "scenario": "replay-26",
+      "arms": {
+        "A": {
+          "pass": 1,
+          "valid": 1
+        },
+        "B": {
+          "pass": 1,
+          "valid": 1
+        },
+        "B2": {
+          "pass": 1,
+          "valid": 1
+        },
+        "R": {
+          "pass": 0,
+          "valid": 1
+        }
+      },
+      "failing": [
+        {
+          "folder": "~/.cache/hrd-eval/20261027-173615/replay-26/R/r1",
+          "arm": "R",
+          "reason": "failing tests: a worker's own session sweeps the workers it started, so a dead wait child still gets its report, a worker's own session whose jobs are all reported makes no herdr call, at start-up or after, a worker's own session with no running job makes no herdr call, opens no sidebar and writes no board, spawn marks a worker's tab with HERDR_AGENTS_ROLE=worker, after the profile's env"
+        }
+      ]
+    }
+  ]
+}

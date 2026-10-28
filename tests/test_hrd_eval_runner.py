@@ -365,6 +365,21 @@ class ArmsTest(RunnerCase):
         # the reviewer is the user's profile, merged in unchanged
         self.assertEqual(b2["profiles"]["reviewer"]["args"], CONFIG["profiles"]["reviewer"]["args"])
 
+    def test_arm_bh_runs_the_haiku_builder_without_the_planner(self):
+        bh = self.load(["BH"])["BH"]
+        self.assertEqual(bh["disable"], ["planner"])
+        self.assertNotIn("planner", bh["profiles"])
+        self.assertEqual(
+            bh["profiles"]["builder"]["args"],
+            ["--agent", "builder", "--model", "haiku", "--effort", "xhigh", "--permission-mode", "auto"],
+        )
+
+    def test_the_eval_config_resolves_every_arm(self):
+        # scripts/hrd-eval/config.json holds the profiles the scored runs used; every arm must load over it
+        arms = HR.load_arms(ARMS, None, os.path.join(os.path.dirname(ARMS), "config.json"))
+        self.assertEqual(sorted(arms), ["A", "B", "B2", "BH", "C", "R"])
+        self.assertIn("sonnet", arms["A"]["profiles"]["builder"]["args"])
+
     def test_arm_a_keeps_the_users_profiles_and_its_runner_keys(self):
         a = self.load(["A"])["A"]
         self.assertEqual(a["fixRound"], "fresh")
@@ -1297,6 +1312,13 @@ class MatrixTest(RunnerCase):
         self.assertTrue(any("slice S1 only (the total); another builder builds S2" in p for p in build_prompts))
         plan_prompt = next(e["prompt"] for e in self.fake_calls() if e["kind"] == "plan")
         self.assertIn("Split it into these slices, one PR each: S1: the total; S2: the client.", plan_prompt)
+
+    def test_one_slice_plan_asks_for_one_pr(self):
+        self.make_scenario()
+        self.matrix()
+        plan_prompt = next(e["prompt"] for e in self.fake_calls() if e["kind"] == "plan")
+        self.assertIn("Plan it as one PR: one builder builds all of it.", plan_prompt)
+        self.assertNotIn("Split it into", plan_prompt)
 
     def test_two_arms_at_once_each_get_their_run(self):
         code, _, _ = self.matrix("--jobs", "2", arms="A,B")

@@ -1,0 +1,7 @@
+{
+  "note": "no planner, builder on Haiku xhigh (the mod's default builder)",
+  "disable": ["planner"],
+  "profiles": {
+    "builder": { "kind": "claude", "args": ["--agent", "builder", "--model", "haiku", "--effort", "xhigh", "--permission-mode", "auto"] }
+  }
+}
