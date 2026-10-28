@@ -41,6 +41,8 @@ export const LOST_REPORT_MS = 10_000
 // Prompts for the coordinator (reports, owner answers) wait this long after the last one,
 // and after its turn ends, so the ones that arrive together go out as one prompt (see outbox.ts).
 export const BATCH_MS = 3000
+// The coordinator's tick: report check, band, sidebar and inbox.
+export const TICK_MS = 3000
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
 
