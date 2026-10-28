@@ -2,11 +2,7 @@
   "matrix": {
     "started": 1793134370.910689,
     "repo_root": "~/Documents/code/personal/claude-herdr-orchestrator",
-    "scenarios": [
-      "replay-14",
-      "replay-15",
-      "replay-26"
-    ],
+    "scenarios": ["replay-14", "replay-15", "replay-26"],
     "arms": {
       "A": {
         "id": "A",
@@ -17,44 +13,17 @@
         "profiles": {
           "builder": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "builder",
-              "--model",
-              "sonnet",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "builder", "--model", "sonnet", "--effort", "medium", "--permission-mode", "auto"],
             "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
           },
           "reviewer": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "reviewer",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
           },
           "planner": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "planner",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "planner", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude planner agent (Opus 5.5 low; owner 10-26)"
           }
         },
@@ -65,36 +34,16 @@
         "note": null,
         "fixRound": "fresh",
         "maxFixRounds": 2,
-        "disable": [
-          "planner"
-        ],
+        "disable": ["planner"],
         "profiles": {
           "builder": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "builder",
-              "--model",
-              "sonnet",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "builder", "--model", "sonnet", "--effort", "medium", "--permission-mode", "auto"],
             "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
           },
           "reviewer": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "reviewer",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
           }
         },
@@ -546,9 +495,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "types/index.d.ts"
-      ],
+      "outside": ["types/index.d.ts"],
       "roles": {
         "planner": {
           "calls": 0,
@@ -629,9 +576,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/workers.ts"
-      ],
+      "outside": ["hooks/workers.ts"],
       "roles": {
         "planner": {
           "calls": 1,
@@ -712,9 +657,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/workers.ts"
-      ],
+      "outside": ["hooks/workers.ts"],
       "roles": {
         "planner": {
           "calls": 1,
@@ -801,9 +744,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/workers.ts"
-      ],
+      "outside": ["hooks/workers.ts"],
       "roles": {
         "planner": {
           "calls": 1,
@@ -1134,9 +1075,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/redraw.ts"
-      ],
+      "outside": ["hooks/redraw.ts"],
       "roles": {
         "planner": {
           "calls": 2,
@@ -1217,10 +1156,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/redraw.ts",
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/redraw.ts", "hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 1,
@@ -1275,18 +1211,12 @@
       "pass": false,
       "invalid": false,
       "leak_blocked": [],
-      "reasons": [
-        "failing tests: the board is written for outside apps, and their action files answer and tick as the sidebar does"
-      ],
+      "reasons": ["failing tests: the board is written for outside apps, and their action files answer and tick as the sidebar does"],
       "hidden": {
         "new_pass": 7,
         "new_total": 8,
-        "failed": [
-          "the board is written for outside apps, and their action files answer and tick as the sidebar does"
-        ],
-        "flaky_failed": [
-          "a pinned to-do shows at the top, and Done unpins it and tells the coordinator"
-        ]
+        "failed": ["the board is written for outside apps, and their action files answer and tick as the sidebar does"],
+        "flaky_failed": ["a pinned to-do shows at the top, and Done unpins it and tells the coordinator"]
       },
       "own_tests": "pass",
       "fix_rounds": 0,
@@ -1307,12 +1237,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/band.tsx",
-        "hooks/defaults.ts",
-        "hooks/redraw.ts",
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/band.tsx", "hooks/defaults.ts", "hooks/redraw.ts", "hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 1,
@@ -1393,10 +1318,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/defaults.ts",
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/defaults.ts", "hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 0,
@@ -1477,9 +1399,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 0,
@@ -1560,10 +1480,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/defaults.ts",
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/defaults.ts", "hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 0,

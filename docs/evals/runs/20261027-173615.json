@@ -2,9 +2,7 @@
   "matrix": {
     "started": 1793133375.1054661,
     "repo_root": "~/Documents/code/personal/claude-herdr-orchestrator",
-    "scenarios": [
-      "replay-26"
-    ],
+    "scenarios": ["replay-26"],
     "arms": {
       "A": {
         "id": "A",
@@ -15,44 +13,17 @@
         "profiles": {
           "builder": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "builder",
-              "--model",
-              "sonnet",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "builder", "--model", "sonnet", "--effort", "medium", "--permission-mode", "auto"],
             "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
           },
           "reviewer": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "reviewer",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
           },
           "planner": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "planner",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "planner", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude planner agent (Opus 5.5 low; owner 10-26)"
           }
         },
@@ -63,36 +34,16 @@
         "note": null,
         "fixRound": "fresh",
         "maxFixRounds": 2,
-        "disable": [
-          "planner"
-        ],
+        "disable": ["planner"],
         "profiles": {
           "builder": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "builder",
-              "--model",
-              "sonnet",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "builder", "--model", "sonnet", "--effort", "medium", "--permission-mode", "auto"],
             "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
           },
           "reviewer": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "reviewer",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
           }
         },
@@ -103,35 +54,15 @@
         "note": null,
         "fixRound": "fresh",
         "maxFixRounds": 2,
-        "disable": [
-          "planner"
-        ],
+        "disable": ["planner"],
         "profiles": {
           "builder": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "builder",
-              "--model",
-              "opus",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ]
+            "args": ["--agent", "builder", "--model", "opus", "--effort", "medium", "--permission-mode", "auto"]
           },
           "reviewer": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "reviewer",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude reviewer agent (Opus 5.5 low; owner 10-26)"
           }
         },
@@ -146,44 +77,17 @@
         "profiles": {
           "builder": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "builder",
-              "--model",
-              "sonnet",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "builder", "--model", "sonnet", "--effort", "medium", "--permission-mode", "auto"],
             "note": "Claude builder agent (Sonnet 5.5 medium; owner 10-26)"
           },
           "reviewer": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "reviewer",
-              "--model",
-              "opus",
-              "--effort",
-              "medium",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "reviewer", "--model", "opus", "--effort", "medium", "--permission-mode", "auto"],
             "note": "eval arm R: Opus 5.5 medium"
           },
           "planner": {
             "kind": "claude",
-            "args": [
-              "--agent",
-              "planner",
-              "--model",
-              "opus",
-              "--effort",
-              "low",
-              "--permission-mode",
-              "auto"
-            ],
+            "args": ["--agent", "planner", "--model", "opus", "--effort", "low", "--permission-mode", "auto"],
             "note": "Claude planner agent (Opus 5.5 low; owner 10-26)"
           }
         },
@@ -241,11 +145,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/changed.ts",
-        "hooks/defaults.ts",
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/changed.ts", "hooks/defaults.ts", "hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 1,
@@ -326,9 +226,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 0,
@@ -409,9 +307,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/session.ts"
-      ],
+      "outside": ["hooks/session.ts"],
       "roles": {
         "planner": {
           "calls": 0,
@@ -499,9 +395,7 @@
         "unanswered": 0,
         "stop": 0
       },
-      "outside": [
-        "hooks/redraw.ts"
-      ],
+      "outside": ["hooks/redraw.ts"],
       "roles": {
         "planner": {
           "calls": 1,
