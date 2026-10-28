@@ -1,5 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import type { Job } from '../types'
+import { archive } from './archive'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds } from './coordinator'
@@ -384,6 +385,7 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     // is sent as its first line and the path the coordinator reads it from.
     const full = `${job.dir}/RESULT-${current.token ?? (await $.clock.now())}.md`
     await $.fs.write(full, body)
+    await archive($, job.dir, full.slice(job.dir.length + 1), body)
     const lines = body.split('\n').filter(l => l.trim())
     const ids: string[] = []
     // A header report shows each pinned question inline, as the coordinator can settle it from there.
@@ -419,6 +421,7 @@ export async function deliver($: EngineInterface, job: Job, status: string, quie
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
     await $.fs.write(screen, tail.slice(-4000))
+    await archive($, job.dir, screen.slice(job.dir.length + 1), tail.slice(-4000))
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
 
