@@ -233,7 +233,7 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
 // A worker that reported early, then waits at an approval or question: the coordinator is told once.
 async function blockedAfterReport($: EngineInterface, job: Job) {
   const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked' } : undefined,
+    j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked', reportStatus: 'blocked' } : undefined,
   )
   if (!after) return
   await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
@@ -499,6 +499,8 @@ export async function deliver(
   let prs: number[] = []
   // A report's header (see report.ts): its status and PRs go on the prompt's tag.
   let header: Header | undefined
+  // The file this report was kept in, for the state file's block.
+  let reportFile: string | undefined
   let tail: Job['tail']
   if (await reported($, current)) {
     if (status === 'done' && opts.early) tail = 'early'
@@ -517,6 +519,7 @@ export async function deliver(
     // is sent as its first line and the path the coordinator reads it from.
     const full = `${job.dir}/RESULT-${current.token ?? (await $.clock.now())}.md`
     await $.fs.write(full, body)
+    reportFile = full
     await archive($, job.dir, full.slice(job.dir.length + 1), body)
     const lines = body.split('\n').filter(l => l.trim())
     const ids: string[] = []
@@ -554,6 +557,7 @@ export async function deliver(
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
     await $.fs.write(screen, lines.slice(-4000))
+    reportFile = screen
     await archive($, job.dir, screen.slice(job.dir.length + 1), lines.slice(-4000))
     body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
   }
@@ -569,6 +573,8 @@ export async function deliver(
           wait: undefined,
           endedAt,
           tail,
+          reportFile,
+          reportStatus: status,
         }
       : undefined,
   )
@@ -609,6 +615,16 @@ export function resumeWatching($: EngineInterface, list: Job[]) {
 }
 
 export type SpawnArgs = { worker: string; profile: string; cwd: string; task: string }
+
+// The branch checked out in a folder, for the state file's block; undefined when git says none or fails.
+async function currentBranch($: EngineInterface, cwd: string) {
+  try {
+    const r = await $.process.run(['git', '-C', cwd, 'branch', '--show-current'], { timeoutMs: 10_000 })
+    return r.exitCode === 0 ? r.stdout.trim() || undefined : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   const { worker, profile, cwd, task } = e
@@ -665,7 +681,17 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
         await $.clock.sleep(1000)
       }
     }
-    const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'running', ...briefRefs(task, worker) }
+    const branch = await currentBranch($, cwd)
+    const job: Job = {
+      name: worker,
+      profile,
+      cwd,
+      dir,
+      startedAt: await $.clock.now(),
+      status: 'running',
+      ...(branch ? { branch } : {}),
+      ...briefRefs(task, worker),
+    }
     await prompt($, job, `Your task is in ${dir}/TASK.md. Read it and do it.`, true)
     void refresh($)
     return {

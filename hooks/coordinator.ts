@@ -3,7 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { Reset } from '../types'
 import { refresh } from './board'
 import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
-import { SAVE_WAIT_MS, WRAP_UP } from './defaults'
+import { AUTO_END, AUTO_START, SAVE_WAIT_MS, WRAP_UP } from './defaults'
 import { pinned } from './owner'
 import { cmd, session } from './session'
 import { jobs } from './state'
@@ -53,7 +53,7 @@ export async function playbook($: EngineInterface, statePath: string) {
   return [
     'You coordinate worker agents for the repo(s) in this folder: you plan, start and check them and land their PRs; you write little code yourself.',
     '- Rules: read AGENTS.md or CLAUDE.md first. They name the base branch, the checks, the PR format, who merges and what needs the owner; workers read them too.',
-    `- State: keep ${statePath} current, updated after every report: Running (worker, profile, worktree, issue or PR, what it does), Ready (planned items that can start now, at least 3), Waiting (CI, review, merge), Decisions, Next. A fresh context carries on from it alone.`,
+    `- State: keep ${statePath} current. The mod rewrites its block between ${AUTO_START} and ${AUTO_END} (running and waiting workers, recent reports) on every change; never edit that block. You own Ready (planned items that can start now, at least 3), Decisions and Next: update them when they change, not after every report. A fresh context carries on from the file alone.`,
     "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report.",
     '- Worktrees: each worker gets its own git worktree off the base branch, next to the repo (`git worktree add -b <branch> ../<repo>-<slug> origin/<base>`); never two writers in one.',
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
@@ -93,6 +93,11 @@ export async function roster($: EngineInterface) {
 
 let resetting = false
 
+// Whether a context reset is under way: the model was asked to save its state, or compaction runs.
+export async function resetPending($: EngineInterface) {
+  return resetting || (await read($, resetAtom)) !== null
+}
+
 // Keeps a coordinator's context small. Past the limit it asks the model to
 // save its state to the state file; once that file is newer than the ask (or
 // SAVE_WAIT_MS passed), it compacts with a short summary pointing at the file.
@@ -117,7 +122,7 @@ export async function maybeReset($: EngineInterface, tokens: number) {
               `This session's context is past the limit. It is not the coordinator: leave ${shared} alone (another session owns it)`,
               `and write this session's own handoff to ${statePath} so a fresh context can carry on from it alone:`,
             ]),
-        'every running worker (name, profile, worktree, issue or PR, what it is doing), open PRs and their state,',
+        "what each running worker is doing (the mod's block already lists them), open PRs and their state,",
         "what waits on review, CI or merge, the owner's decisions and standing instructions from this session,",
         'open questions for the owner, ids already claimed (migration numbers and the like), and the next steps.',
         'Replace stale content and keep it under about 150 lines. Then answer in one line.',

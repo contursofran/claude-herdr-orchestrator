@@ -52,7 +52,7 @@ Rows never move on their own. An answered or finished row stays in its slot, str
 
 ### Auto-compact at 200k
 
-The panel shows the coordinator's context (`ctx 75k / 200k`); the sidebar shows it as a share of that limit (`ctx 75k 38%`). Past `resetAt` (200k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` and is compacted, then reads it back before the next report, so a session can run all day.
+The panel shows the coordinator's context (`ctx 75k / 200k`); the sidebar shows it as a share of that limit (`ctx 75k 38%`). Past `resetAt` (200k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
 
 ### A playbook that keeps workers busy
 
@@ -112,7 +112,7 @@ Each release bumps the version in `plugin.json`. Run `claude plugin update herdr
 3. **Start.** Inside herdr, open the repo folder and run `claude --model opus --effort medium`, then `/hrd-orchestrate <goal>`, e.g. `/hrd-orchestrate the issues labelled ready`. The session gets the coordinator playbook (state file, worktree per worker, builder → reviewer with a planner for big work, when to ask you) and starts workers.
 4. **Stop.** `/hrd-wrap-up` (or the panel's Wrap up button) starts no new workers and lets the running ones finish; you get a herdr notification when the last one is done. `/hrd-wrap-up off` (Keep going) resumes.
 
-One coordinator per folder: its notes live in `COORDINATOR-STATE.md` there, and wrap-up applies to the coordinators of that folder.
+One coordinator per folder: its notes live in `COORDINATOR-STATE.md` there (the mod keeps its Workers block current itself), and wrap-up applies to the coordinators of that folder.
 
 ## Commands
 
@@ -193,6 +193,8 @@ npm run check                   # formatting, type check, both manifests, tests
 | `config.ts` | The settings files, the built-in profiles, the state file's path. |
 | `defaults.ts` | Default settings and tuning values. |
 | `workers.ts` | `spawn`, `message`, `stop`: starting workers, watching them, delivering `RESULT.md`, `WAIT.json` waits. |
+| `stateblock.ts` | The Workers block the mod keeps in the state file: running and waiting workers, recent reports. |
+| `archive.ts` | The copy of each delivered report in `~/.herdr-agents/reports`, which outlives a pruned worktree. |
 | `report.ts` | The report header workers write at the top of `RESULT.md`, and its parsing. |
 | `owner.ts` | Questions (`ask_owner`, `DECISION:` lines) and to-dos (`pin_for_owner`) waiting for the person. |
 | `outbox.ts` | Holds the coordinator's prompts and sends the ones that arrive together as one. |

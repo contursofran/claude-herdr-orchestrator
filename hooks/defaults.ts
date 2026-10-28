@@ -87,5 +87,11 @@ export const OUTBOX_PREFIX = 'outbox:'
 export const BRIDGE_DIR = '.herdr-agents/board'
 export const BRIDGE_ACTIONS_KEPT = 10
 
+// The block of the state file the mod keeps current (see stateblock.ts): how many recent reports it
+// lists, and the markers that fence it.
+export const RECENT_REPORTS = 8
+export const AUTO_START = '<!-- hrd:auto -->'
+export const AUTO_END = '<!-- /hrd:auto -->'
+
 // Where each delivered report is also copied, under HOME, so the metrics outlive a pruned worktree.
 export const REPORTS_DIR = '.herdr-agents/reports'
