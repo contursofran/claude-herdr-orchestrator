@@ -45,7 +45,7 @@ export async function playbook($: EngineInterface, statePath: string) {
   const steps = [
     off.has('planner')
       ? 'spawn `builder` with the issue; it plans before it builds'
-      : "spawn `planner` for anything unplanned or non-trivial (its plan lands in PLAN.md), then `builder` with the plan's path",
+      : "spawn `builder` with the issue; it plans before it builds. Spawn `planner` first only when the work needs several PRs or the issue leaves the approach open (its plan lands in PLAN.md), then `builder` with the plan's path",
     off.has('reviewer')
       ? "then review the builder's PR yourself (diff and checks) before it merges"
       : "then `reviewer` on the builder's PR",

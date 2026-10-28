@@ -137,7 +137,7 @@ export function settingRows(pane: SettingsView): SettingRow[] {
       isDefault: !off.includes(name),
       detail,
       hint: {
-        planner: 'Plans each issue first. Off: the builder plans before it builds.',
+        planner: 'Plans work that needs several PRs or an open approach; the builder plans the rest. Off: the builder plans all of it.',
         reviewer: 'Reviews each PR. Off: the coordinator reviews the diff and checks itself.',
         debugger: 'Takes over after two failed fix rounds. Off: the coordinator asks you.',
       }[name]!,

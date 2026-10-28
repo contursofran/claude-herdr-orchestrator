@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Use before building anything non-trivial. Reads the issue and code and writes a step-by-step implementation plan a cheaper builder can follow. Changes nothing.
+description: Use before work that needs several PRs or leaves the approach open. Reads the issue and code and writes a step-by-step implementation plan a cheaper builder can follow. Changes nothing.
 tools: Read, Grep, Glob, Bash, WebFetch
 model: opus
 effort: high
