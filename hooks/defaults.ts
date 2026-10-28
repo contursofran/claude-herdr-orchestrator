@@ -75,6 +75,8 @@ export const WRAP_UP = 'wrapUp'
 // A session's jobs, under this prefix and its id (see state.ts), kept this long after their last change.
 export const JOBS_PREFIX = 'jobs:'
 export const JOBS_KEEP_MS = 3 * 24 * 60 * 60_000
+// A reported job is dropped from the state this long after it ended (see dropOldJobs).
+export const JOBS_DROP_MS = 7 * 24 * 60 * 60_000
 // The outbox's copy in $.store (see outbox.ts), under this prefix and the session's id.
 export const OUTBOX_PREFIX = 'outbox:'
 
