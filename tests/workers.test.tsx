@@ -709,3 +709,46 @@ test('the report rule says to write RESULT.md in one write, as the last step, in
   expect(typed.at(-1)).toContain('in one write, as your last step')
   await stopAll($, clock, ['w-busy'])
 })
+
+// The jobs map does not grow for good: reported jobs leave it a week after they ended.
+test('reported jobs older than 7 days are dropped from the state and the store; newer and running ones stay', async ($, on) => {
+  const day = 24 * 60 * 60_000
+  const job = (name: string, over: object) => ({
+    name,
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: `/repo/wt/.herdr-agents/${name}`,
+    startedAt: 900_000,
+    token: `tok-${name}`,
+    ...over,
+  })
+  const jobs = {
+    'w-old': job('w-old', { status: 'reported', endedAt: 1_000_000 - 8 * day }),
+    'w-new': job('w-new', { status: 'reported', endedAt: 1_000_000 - 6 * day }),
+    'w-run': job('w-run', { status: 'running', startedAt: 1_000_000 - 30 * day }),
+  }
+  const { clock, store } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs } })
+  await clock.settle()
+  const kept = store.get('jobs:session-1234') as { jobs: Record<string, unknown> }
+  expect(Object.keys(kept.jobs).sort()).toEqual(['w-new', 'w-run'])
+  await stopAll($, clock, ['w-run'])
+})
+
+test('prune runs git rev-parse once per folder', async ($, on) => {
+  const job = (name: string) => ({
+    name,
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: `/repo/wt/.herdr-agents/${name}`,
+    startedAt: 900_000,
+    endedAt: 950_000,
+    status: 'reported',
+    token: `tok-${name}`,
+  })
+  const jobs = { 'w-a': job('w-a'), 'w-b': job('w-b'), 'w-c': job('w-c') }
+  const { clock, shell, files } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs } })
+  files['/repo/wt/x'] = ''
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(shell.filter(c => c.includes('rev-parse') && c.includes('--git-common-dir'))).toHaveLength(1)
+})

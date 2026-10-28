@@ -12,7 +12,7 @@ import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
-import { jobs, restoreJobs } from './state'
+import { dropOldJobs, jobs, restoreJobs } from './state'
 import { registerTools } from './tools'
 import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
 import type { SpawnArgs } from './workers'
@@ -36,6 +36,7 @@ export const register: Register = on => {
     await registerCommands($)
     const restored = await restoreJobs($)
     if (restored > 0) $.ui.toast(`herdr-agents: ${restored} workers restored after a reload`)
+    await dropOldJobs($)
     const closeMinutes = settings.closeIdleMinutes ?? CLOSE_IDLE_MINUTES
     resumeWatching($, Object.values(await jobs($)))
     await restoreOutbox($)
