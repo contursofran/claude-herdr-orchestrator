@@ -459,6 +459,31 @@ class DetEstimate(unittest.TestCase):
         self.assertEqual(r.det_est, 10.0)
         self.assertEqual(hm.det_missing([r]), {})
 
+    def test_a_gone_folder_uses_the_archived_report_file(self):
+        s, folder = gone_report(self.tmp)  # the prompt at 1000
+        reports = os.path.join(self.tmp, "reports")
+        copy = os.path.join(reports, folder.lstrip("/"))
+        os.makedirs(copy)
+        path = os.path.join(copy, "RESULT-cafe0001.md")
+        with open(path, "w") as fh:
+            fh.write("<!-- report cafe0001 -->\nDone.\n")
+        set_mtime(path, 995.0)
+        hm.resolve(s, 0, {(folder, "cafe0001"): 990.0}, reports)
+        r = s.reports[0]
+        self.assertEqual((r.queue, r.queue_how), (5.0, "token"))
+        self.assertEqual(r.det, 5.0)
+        self.assertIsNone(r.det_est)
+        self.assertIsNone(r.queue_miss)
+
+    def test_a_gone_folder_without_an_archive_still_says_folder_gone(self):
+        s, folder = gone_report(self.tmp)
+        reports = os.path.join(self.tmp, "reports")
+        os.makedirs(reports)  # an archive with nothing for this worker
+        hm.resolve(s, 0, {(folder, "cafe0001"): 990.0}, reports)
+        r = s.reports[0]
+        self.assertEqual(r.queue_miss, "folder gone")
+        self.assertEqual(r.det_est, 10.0)
+
     def test_a_missing_token_file_takes_the_same_estimate(self):
         s, folder = gone_report(self.tmp)
         os.makedirs(folder)  # the folder is there, the RESULT file is not
