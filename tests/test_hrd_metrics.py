@@ -341,6 +341,8 @@ class Totals(Fixtures):
         self.assertEqual(t["queue_by"], {"token": 1, "text": 1, "missing": {"no report file": 1, "folder gone": 1}})
         self.assertEqual(t["action"], {"n": 3, "median": 5, "p90": 6, "max": 6})  # 6, 1, 5
         self.assertEqual(t["spawn"], {"n": 4, "median": 1.5, "max": 3, "p90": 3})
+        self.assertEqual(t["spawn_lead"], {"n": 4, "median": 1, "max": 2, "p90": 2})  # [1, 1, 1, 2]
+        self.assertEqual((t["wt_calls"], t["wt_per_spawn"], t["branch_share"], t["start_failed"]), (0, 0.0, 0.0, 0))
         self.assertEqual(t["quiet"], 1)
 
     def test_worker_sessions_are_grouped_by_model(self):
@@ -621,6 +623,62 @@ class Join(unittest.TestCase):
             self.assertIsNone(s.reports[0].det)  # another token, or another folder: not this report's write
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class SpawnLead(unittest.TestCase):
+    """spawn_lead, wt_calls, branch_share and start_failed on a small hand-written coordinator."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="hrd-metrics-lead-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        base = int(time.time()) - 3600
+        spawn = "mcp__herdr-agents__spawn"
+        c = Transcript(base, self.tmp)
+        c.human(0, "go")
+        # Spawn 1: a worktree turn, then the spawn turn: lead 2, one git call.
+        c.assistant(1, "w1", OPUS, usage(inp=1), [call("g1", "Bash", command="git fetch origin && git worktree add ../wt -b x origin/main")])
+        c.result(2, "g1")
+        c.assistant(3, "w2", OPUS, usage(inp=1), [call("s1", spawn, worker="b1", cwd="/wt", profile="builder", task="t")])
+        c.result(4, "s1")
+        # Spawn 2: the previous spawn's result is the boundary; one turn, `branch`, no Bash: lead 1.
+        c.assistant(5, "w3", OPUS, usage(inp=1), [call("s2", spawn, worker="b2", branch="b2", profile="builder", task="t")])
+        c.result(6, "s2")
+        # A denied spawn counts nowhere; a message resets the boundary.
+        c.assistant(7, "w4", OPUS, usage(inp=1), [call("s3", spawn, worker="b3", branch="b3", profile="builder", task="t")])
+        c.result(7, "s3", is_error=True)
+        c.assistant(8, "w5", OPUS, usage(inp=1), [call("m1", "mcp__herdr-agents__message", worker="b1", text="hi")])
+        c.result(9, "m1")
+        # Spawn 3 after a new prompt: two turns since the prompt, a non-git Bash call among them.
+        c.herdr(20, "b1", "builder", "failed", "The worker did not start: boom. Its tab was closed.")
+        c.herdr(21, "b2", "builder", "failed", "Something else failed.")
+        c.herdr(22, "b3", "builder", "done", "The worker did not start is only a quote.")
+        c.assistant(23, "w6", OPUS, usage(inp=1), [call("l1", "Bash", command="ls")])
+        c.result(24, "l1")
+        c.assistant(25, "w7", OPUS, usage(inp=1), [call("s4", spawn, worker="b4", cwd="/wt", profile="builder", task="t")])
+        c.result(26, "s4")
+        self.path = os.path.join(self.tmp, "c.jsonl")
+        c.write(self.path)
+        self.session = hm.scan(self.path, base - 10)
+
+    def test_lead_counts_turns_since_the_previous_boundary(self):
+        self.assertEqual(self.session.spawn_lead, [2, 1, 2])  # s3 was denied and is left out
+
+    def test_worktree_calls_and_branch_share(self):
+        self.assertEqual(self.session.wt_calls, 1)  # the ls is not one
+        row = hm.coordinator_row(self.session)
+        self.assertEqual(row["wt_calls"], 1)
+        self.assertAlmostEqual(row["wt_per_spawn"], 1 / 3)
+        self.assertAlmostEqual(row["branch_share"], 1 / 3)
+        self.assertEqual(row["spawn_lead"]["median"], 2)
+
+    def test_only_a_failed_report_that_says_the_worker_did_not_start_counts(self):
+        self.assertEqual(self.session.start_failed, 1)
+        self.assertEqual(hm.totals([hm.coordinator_row(self.session)], [self.session])["start_failed"], 1)
+
+    def test_no_spawns_give_no_ratios(self):
+        s = hm.Session(self.path)
+        row = hm.coordinator_row(s)
+        self.assertEqual((row["wt_per_spawn"], row["branch_share"], row["spawn_lead"]["n"]), (None, None, 0))
 
 
 class Units(unittest.TestCase):
