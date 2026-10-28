@@ -12,6 +12,23 @@ import { cmd } from './session'
 // Which decision the band shows, and whether Details lists every worker.
 const view = atom({ plugin: 'herdr-agents', key: 'view' } as const, { tab: 'workers', selected: null } as View)
 
+// The mod's version, from its own plugin.json, read once per mod folder. Empty when it cannot be read.
+const versions = new Map<string, Promise<string>>()
+function modVersion($: EngineInterface) {
+  const root = $.plugin.root
+  let known = versions.get(root)
+  if (!known) {
+    known = $.fs
+      .read(`${root}/.claude-plugin/plugin.json`)
+      .then(text => String(JSON.parse(text).version ?? ''))
+      .catch(() => '')
+    versions.set(root, known)
+    // A failed read is tried again at the next draw.
+    void known.then(v => v || versions.delete(root))
+  }
+  return known
+}
+
 export type BandRender = RenderInput<'AbovePrompt'>
 export type ToolUseRender = RenderInput<'ToolUse'>
 
@@ -25,6 +42,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
   const { selected, workers: workerView } = await read($, view)
   const items = await pinnedItems($)
   const clock = await $.clock.now()
+  const version = await modVersion($)
   const recent = (await answered($)).filter(x => clock - x.at < SETTLED_MS)
   if (e.props.hasSurvey || (rows.length === 0 && open.length === 0 && recent.length === 0 && items.length === 0)) return next(e)
 
@@ -295,6 +313,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
               {`ctx ${Math.round(context.tokens / 1000)}k / ${Math.round(context.limit / 1000)}k${ctxColor === 'error' ? ' · resets soon' : ''}`}
             </Text>
           ) : null}
+          {version ? <Text dimColor>{`v${version}`}</Text> : null}
         </Box>
       </Box>
       {onPage.length > 0 ? (

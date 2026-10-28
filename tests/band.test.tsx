@@ -184,3 +184,23 @@ test('a status a wait or the sweep sees reaches the band row, with no agent get'
   expect(calls.filter(c => c[2] === 'get')).toEqual([])
   await stopAll($, clock, ['w-x'])
 })
+
+// The version is read once per mod folder and kept, so the unreadable case runs before the readable one.
+test("the band shows no version when the mod's plugin.json cannot be read", async ($, on) => {
+  await start($, on)
+  await spawn($, ['w-busy'])
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /^v\d/ })).toBeUndefined()
+  expect(await row(ui, 'w-busy')).toBeDefined()
+  await ui.unmount()
+})
+
+test('the band ends its top row with the mod version, dim, after the context size', async ($, on) => {
+  const { recorded } = await start($, on)
+  recorded.modPlugin = JSON.stringify({ name: 'herdr-agents', version: '0.14.0' })
+  await spawn($, ['w-busy'])
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect((await ui.find({ type: 'Text', text: /^v\d/ }))?.text).toBe('v0.14.0')
+  expect(await row(ui, 'w-busy')).toBeDefined()
+  await ui.unmount()
+})
