@@ -62,10 +62,19 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
   const waiting = new Map<string, string[]>()
   for (const d of open) waiting.set(d.from, [...(waiting.get(d.from) ?? []), `D${d.id}`])
   const rank = (r: Row) =>
-    waiting.has(r.name) ? 0 : r.state === 'blocked' || r.state === 'gone' ? 1 : r.state === 'working' ? 2 : r.state === 'done' ? 3 : 4
+    waiting.has(r.name)
+      ? 0
+      : r.state === 'blocked' || r.state === 'gone'
+        ? 1
+        : r.state === 'working' || r.state === 'starting'
+          ? 2
+          : r.state === 'done'
+            ? 3
+            : 4
   const sorted = [...rows].sort((x, y) => rank(x) - rank(y))
   const look: Record<string, { label: string; color?: string; dim?: boolean }> = {
     working: { label: 'Working', color: 'success' },
+    starting: { label: 'starting', dim: true },
     waiting: { label: 'Waiting', dim: true },
     blocked: { label: 'Blocked · answer it in its tab', color: 'error' },
     idle: { label: 'Idle', dim: true },

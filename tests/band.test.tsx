@@ -185,6 +185,27 @@ test('a status a wait or the sweep sees reaches the band row, with no agent get'
   await stopAll($, clock, ['w-x'])
 })
 
+test('a starting worker shows as starting until its tab is made', async ($, on) => {
+  const { clock, gate, emit } = await start($, on)
+  const release = gate(argv => argv[1] === 'tab' && argv[2] === 'create')
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-x', profile: 'builder', cwd: '/repo-w-x', task: 'x' })
+  await clock.settle()
+  await clock.advance(3000)
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ key: 'col0' }))?.text ?? ''
+    await ui.unmount()
+    return text
+  }
+  expect(await band()).toMatch(/^● w-x +builder +\S+ +starting$/)
+  release()
+  await clock.settle()
+  await emit('w-x', 'working')
+  await clock.advance(3000)
+  expect(await band()).toMatch(/^● w-x +builder +\S+ +Working$/)
+  await stopAll($, clock, ['w-x'])
+})
+
 // The version is read once per mod folder and kept, so the unreadable case runs before the readable one.
 test("the band shows no version when the mod's plugin.json cannot be read", async ($, on) => {
   await start($, on)

@@ -38,7 +38,7 @@
           "profile": { "type": "string" },
           "state": {
             "type": "string",
-            "description": "herdr's agent status (idle, working, blocked, done), or reported, or waiting (on a WAIT.json check)."
+            "description": "herdr's agent status (idle, working, blocked, done), or reported, waiting (on a WAIT.json check), or starting (its tab and CLI are being opened)."
           },
           "startedAt": { "type": "number" },
           "endedAt": { "type": ["number", "null"] },

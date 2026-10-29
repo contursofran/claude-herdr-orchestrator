@@ -7,7 +7,7 @@ import { elapsed } from './format'
 import { lastStatus } from './herdr'
 import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
-import { jobs } from './state'
+import { active, jobs } from './state'
 
 // What the band shows of the workers, and the GitHub repo of each folder they used.
 const board = atom({ plugin: 'herdr-agents', key: 'board' } as const, { now: 0, rows: [] } as Board)
@@ -58,11 +58,12 @@ export async function refresh($: EngineInterface) {
   const { byCwd } = await learnRepos($, [session.cwd, ...Object.values(await jobs($)).map(j => j.cwd)])
   const asking = new Set((await openQuestions($)).map(d => d.from))
   const shown = Object.values(await jobs($)).filter(
-    j => j.status === 'running' || asking.has(j.name) || (j.endedAt !== undefined && now - j.endedAt < LINGER_MS),
+    j => active(j) || asking.has(j.name) || (j.endedAt !== undefined && now - j.endedAt < LINGER_MS),
   )
   const rows: Row[] = []
   for (const j of shown) {
     let state = 'reported'
+    if (j.status === 'starting') state = 'starting'
     if (j.status === 'running') state = lastStatus.get(j.name) ?? 'working'
     if (j.status === 'running' && j.wait && state !== 'blocked' && state !== 'gone') state = 'waiting'
     rows.push({

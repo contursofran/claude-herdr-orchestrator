@@ -269,3 +269,17 @@ test("a report's PR goes to its worker's row on the sidebar: the header's, else 
   await ui.unmount()
   await stopAll($, clock, ['w-busy', 'w-link'])
 })
+
+test('a starting worker is a running stage (◐) on its task row', () => {
+  const [task] = groupTasks({
+    jobs: [{ name: 'b-7', profile: 'builder', cwd: '/x', dir: '/x', startedAt: 1, status: 'starting', refs: [7] }],
+    rows: [{ name: 'b-7', profile: 'builder', state: 'starting', startedAt: 1 }],
+    items: [],
+    prs: {},
+    now: 10,
+    repoOf: () => 'acme/app',
+  })
+  expect(task!.stages[1]).toBe('run')
+  expect(task!.tab).toBe('b-7')
+  expect(task!.isFinished).toBe(false)
+})

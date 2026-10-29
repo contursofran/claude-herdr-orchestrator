@@ -166,6 +166,11 @@ test('renderBlock orders running by start and reports by end, newest first, and 
   )
 })
 
+test('renderBlock lists a starting job as running work that is starting', () => {
+  const text = renderBlock([job({ name: 'w', status: 'starting', cwd: '/repo/wt', startedAt: at('2026-10-02 10:00') })])
+  expect(text).toContain('### Running\n- w (builder) in /repo/wt · starting since 2026-10-02 10:00\n### Waiting\n- none\n')
+})
+
 test('renderBlock lists a reported job that is still watched as running, by what it waits at', () => {
   const text = renderBlock([
     job({ name: 'a', status: 'reported', tail: 'early', endedAt: 5, startedAt: 1 }),

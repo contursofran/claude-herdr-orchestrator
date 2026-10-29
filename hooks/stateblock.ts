@@ -4,7 +4,7 @@ import { resetSettings } from './config'
 import { resetPending } from './coordinator'
 import { AUTO_END, AUTO_START, RECENT_REPORTS } from './defaults'
 import { turnRunning } from './outbox'
-import { jobs } from './state'
+import { active, jobs } from './state'
 
 // The state file's Workers block: the mod writes what it knows (running and waiting workers,
 // recent reports) between AUTO_START and AUTO_END, so the coordinator keeps only Ready,
@@ -16,16 +16,22 @@ const utc = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace('T',
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 export function renderBlock(list: Job[]): string {
-  const running = list
-    .filter(j => j.status === 'running' || j.tail)
-    .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name))
+  const running = list.filter(j => active(j) || j.tail).sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name))
   const waiting = running.filter(j => j.status === 'running' && j.wait)
   const recent = list
     .filter(j => j.status === 'reported' && j.endedAt !== undefined)
     .sort((a, b) => b.endedAt! - a.endedAt! || a.name.localeCompare(b.name))
     .slice(0, RECENT_REPORTS)
   const state = (j: Job) =>
-    j.status === 'running' ? (j.wait ? 'waiting' : 'running') : j.tail === 'blocked' ? 'blocked after its report' : 'finishing its turn'
+    j.status === 'starting'
+      ? 'starting'
+      : j.status === 'running'
+        ? j.wait
+          ? 'waiting'
+          : 'running'
+        : j.tail === 'blocked'
+          ? 'blocked after its report'
+          : 'finishing its turn'
   const runningLine = (j: Job) => {
     const prs = j.prs ?? []
     const issues = (j.refs ?? []).filter(n => !prs.includes(n))
