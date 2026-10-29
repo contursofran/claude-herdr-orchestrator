@@ -606,7 +606,7 @@ export async function deliver(
     }
   }
   // The header's result and PRs, when it has them (see report.ts).
-  const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}`
+  const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}${header?.verdict ? ` verdict="${header.verdict}"` : ''}`
   await post(
     $,
     `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}"${attrs}>\n${body.trim()}\n</herdr-agent>`,

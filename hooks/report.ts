@@ -4,10 +4,18 @@ import { HEADER_SCAN_LINES, SUMMARY_LINE_CHARS, SUMMARY_LINES } from './defaults
 // the PRs it opened or updated, a short summary and an optional question for the coordinator.
 // Pure: no engine calls. A report without a header is delivered as it always was.
 
-export type Header = { status?: 'done' | 'blocked' | 'failed'; prs: number[]; summary: string[]; ask?: string; rest: string }
+export type Header = {
+  status?: 'done' | 'blocked' | 'failed'
+  prs: number[]
+  summary: string[]
+  ask?: string
+  verdict?: 'approve' | 'changes'
+  head?: string
+  rest: string
+}
 
 // `status: done`, `**Status:** done`, `- status: done`. `prs` is an alias of `pr`.
-const KEY = /^\s*(?:[-*]\s+)?\**(status|prs?|summary|ask)\**\s*:\s*\**\s*(.*?)\s*$/i
+const KEY = /^\s*(?:[-*]\s+)?\**(status|prs?|summary|ask|verdict|head)\**\s*:\s*\**\s*(.*?)\s*$/i
 // Any other `word:` line: ignored inside a fence, and it ends an unfenced header.
 const OTHER_KEY = /^\s*(?:[-*]\s+)?\**[A-Za-z][\w-]*\**\s*:(?:\s|$)/
 const FENCE = /^\s*```/
@@ -29,6 +37,18 @@ const STATUS_WORDS = new Map<string, 'done' | 'blocked' | 'failed'>([
   ['failure', 'failed'],
   ['error', 'failed'],
 ])
+
+// The words a verdict may start with, mapped to the verdict they mean.
+const VERDICT_WORDS = new Map<string, 'approve' | 'changes'>([
+  ['approve', 'approve'],
+  ['approved', 'approve'],
+  ['lgtm', 'approve'],
+  ['changes', 'changes'],
+  ['changes-needed', 'changes'],
+  ['request-changes', 'changes'],
+  ['blocked', 'changes'],
+])
+const HEAD = /^[0-9a-f]{7,40}$/i
 
 // One item of a `pr:` list: `42`, `#42` or a pull request link.
 const PR_ITEM = /^(?:#?(\d+)|https?:\/\/\S*?\/pull\/(\d+)\b\S*)$/
@@ -73,6 +93,8 @@ export function parseHeader(body: string): Header | undefined {
   let status: Header['status']
   let prs: number[] = []
   let ask: string | undefined
+  let verdict: Header['verdict']
+  let head: string | undefined
   const summary: string[] = []
   const addSummary = (text: string) => {
     const line = text.replace(/^\s*[-*]\s+/, '').trim()
@@ -101,6 +123,8 @@ export function parseHeader(body: string): Header | undefined {
       if (name === 'status') status = STATUS_WORDS.get(value.toLowerCase().match(/[a-z]+/)?.[0] ?? '')
       else if (name === 'summary') addSummary(value)
       else if (name === 'ask') ask = value || undefined
+      else if (name === 'verdict') verdict = VERDICT_WORDS.get(value.toLowerCase().match(/[a-z-]+/)?.[0] ?? '')
+      else if (name === 'head') head = HEAD.test(value.replace(/^`|`$/g, '')) ? value.replace(/^`|`$/g, '') : undefined
       else prs = prNumbers(value)
       continue
     }
@@ -122,7 +146,7 @@ export function parseHeader(body: string): Header | undefined {
   const kept = summary.map(l => l.slice(0, SUMMARY_LINE_CHARS))
   if (kept.length === 0) return undefined
   const rest = [...lines.slice(0, start), ...lines.slice(end + 1)].join('\n').trim()
-  return { status, prs, summary: kept, ask, rest }
+  return { status, prs, summary: kept, ask, verdict, head, rest }
 }
 
 // The inline form of a report with a header: its summary, the question for the coordinator,

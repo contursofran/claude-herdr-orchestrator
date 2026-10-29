@@ -4,6 +4,7 @@ import type { Decision, Pr, SideItem, SideView, Todo } from '../types'
 import { readBoard } from './board'
 import { toggleWrapUp } from './coordinator'
 import { SIDE_BOX_ROWS, SIDE_COLUMNS, SIDE_NEED_ROWS, SIDE_RECENT_MS, SIDE_WORK_ROWS } from './defaults'
+import { ciOf, type Check } from './ci'
 import { ago } from './format'
 import { linker, type LinkFn } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
@@ -213,16 +214,6 @@ export async function pollPrs($: EngineInterface) {
   } finally {
     polling = false
   }
-}
-
-type Check = { __typename?: string; status?: string; conclusion?: string; state?: string }
-const FAILED = ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']
-function ciOf(checks: Check[]): Pr['ci'] {
-  if (checks.length === 0) return 'none'
-  if (checks.some(c => FAILED.includes(c.conclusion ?? c.state ?? ''))) return 'fail'
-  const pending = (c: Check) =>
-    c.__typename === 'StatusContext' ? c.state === 'PENDING' || c.state === 'EXPECTED' : c.status !== 'COMPLETED'
-  return checks.some(pending) ? 'pending' : 'pass'
 }
 
 // The marks, monochrome: the shape says the stage, bold says it is the person's.
