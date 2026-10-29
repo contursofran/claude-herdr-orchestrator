@@ -16,6 +16,8 @@ repo: Read and Edit are denied there, and Bash runs in Claude Code's sandbox wit
   scripts/hrd-eval.py [--arms A,C] [--repeats 3] [--jobs 4] [--max-cost 30] [--max-call-cost 5] [--call-timeout 20]
                       [--results DIR] [--config PATH] [--claude PATH] [--json]
 
+A review item (kind "review", a folder under --scenarios-dir with a fixed pr.patch) runs the reviewer only on that PR.
+An arm's `agents` key ({"reviewer": "agents/reviewer.md" | "git:<rev>:<path>"}) pins the agent text of a role.
 A real run ends with the score table of its results folder (scripts/hrd-eval/score.py); --json prints the aggregate.
 Exit codes: 0 done; 1 error (bad input, or a check that failed); 2 budget refused the start or stopped a run.
 Python 3 standard library only (3.9 compatible).
@@ -66,7 +68,10 @@ QUESTION_HOWS = ("recommended", "auto", "unanswered", "stop")  # run.json's ques
 MERGE_UNION = ["CHANGELOG.md"]  # files two slices both add lines to: merged as a union in the grade, as a coordinator would
 DISALLOW = "WebFetch(domain:github.com)"
 ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "SSH_AUTH_SOCK")  # and every HERDR_* variable
-ARM_KEYS = ("profiles", "disable", "fixRound", "maxFixRounds", "note")
+ARM_KEYS = ("profiles", "disable", "fixRound", "maxFixRounds", "note", "agents")
+AGENT_ROLES = ("planner", "builder", "reviewer")  # the roles an arm's `agents` key may pin
+AGENT_PREFIX = "hrd-eval-"  # the name a pinned agent gets: new, so no question of which definition wins
+SEED_TYPES = ("logic", "edge", "test", "rule", "scope", "duty")
 
 # The report rule of hooks/workers.ts reportRule(), one part per line of its array in the TS form (${job.dir}, and
 # ${token} for the token), minus the WAIT.json sentences (a level 1 worker never waits). report_rule() joins the parts
@@ -110,7 +115,14 @@ HEADER_KEY = re.compile(r"^\s*(?:[-*]\s+)?\**[A-Za-z][\w-]*\**\s*:")
 HEADER_PR = re.compile(r"^\s*(?:[-*]\s+)?\**(?:pr|prs)\**\s*:\s*\**\s*(.*?)\s*$", re.I)
 HEADER_ASK = re.compile(r"^\s*(?:[-*]\s+)?\**ask\**\s*:\s*\**\s*(.*?)\s*$", re.I)
 PR_ITEM = re.compile(r"^(?:#?(\d+)|https?://\S*?/pull/(\d+)\b\S*)$")
-
+HEADER_STATUS = re.compile(r"^\s*(?:[-*]\s+)?\**status\**\s*:", re.I)
+HEADER_VERDICT = re.compile(r"^\s*(?:[-*]\s+)?\**verdict\**\s*:\s*\**\s*(.*?)\s*$", re.I)
+# The words a header's verdict may start with (VERDICT_WORDS in hooks/report.ts).
+VERDICT_WORDS = {"approve": "approve", "approved": "approve", "lgtm": "approve", "changes": "changes",
+                 "changes-needed": "changes", "request-changes": "changes", "blocked": "changes"}
+BLOCKERS_HEADING = re.compile(r"(?i)^\W*blockers?\W*\d*\W*$")
+# A line that opens the next section of a review: `## Nits`, `**Nits**`, `Nits:`.
+SECTION_HEADING = re.compile(r"^\s*(?:#{1,6}\s+\S.*|\*\*[^*\n]+\*\*:?|[A-Za-z][A-Za-z ]{0,30}:)\s*$")
 
 class RunnerError(Exception):
     """A bad input or a failed setup: the message goes to stderr and the runner exits 1."""
@@ -194,6 +206,8 @@ def scenario_snapshot(sc, source, dest):
         export_tree(source, src["commit"], dest)
     else:
         shutil.copytree(os.path.join(sc["dir"], src["dir"]), dest)
+    if sc.get("baseOverlay"):  # a review item's files over the snapshot, before the Base commit
+        shutil.copytree(os.path.join(sc["dir"], sc["baseOverlay"]["dir"]), dest, dirs_exist_ok=True)
 
 
 def apply_hidden(sc, source, grade_dir):
@@ -440,7 +454,55 @@ def read_config(path):
     return data
 
 
-def load_arms(arms_dir, names=None, config_path=None):
+def read_agent(ref, repo):
+    """An agent definition from a ref: a repo path (relative to `repo`, or absolute) or `git:<rev>:<path>`. Returns
+    {description, prompt, tools}: the file's frontmatter description and tools (a comma list), and its body."""
+    if ref.startswith("git:"):
+        rev, _, path = ref[4:].partition(":")
+        if not rev or not path:
+            raise RunnerError(f"agent {ref}: expected git:<rev>:<path>")
+        p = git("show", f"{rev}:{path}", cwd=repo, check=False)
+        if p.returncode != 0:
+            raise RunnerError(f"agent {ref}: {(p.stderr or p.stdout).strip()[-200:]}")
+        text = p.stdout
+    else:
+        path = ref if os.path.isabs(ref) else os.path.join(repo, ref)
+        if not os.path.isfile(path):
+            raise RunnerError(f"agent {ref}: {path} does not exist")
+        text = read_text(path)
+    # Only description and tools are kept: model and effort come from the arm's profile (--model, --effort).
+    m = re.match(r"---\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)\Z", text, re.S)
+    if not m:
+        raise RunnerError(f"agent {ref}: no frontmatter (--- lines) at the top")
+    front = {}
+    for line in m.group(1).splitlines():
+        k, sep, v = line.partition(":")
+        if sep and k.strip():
+            front[k.strip().lower()] = v.strip()
+    if not front.get("description"):
+        raise RunnerError(f"agent {ref}: the frontmatter needs a description")
+    tools = [t.strip() for t in front.get("tools", "").split(",") if t.strip()]
+    return {"description": front["description"], "prompt": m.group(2).strip(), "tools": tools}
+
+
+def read_agents(where, spec, repo):
+    """An arm's `agents` key ({role: ref}) as {role: {name, description, prompt, tools}}."""
+    if not isinstance(spec, dict) or not all(isinstance(v, str) and v for v in spec.values()):
+        raise RunnerError(f'{where}: agents must map a role to a ref ("<repo path>" or "git:<rev>:<path>")')
+    out = {}
+    for role, ref in spec.items():
+        if role not in AGENT_ROLES:
+            raise RunnerError(f"{where}: agents names the role {role!r}; roles are {', '.join(AGENT_ROLES)}")
+        out[role] = {"name": AGENT_PREFIX + role, **read_agent(ref, repo)}
+    return out
+
+
+def agents_file_data(agents):
+    """The --agents JSON of an arm's pinned agents: {name: {description, prompt, tools}}."""
+    return {a["name"]: {"description": a["description"], "prompt": a["prompt"], "tools": a["tools"]} for a in agents.values()}
+
+
+def load_arms(arms_dir, names=None, config_path=None, repo=None):
     """The arms, resolved. Each arm merges over the user's herdr-agents.json the way hooks/config.ts config() does."""
     user = read_config(config_path or default_config())
     if names is None:
@@ -469,6 +531,7 @@ def load_arms(arms_dir, names=None, config_path=None):
                 raise RunnerError(f"arm {name}: the reviewer cannot be disabled at level 1 (the fix loop needs it)")
             if off != "planner":
                 raise RunnerError(f'arm {name}: only "planner" can be disabled at level 1, not {off!r}')
+        agents = read_agents(f"arm {name}", arm["agents"], repo or REPO) if "agents" in arm else {}
         profiles = {**(user.get("profiles") or {}), **(arm.get("profiles") or {})}
         roles = ["builder", "reviewer"] + ([] if "planner" in disable else ["planner"])
         resolved = {}
@@ -483,6 +546,7 @@ def load_arms(arms_dir, names=None, config_path=None):
             "maxFixRounds": max_rounds,
             "disable": list(disable),
             "profiles": resolved,
+            "agents": agents,
             "warnings": warnings,
         }
     return arms
@@ -503,8 +567,10 @@ def load_scenario(folder):
 
     sc["id"] = os.path.basename(os.path.normpath(folder))
     sc["dir"] = os.path.abspath(folder)
+    if sc.get("kind") == "review":
+        return load_review(sc, bad)
     if sc.get("kind") not in ("replay", "fixture"):
-        raise bad('kind must be "replay" or "fixture"')
+        raise bad('kind must be "replay", "fixture" or "review"')
     src = sc.get("source") or {}
     if ("commit" in src) == ("dir" in src):
         raise bad("source needs exactly one of commit or dir")
@@ -547,6 +613,81 @@ def load_scenario(folder):
     for key in ("mergeUnion", "knownFlaky"):
         if key in sc and not (isinstance(sc[key], list) and all(isinstance(x, str) for x in sc[key])):
             raise bad(f"{key} must be a list of strings")
+    return sc
+
+
+def load_review(sc, bad):
+    """A review item: a fixed PR that only the reviewer reviews. It takes its source, issue, setup, grade and knownFlaky
+    from its base scenario (`base`, a folder relative to the item) and brings its own PR (`pr`), what is wrong with it
+    (`seed`, null for a clean PR) and the witness test of a quiet bug. Paths of the base are made absolute."""
+    folder = sc["dir"]
+    base_dir = os.path.normpath(os.path.join(folder, str(sc.get("base") or "")))
+    if not sc.get("base") or not os.path.exists(os.path.join(base_dir, "scenario.json")):
+        raise bad(f"base must name a scenario folder; {base_dir} has no scenario.json")
+    base = load_scenario(base_dir)
+    if base["kind"] == "review":
+        raise bad("base is a review item; it must be a replay or a fixture")
+    if not base.get("grade"):
+        raise bad("the base scenario needs a grade command (the PR's own suite runs at its head)")
+    src = dict(base["source"])
+    if "dir" in src:
+        src["dir"] = os.path.join(base["dir"], src["dir"])
+    sc["source"] = src
+    sc["issue"] = {"number": base["issue"]["number"], "file": os.path.join(base["dir"], base["issue"]["file"])}
+    sc["setup"] = base["setup"]
+    sc["grade"] = base["grade"]
+    if "knownFlaky" in base:
+        sc["knownFlaky"] = base["knownFlaky"]
+    sc["slices"] = [{"id": "S1", "brief": ""}]
+    sc.update(allowed=["**"], expect={"decision": None, "testsChanged": False}, onDecision="recommended")
+    sc.pop("hidden", None)
+    sc.setdefault("estimateScale", 1)
+    pr = sc.get("pr")
+    if not isinstance(pr, dict) or not isinstance(pr.get("patch"), str) or not isinstance(pr.get("title"), str) or not pr["title"]:
+        raise bad("pr needs a patch (a file name), a title and a body")
+    if not os.path.isfile(os.path.join(folder, pr["patch"])):
+        raise bad(f"pr.patch {pr['patch']} is missing")
+    body = pr.get("body")
+    if isinstance(body, dict) and isinstance(body.get("file"), str):
+        if not os.path.isfile(os.path.join(folder, body["file"])):
+            raise bad(f"pr.body file {body['file']} is missing")
+        pr["body_text"] = read_text(os.path.join(folder, body["file"]))
+    elif isinstance(body, str):
+        pr["body_text"] = body
+    else:
+        raise bad('pr.body must be a string or {"file": "body.md"}')
+    overlay = sc.get("baseOverlay")
+    if overlay is not None and not (isinstance(overlay, dict) and os.path.isdir(os.path.join(folder, str(overlay.get("dir"))))):
+        raise bad("baseOverlay needs a dir that exists")
+    seed = sc.get("seed")
+    if seed is not None:
+        if not isinstance(seed, dict):
+            raise bad("seed must be null or an object")
+        if seed.get("type") not in SEED_TYPES:
+            raise bad(f"seed.type must be one of {', '.join(SEED_TYPES)}")
+        if not isinstance(seed.get("quiet"), bool):
+            raise bad("seed.quiet must be true or false")
+        if seed.get("check") not in ("witness", "none"):
+            raise bad('seed.check must be "witness" or "none"')
+        try:
+            re.compile(seed.get("match") if isinstance(seed.get("match"), str) else "")
+        except re.error as e:
+            raise bad(f"seed.match does not compile: {e}")
+        if not seed.get("match"):
+            raise bad("seed.match needs a regex")
+        origin = seed.get("origin")
+        if not isinstance(origin, str) or not (origin == "seeded" or origin.startswith("harvested:")):
+            raise bad('seed.origin must be "seeded" or "harvested:<results>/<scenario>/<arm>/r<k>"')
+        if seed["check"] == "witness":
+            w = sc.get("witness")
+            if not isinstance(w, dict) or not isinstance(w.get("to"), str) or not os.path.isdir(os.path.join(folder, str(w.get("dir")))):
+                raise bad("seed.check witness needs witness: {dir, to}, with the dir present")
+            if not isinstance(sc.get("clean"), str) or not sc["clean"]:
+                raise bad('seed.check witness needs "clean": the id of the clean twin item')
+        elif seed["quiet"]:
+            raise bad("a quiet seed needs a witness (check: witness)")
+    elif sc.get("witness") is not None:
+        raise bad("a clean item (seed null) has no witness")
     return sc
 
 
@@ -629,12 +770,32 @@ def worker_settings(deny_read, run):
     return json.dumps(settings, separators=(",", ":"))
 
 
-def role_argv(profile, sid, resume, cap, settings):
-    """The claude command for one role call (the prompt goes on stdin). argv[0] is the claude name; run() swaps it."""
+def pin_agent(args, agent, agents_file):
+    """The profile's args with `--agent <x>` swapped for the pinned agent's name, and `--agents=<file>` added."""
+    out, i = [], 0
+    while i < len(args):
+        if args[i] == "--agent" and i + 1 < len(args):
+            out += ["--agent", agent["name"]]
+            i += 2
+            continue
+        if args[i].startswith("--agent="):
+            out.append("--agent=" + agent["name"])
+        else:
+            out.append(args[i])
+        i += 1
+    if flag_value(out, "--agent") is None:
+        out += ["--agent", agent["name"]]
+    return out + [f"--agents={agents_file}"]
+
+
+def role_argv(profile, sid, resume, cap, settings, agent=None, agents_file=None):
+    """The claude command for one role call (the prompt goes on stdin). argv[0] is the claude name; run() swaps it.
+    With a pinned agent (the arm's `agents` key) the call runs that agent, defined in agents_file."""
+    args = pin_agent(profile["args"], agent, agents_file) if agent else profile["args"]
     argv = [
         "claude",
         "-p",
-        *profile["args"],
+        *args,
         "--output-format",
         "json",
         "--permission-prompts",
@@ -748,9 +909,29 @@ def numbered_blockers(text):
     return 0
 
 
+def header_verdict(text):
+    """The verdict the report's header states (`verdict: approve|changes`, the words of report.ts), else None."""
+    lines = header_lines(text)
+    if not any(HEADER_STATUS.match(line) for line in lines):  # a lone `VERDICT:` line is the runner's, not a header
+        return None
+    for line in lines:
+        m = HEADER_VERDICT.match(line)
+        if m:
+            word = re.match(r"[a-z-]+", m.group(1).lower())
+            return VERDICT_WORDS.get(word.group(0)) if word else None
+    return None
+
+
 def parse_verdict(text):
-    """(verdict, blockers, how): verdict "approve" | "changes" | None; how "line" | "heuristic" | "none"."""
+    """(verdict, blockers, how): verdict "approve" | "changes" | None; how "header" | "line" | "heuristic" | "none".
+    The header's `verdict:` key counts first (as the mod reads it), then the runner's VERDICT line, then the heuristics."""
     lines = list(VERDICT_RE.finditer(text))
+    head = header_verdict(text)
+    if head == "approve":
+        return "approve", 0, "header"
+    if head == "changes":
+        count = lines[-1].group(2) if lines and lines[-1].group(1).lower() == "changes needed" else None
+        return "changes", int(count) if count else (numbered_blockers(text) or 1), "header"
     if lines:
         word, count = lines[-1].group(1).lower(), lines[-1].group(2)
         if word == "approve":
@@ -770,6 +951,21 @@ def parse_verdict(text):
     if re.search(r"(?i)\b(approve|approved|ready)\b", text):
         return "approve", 0, "heuristic"
     return None, None, "none"
+
+
+def blockers_section(text):
+    """A review's Blockers: the lines from a Blockers heading to the next heading (Nits and the like), without the
+    heading; the whole report when it has no Blockers heading."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if BLOCKERS_HEADING.match(line):
+            out = []
+            for nxt in lines[i + 1 :]:
+                if SECTION_HEADING.match(nxt) and not BLOCKERS_HEADING.match(nxt):
+                    break
+                out.append(nxt)
+            return "\n".join(out).strip()
+    return text.strip()
 
 
 def decisions(text):
@@ -871,6 +1067,8 @@ def estimate(profile):
 
 
 def run_estimate(sc, profiles):
+    if sc["kind"] == "review":  # only the reviewer runs
+        return estimate(profiles["reviewer"]) * sc["estimateScale"]
     planner = estimate(profiles["planner"]) if "planner" in profiles else 0.0
     per_slice = estimate(profiles["builder"]) + estimate(profiles["reviewer"])
     return (planner + len(sc["slices"]) * per_slice * FIX_FACTOR) * sc["estimateScale"]
@@ -952,11 +1150,14 @@ class Run:
         self.grade_rec = {"ran": False, "kind": None, "merged": False, "merge_error": None, "exit": None, "own_exit": None,
                           "tries": 0}
         self.changed = []
+        self.review_report = None  # the last review's report text
+        self.call_stats = []  # per call: cost, wall seconds and turns (a review item's run.json.review sums them)
+        self.review_item = sc["kind"] == "review"
         self.issue = read_json(os.path.join(sc["dir"], sc["issue"]["file"]))
         n = sc["issue"]["number"]
         self.slices = []
         for sl in sc["slices"]:
-            branch = f"issue-{n}-eval" if len(sc["slices"]) == 1 else f"issue-{n}-{sl['id'].lower()}"
+            branch = f"issue-{n}-review" if self.review_item else f"issue-{n}-eval" if len(sc["slices"]) == 1 else f"issue-{n}-{sl['id'].lower()}"
             self.slices.append(
                 {
                     "id": sl["id"],
@@ -1011,6 +1212,8 @@ class Run:
         # The shim is copied into the run: the sandbox of a worker's commands cannot read this repo.
         os.makedirs(os.path.join(self.dir, "bin"), exist_ok=True)
         shutil.copy2(os.path.join(SHIM_BIN, "gh"), os.path.join(self.dir, "bin", "gh"))
+        if self.arm.get("agents"):  # the arm's pinned agent text, passed to every call of those roles
+            write_json(self.agents_file(), agents_file_data(self.arm["agents"]))
         write_text(os.path.join(self.dir, "env.sh"), f'export PATH={shlex.quote(os.path.join(self.dir, "bin"))}:"$PATH"\n')
         snap = os.path.join(self.dir, ".snap")
         scenario_snapshot(sc, self.ctx.source, snap)
@@ -1024,6 +1227,7 @@ class Run:
         self.base = git("rev-parse", "HEAD", cwd=self.work).stdout.strip()
         gh = os.path.join(self.dir, "gh")
         os.makedirs(os.path.join(gh, "issues"), exist_ok=True)
+        os.makedirs(os.path.join(gh, "prs"), exist_ok=True)
         write_json(os.path.join(gh, "repo.json"), {"remote": self.remote, "name": sc["id"], "owner": "hrd-eval"})
         # The issue as the shim serves it: open, at the eval's URL (a replay's issue.json may still name the real repo).
         issue = {**self.issue, "state": "OPEN", "url": f"https://github.com/hrd-eval/{sc['id']}/issues/{sc['issue']['number']}"}
@@ -1032,12 +1236,56 @@ class Run:
         run_setup(sc["setup"], self.work, env)
         for s in self.slices:
             git("worktree", "add", "-q", "-b", s["branch"], s["wt"], "origin/main", cwd=self.work)
+            if self.review_item:  # the PR is in place before the setup runs: the patch may change the dependencies
+                self.seed_pr(s)
             run_setup(sc["setup"], s["wt"], env)
         self.ready = True
+
+    def agents_file(self):
+        return os.path.join(self.dir, "agents.json")
+
+    def seed_pr(self, s):
+        """A review item's PR: its patch as one commit (the PR's title) on the slice branch, pushed to the run's remote,
+        and the PR record the shim's `pr create` would write (the same fields), numbered after the issue."""
+        pr = self.sc["pr"]
+        git("apply", "--index", os.path.join(self.sc["dir"], pr["patch"]), cwd=s["wt"])
+        git(*IDENT, "commit", "-q", "-m", pr["title"], cwd=s["wt"])
+        git("push", "-q", "origin", f"HEAD:refs/heads/{s['branch']}", cwd=s["wt"])
+        number = self.sc["issue"]["number"] + 1
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        write_json(
+            os.path.join(self.dir, "gh", "prs", f"{number}.json"),
+            {
+                "number": number,
+                "title": pr["title"],
+                "body": pr["body_text"],
+                "state": "OPEN",
+                "isDraft": False,
+                "headRefName": s["branch"],
+                "baseRefName": "main",
+                "author": {"login": "hrd-eval"},
+                "labels": [],
+                "comments": [],
+                "reviews": [],
+                "createdAt": now,
+                "updatedAt": now,
+                "mergedAt": None,
+                "mergeCommit": None,
+                "autoMergeRequest": None,
+            },
+        )
 
     # The pipeline
 
     def pipeline(self):
+        if self.review_item:  # no plan, no builder, no fix rounds: one review of the fixed PR
+            s = self.slices[0]
+            s["rec"]["pr"] = self.sc["issue"]["number"] + 1
+            try:
+                self.review(s, "review", self.review_text(s))
+            finally:
+                s["rec"]["head"] = self.head(s["branch"])
+            return
         if "planner" in self.arm["profiles"]:
             self.settle(self.call("planner", "plan", None, self.work, self.plan_text()))
             self.plan_decisions = decisions(read_text(self.plan)) if self.plan else []
@@ -1086,6 +1334,7 @@ class Run:
         sha = self.head(s["branch"])
         c = self.settle(self.call("reviewer", kind, s["id"], s["wt"], text))
         verdict, blockers, how = parse_verdict(c["report"])
+        self.review_report = c["report"]
         with self.lock:
             s["rec"]["reviews"].append({"call": c["n"], "sha": sha, "verdict": verdict, "blockers": blockers, "how": how})
             if how == "none":  # no blockers counted, so the fix loop ends; the run says so
@@ -1162,7 +1411,8 @@ class Run:
         if not resume:
             sid = str(uuid.uuid4())
         env = run_env(self.dir, profile)
-        argv = role_argv(profile, sid, resume, cap, worker_settings(self.ctx.deny_read, self.dir))
+        agent = (self.arm.get("agents") or {}).get(role)
+        argv = role_argv(profile, sid, resume, cap, worker_settings(self.ctx.deny_read, self.dir), agent, self.agents_file())
         argv[0] = self.ctx.claude
         started = time.time()
         try:
@@ -1188,8 +1438,10 @@ class Run:
             cost_reported = reported - (prev_reported or 0.0) if before is not None else reported
         cost = max(cc["cost_transcript"], cost_reported or 0.0)
         self.ctx.budget.settle(est, cost)
+        turns = cc["state"]["tot"]["turns"] - ((before or {}).get("tot") or hm.new_tot())["turns"]
         with self.lock:
             self.cost += cost
+            self.call_stats.append({"cost": cost, "wall": ended - started, "turns": turns})
             self.sessions[sid] = {**cc["state"], "reported": reported if reported is not None else prev_reported}
         is_error = j is None or bool(j.get("is_error"))
         result = str(j.get("result") or "") if j else ""
@@ -1403,6 +1655,30 @@ class Run:
             rec.update(ran=True, kind=grade["parser"], exit=hid_code, own_exit=own_code, tries=len(tries))
         self.changed = changed_files(grade_dir, self.base)
 
+    def review_block(self):
+        """run.json's `review` of a review item: the verdict of its one review, whether the seed's regex finds the
+        Blockers text and the report, and the cost, wall seconds and turns of its calls."""
+        seed = self.sc.get("seed")
+        reviews = self.slices[0]["rec"]["reviews"]
+        r = reviews[-1] if reviews else {"verdict": None, "blockers": None, "how": "none"}
+        report = self.review_report or ""
+        blockers = blockers_section(report)
+        found = (lambda text: bool(re.search(seed["match"], text))) if seed else (lambda text: False)
+        return {
+            "item": self.sc["id"],
+            "seed_type": seed["type"] if seed else None,
+            "quiet": seed["quiet"] if seed else None,
+            "verdict": r["verdict"],
+            "how": r["how"],
+            "blockers": r["blockers"],
+            "blockers_text": blockers,
+            "matched_blockers": found(blockers),
+            "matched_report": found(report),
+            "cost": round(sum(c["cost"] for c in self.call_stats), 6),
+            "wall": round(sum(c["wall"] for c in self.call_stats), 3),
+            "turns": sum(c["turns"] for c in self.call_stats),
+        }
+
     def write_record(self, status, error):
         rec = {
             "scenario": self.sc["id"],
@@ -1424,6 +1700,8 @@ class Run:
             "leak_patterns": leak_patterns(self.sc, self.ctx.source),
             "isolation": {"sandbox": True, "deny_read": self.ctx.deny_read},
         }
+        if self.review_item:
+            rec["review"] = self.review_block()
         write_json(os.path.join(self.dir, "run.json"), rec)
         return rec
 
@@ -1442,7 +1720,7 @@ def run_one(ctx, sc, arm, k):
     except Exception as e:
         run.record_halt("error", str(e))
     status, error = run.finish()
-    if run.ready:
+    if run.ready and not run.review_item:
         try:
             run.grade()
         except Exception as e:
@@ -1532,12 +1810,101 @@ def check_ungraded(sc, source):
             "notes": [], "written": False}
 
 
+def real_failures(sc, code, text):
+    """The failing tests of a grade run that the scenario does not list as knownFlaky; an exit past 0 with no failing row
+    (a crash, an import error) counts as one failure."""
+    if code == 0:
+        return []
+    rows = scorer.GRADE_PARSERS[sc["grade"]["parser"]](text)
+    failed = [n for n, st in rows.items() if st == "fail"] or [f"exit {code}"]
+    return [n for n in failed if n not in (sc.get("knownFlaky") or [])]
+
+
+def review_head(sc, source, dest, env):
+    """A review item's PR head as a folder: the base snapshot with the overlay, the patch applied, the setup run."""
+    scenario_snapshot(sc, source, dest)
+    git("apply", os.path.join(sc["dir"], sc["pr"]["patch"]), cwd=dest)
+    run_setup(sc["setup"], dest, env)
+
+
+def graded_copy(sc, head, witness_dir, tmp, name):
+    """A copy of a PR head with the item's witness test files copied in (never shown to the reviewer)."""
+    copy = os.path.join(tmp, name)
+    shutil.copytree(head, copy)
+    target = os.path.join(copy, sc["witness"]["to"])
+    os.makedirs(target, exist_ok=True)
+    shutil.copytree(witness_dir, target, dirs_exist_ok=True)
+    return copy
+
+
+def check_review(sc, source, update):
+    """A review item, with no model call. The PR's own suite (grade.cmd) at the head must pass for a clean item and a
+    quiet seed (knownFlaky tests ignored) and fail for a loud seed. A witness test must fail at the head and pass at the
+    clean twin's head. expected.json holds the exit codes and the twin: {own_exit_head, witness_exit_head,
+    witness_exit_clean, clean}; written with update, otherwise compared."""
+    seed, grade = sc.get("seed"), sc["grade"]
+    tmp = tempfile.mkdtemp(prefix="hrd-eval-check-")
+    problems, drift, notes, written = [], [], [], False
+    got = {"own_exit_head": None, "witness_exit_head": None, "witness_exit_clean": None, "clean": sc.get("clean")}
+    try:
+        env = clean_env(tmp)
+        head = os.path.join(tmp, "head")
+        review_head(sc, source, head, env)
+        code, text = run_grade(grade["cmd"], head, grade["timeout"], env)
+        got["own_exit_head"] = code
+        failing = real_failures(sc, code, text)
+        if (seed is None or seed["quiet"]) and failing:
+            problems.append(f"the PR's own suite must pass at the head (a clean item or a quiet seed): it failed {failing}")
+        if seed is not None and not seed["quiet"] and not failing:
+            problems.append("the PR's own suite must fail at the head (a loud seed, quiet: false): it passed")
+        if seed is not None and seed["check"] == "witness":
+            wdir = os.path.join(sc["dir"], sc["witness"]["dir"])
+            copy = graded_copy(sc, head, wdir, tmp, "witness-head")
+            code, text = run_grade(grade["cmd"], copy, grade["timeout"], env)
+            got["witness_exit_head"] = code
+            if not real_failures(sc, code, text):
+                problems.append("the witness must fail at the PR head: it passed")
+            twin_dir = os.path.join(os.path.dirname(sc["dir"]), sc["clean"])
+            if not os.path.exists(os.path.join(twin_dir, "scenario.json")):
+                problems.append(f"clean twin {sc['clean']} not found beside this item")
+            else:
+                twin = load_scenario(twin_dir)
+                twin_head = os.path.join(tmp, "twin")
+                review_head(twin, source, twin_head, env)
+                copy = graded_copy(sc, twin_head, wdir, tmp, "witness-clean")
+                code, text = run_grade(grade["cmd"], copy, grade["timeout"], env)
+                got["witness_exit_clean"] = code
+                failing = real_failures(sc, code, text)
+                if failing:
+                    problems.append(f"the witness must pass at the clean twin {sc['clean']}: it failed {failing}")
+    except (RunnerError, OSError, subprocess.CalledProcessError) as e:
+        problems.append(str(e))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    path = os.path.join(sc["dir"], "expected.json")
+    if not problems:
+        if update:
+            write_json(path, got)
+            written = True
+        elif not os.path.exists(path):
+            drift.append("no expected.json: run with --update-expected")
+        else:
+            have = read_json(path)
+            for key, value in got.items():
+                if have.get(key) != value:
+                    drift.append(f"{key}: the run has {value!r}, expected.json has {have.get(key)!r}")
+    return {"scenario": sc["id"], "review": True, "expected": got, "problems": problems, "drift": drift, "notes": notes,
+            "written": written}
+
+
 def check_scenario(sc, source, update, flake_runs=1):
     """Base + overlay must fail, reference + overlay must pass, each graded flake_runs times. expected.json holds the
     reference's tests, the discriminating tests (failing in every base run) and the flaky ones: tests that failed in
     some runs and passed in others, at base or in the reference, plus the scenario's knownFlaky (flaky on record, such
     as a test a later commit fixed). Written with update, otherwise compared; a flaky list that differs is a note, not
     drift, since a flake may not show in a few runs. A scenario with no grade: check_ungraded()."""
+    if sc["kind"] == "review":
+        return check_review(sc, source, update)
     grade = sc.get("grade")
     if not grade:
         return check_ungraded(sc, source)
@@ -1619,7 +1986,11 @@ def check_scenario(sc, source, update, flake_runs=1):
 
 
 def print_check(r):
-    if r.get("ungraded"):
+    if r.get("review"):
+        e = r["expected"]
+        print(f"{r['scenario']}: review item; own suite at the head exits {e['own_exit_head']}, witness at the head "
+              f"{e['witness_exit_head']}, witness at the clean twin {e['clean']}: {e['witness_exit_clean']}")
+    elif r.get("ungraded"):
         print(f"{r['scenario']}: no grade command, so nothing is graded: the snapshot, setup and decision regex are checked")
     else:
         print(
@@ -1651,7 +2022,9 @@ def dry_run_data(args, source, scenarios, arms, results):
     data["isolation"] = {"deny_read": deny_read, "settings": worker_settings(deny_read, "<run folder>")}
     for arm in arms.values():
         commands = {
-            role: shlex.join(role_argv(prof, "<session-id>", False, max_call, "<worker settings>"))
+            role: shlex.join(
+                role_argv(prof, "<session-id>", False, max_call, "<worker settings>", arm["agents"].get(role), "<run folder>/agents.json")
+            )
             for role, prof in arm["profiles"].items()
         }
         data["arms"][arm["id"]] = {"note": arm["note"], "fixRound": arm["fixRound"], "maxFixRounds": arm["maxFixRounds"],

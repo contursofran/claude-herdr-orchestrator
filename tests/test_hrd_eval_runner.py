@@ -799,6 +799,369 @@ class VerdictTest(unittest.TestCase):
         self.assertEqual(HR.parse_verdict("I looked at it."), (None, None, "none"))
 
 
+class HeaderVerdictTest(unittest.TestCase):
+    def test_the_header_verdict_is_read_first(self):
+        self.assertEqual(HR.parse_verdict("```report\nstatus: done\nverdict: approve\n```\nOK."), ("approve", 0, "header"))
+        text = "```report\nstatus: done\nverdict: changes\n```\n**Blockers**\n1. a\n2. b\n"
+        self.assertEqual(HR.parse_verdict(text), ("changes", 2, "header"))
+
+    def test_the_header_wins_over_a_disagreeing_verdict_line(self):
+        text = "```report\nstatus: done\nverdict: changes\n```\nVERDICT: approve"
+        self.assertEqual(HR.parse_verdict(text), ("changes", 1, "header"))
+        text = "```report\nstatus: done\nverdict: approve\n```\nVERDICT: changes needed, 2 blockers"
+        self.assertEqual(HR.parse_verdict(text), ("approve", 0, "header"))
+
+    def test_a_header_with_no_verdict_key_falls_back_to_the_line_and_then_none(self):
+        self.assertEqual(HR.parse_verdict("```report\nstatus: done\n```\nVERDICT: approve"), ("approve", 0, "line"))
+        self.assertEqual(HR.parse_verdict("```report\nstatus: done\n```\nI looked at it."), (None, None, "none"))
+
+    def test_an_unknown_header_word_is_not_a_verdict(self):
+        self.assertEqual(HR.parse_verdict("```report\nverdict: maybe\n```\nVERDICT: approve"), ("approve", 0, "line"))
+
+
+class BlockersSectionTest(unittest.TestCase):
+    def test_it_runs_from_the_blockers_heading_to_the_next_heading(self):
+        text = "Intro.\n\n**Blockers**\n1. a is wrong\n2. b\n\n**Nits**\n- c\n"
+        self.assertEqual(HR.blockers_section(text), "1. a is wrong\n2. b")
+        self.assertEqual(HR.blockers_section("## Blockers\n1. x\n## Nits\n- y"), "1. x")
+        self.assertEqual(HR.blockers_section("Blockers:\n1. x\nNits:\n- y"), "1. x")
+
+    def test_it_runs_to_the_end_when_nothing_follows(self):
+        self.assertEqual(HR.blockers_section("Blockers\n1. x\n2. y\nVERDICT: changes needed, 2 blockers"),
+                         "1. x\n2. y\nVERDICT: changes needed, 2 blockers")
+
+    def test_no_blockers_heading_gives_the_whole_report(self):
+        self.assertEqual(HR.blockers_section("  Looks fine.\n"), "Looks fine.")
+
+
+class AgentsArmTest(RunnerCase):
+    AGENT = "---\nname: reviewer\ndescription: Reviews a PR.\ntools: Read, Grep, Bash\nmodel: opus\n---\nYou are the reviewer.\n\nBe strict.\n"
+
+    def arm_dir(self, **arm):
+        folder = os.path.join(self.tmp, "arms")
+        write_json(os.path.join(folder, "P.json"), {"profiles": CONFIG["profiles"], **arm})
+        return folder
+
+    def test_a_repo_path_is_parsed_into_the_agents_file_and_the_argv(self):
+        write(self.tmp, "repo/agents/reviewer.md", self.AGENT)
+        arms = HR.load_arms(self.arm_dir(agents={"reviewer": "agents/reviewer.md"}), ["P"], self.config, repo=os.path.join(self.tmp, "repo"))
+        agent = arms["P"]["agents"]["reviewer"]
+        self.assertEqual(agent["name"], "hrd-eval-reviewer")
+        self.assertEqual(HR.agents_file_data(arms["P"]["agents"]), {"hrd-eval-reviewer": {
+            "description": "Reviews a PR.", "prompt": "You are the reviewer.\n\nBe strict.", "tools": ["Read", "Grep", "Bash"]}})
+        argv = HR.role_argv(arms["P"]["profiles"]["reviewer"], "sid", False, 1, "{}", agent, "/run/agents.json")
+        self.assertEqual(argv[argv.index("--agent") + 1], "hrd-eval-reviewer")
+        self.assertEqual(argv.count("--agent"), 1)
+        self.assertIn("--agents=/run/agents.json", argv)
+        plain = HR.role_argv(arms["P"]["profiles"]["builder"], "sid", False, 1, "{}")
+        self.assertEqual(plain[plain.index("--agent") + 1], "builder")
+        self.assertFalse([a for a in plain if a.startswith("--agents")])
+
+    def test_a_git_ref_reads_the_file_at_that_revision(self):
+        repo = os.path.join(self.tmp, "repo")
+        write(repo, "agents/reviewer.md", self.AGENT)
+        git(repo, "init", "-q", "-b", "main")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "old")
+        old = git(repo, "rev-parse", "HEAD")
+        write(repo, "agents/reviewer.md", self.AGENT.replace("Be strict.", "Be kind."))
+        git(repo, "commit", "-qam", "new")
+        agent = HR.read_agent(f"git:{old}:agents/reviewer.md", repo)
+        self.assertIn("Be strict.", agent["prompt"])
+        self.assertIn("Be kind.", HR.read_agent("agents/reviewer.md", repo)["prompt"])
+
+    def test_a_missing_file_a_bad_rev_and_an_unknown_role_are_errors_at_load_time(self):
+        repo = os.path.join(self.tmp, "repo")
+        write(repo, "agents/reviewer.md", self.AGENT)
+        git(repo, "init", "-q", "-b", "main")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "old")
+        for spec in ({"reviewer": "agents/none.md"}, {"reviewer": "git:nope:agents/reviewer.md"},
+                     {"reviewer": "git:HEAD:agents/none.md"}, {"coordinator": "agents/reviewer.md"}):
+            with self.assertRaises(HR.RunnerError, msg=spec):
+                HR.load_arms(self.arm_dir(agents=spec), ["P"], self.config, repo=repo)
+
+    def test_the_run_writes_agents_json_and_the_reviewer_call_uses_the_pinned_agent(self):
+        write(self.tmp, "repo/agents/reviewer.md", self.AGENT)
+        arms = HR.load_arms(self.arm_dir(agents={"reviewer": "agents/reviewer.md"}), ["P"], self.config, repo=os.path.join(self.tmp, "repo"))
+        sc = HR.load_scenario(os.path.join(self.scen, "replay-test"))
+        run = HR.Run(HR.Ctx(self.results, self.fake, 60, HR.Budget(30, 5), self.src), sc, arms["P"], 1)
+        os.makedirs(run.dir)
+        run.setup()
+        self.assertEqual(list(read_json(os.path.join(run.dir, "agents.json"))), ["hrd-eval-reviewer"])
+
+
+# A review item over the fixture repo: the base scenario is replay-test (shop.py, tests/test_own.py, grade_stub.py).
+PR_PATCH = "--- a/shop.py\n+++ b/shop.py\n@@ -1 +1 @@\n-TOTAL = 0\n+TOTAL = 5\n"
+WITNESS = "import unittest\nfrom shop import TOTAL\n\n\nclass WitnessTest(unittest.TestCase):\n    def test_witness(self):\n        self.assertEqual(TOTAL, 5)\n"
+# A quiet bug: TOTAL stays 0, which the PR's own test allows; the witness wants 5.
+BUG_PATCH = "--- a/shop.py\n+++ b/shop.py\n@@ -1 +1,2 @@\n TOTAL = 0\n+EXTRA = 1\n"
+# A loud one: the PR's own suite fails.
+LOUD_PATCH = "--- a/shop.py\n+++ b/shop.py\n@@ -1 +1 @@\n-TOTAL = 0\n+TOTAL = 4\n"
+UNITTEST_GRADE = {"cmd": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"], "parser": "unittest", "timeout": 60}
+
+
+class ReviewItemCase(RunnerCase):
+    def make_item(self, sid, patch=PR_PATCH, seed=None, witness=False, clean=None, extra_files=None, **more):
+        folder = os.path.join(self.scen, sid)
+        write(folder, "pr.patch", patch)
+        for rel, text in (extra_files or {}).items():
+            write(folder, rel, text)
+        sc = {"title": sid, "kind": "review", "base": "../replay-test",
+              "pr": {"patch": "pr.patch", "title": "Make the total 5", "body": "Sets TOTAL."}, "seed": seed}
+        if witness:
+            write(folder, "witness/test_witness.py", WITNESS)
+            sc["witness"] = {"dir": "witness", "to": "tests"}
+        if clean:
+            sc["clean"] = clean
+        sc.update(more)
+        write_json(os.path.join(folder, "scenario.json"), sc)
+        write_json(os.path.join(folder, "expected.json"), {"own_exit_head": 0, "witness_exit_head": None, "witness_exit_clean": None, "clean": None})
+        return folder
+
+    def seed(self, **kw):
+        return {"type": "logic", "quiet": True, "check": "witness", "match": "(?i)total", "origin": "seeded", **kw}
+
+    def check(self, sid, *extra):
+        argv = ["--check-scenarios", "--scenarios-dir", self.scen, "--scenarios", sid, "--source-repo", self.src] + list(extra)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = HR.main(argv)
+        return code, out.getvalue()
+
+    def stub_base(self):
+        self.make_scenario(grade=UNITTEST_GRADE)
+
+
+class ReviewLoadTest(ReviewItemCase):
+    def test_an_item_takes_its_source_issue_setup_and_grade_from_the_base(self):
+        self.stub_base()
+        self.make_item("rv-clean")
+        sc = HR.load_scenario(os.path.join(self.scen, "rv-clean"))
+        self.assertEqual((sc["kind"], sc["source"], sc["issue"]["number"]), ("review", {"commit": self.parent}, 12))
+        self.assertEqual(sc["grade"], {**UNITTEST_GRADE})
+        self.assertEqual([s["id"] for s in sc["slices"]], ["S1"])
+        self.assertEqual(sc["pr"]["body_text"], "Sets TOTAL.")
+        self.assertTrue(os.path.isabs(sc["issue"]["file"]))
+
+    def test_a_body_file_is_read(self):
+        self.stub_base()
+        folder = self.make_item("rv-clean", extra_files={"body.md": "From a file.\n"})
+        sc = read_json(os.path.join(folder, "scenario.json"))
+        sc["pr"]["body"] = {"file": "body.md"}
+        write_json(os.path.join(folder, "scenario.json"), sc)
+        self.assertEqual(HR.load_scenario(folder)["pr"]["body_text"], "From a file.\n")
+
+    def test_bad_items_are_rejected(self):
+        self.stub_base()
+        cases = {
+            "no patch file": lambda sc: sc["pr"].update(patch="gone.patch"),
+            "bad seed type": lambda sc: sc.update(seed=self.seed(type="weird")),
+            "seed quiet not bool": lambda sc: sc.update(seed=self.seed(quiet="yes")),
+            "bad match": lambda sc: sc.update(seed=self.seed(match="(")),
+            "bad origin": lambda sc: sc.update(seed=self.seed(origin="made up")),
+            "witness without witness key": lambda sc: sc.update(seed=self.seed()),
+            "quiet without witness": lambda sc: sc.update(seed=self.seed(check="none")),
+            "witness on a clean item": lambda sc: sc.update(witness={"dir": "witness", "to": "tests"}),
+            "base missing": lambda sc: sc.update(base="../nowhere"),
+        }
+        for name, change in cases.items():
+            folder = self.make_item("rv-bad")
+            write(folder, "witness/test_witness.py", WITNESS)
+            sc = read_json(os.path.join(folder, "scenario.json"))
+            change(sc)
+            write_json(os.path.join(folder, "scenario.json"), sc)
+            with self.assertRaises(HR.RunnerError, msg=name):
+                HR.load_scenario(folder)
+
+
+    def test_a_witness_seed_without_a_clean_twin_is_rejected_with_its_reason(self):
+        folder = self.make_item("rv-noclean", seed=self.seed(), witness=True)
+        with self.assertRaises(HR.RunnerError) as ctx:
+            HR.load_scenario(folder)
+        self.assertIn('seed.check witness needs "clean": the id of the clean twin item', str(ctx.exception))
+
+
+class ReviewCheckTest(ReviewItemCase):
+    def setUp(self):
+        super().setUp()
+        self.stub_base()
+        self.make_item("rv-clean")
+
+    def test_a_clean_item_passes_and_expected_json_is_written_and_then_matches(self):
+        os.remove(os.path.join(self.scen, "rv-clean", "expected.json"))
+        code, out = self.check("rv-clean")
+        self.assertEqual(code, 1, out)
+        self.assertIn("no expected.json", out)
+        code, out = self.check("rv-clean", "--update-expected")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(read_json(os.path.join(self.scen, "rv-clean", "expected.json")),
+                         {"own_exit_head": 0, "witness_exit_head": None, "witness_exit_clean": None, "clean": None})
+        self.assertEqual(self.check("rv-clean")[0], 0)
+
+    def test_a_quiet_seed_with_a_witness_that_fails_at_the_head_and_passes_at_the_twin_is_accepted(self):
+        self.make_item("rv-bug", patch=BUG_PATCH, seed=self.seed(), witness=True, clean="rv-clean")
+        code, out = self.check("rv-bug", "--update-expected")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(read_json(os.path.join(self.scen, "rv-bug", "expected.json")),
+                         {"own_exit_head": 0, "witness_exit_head": 1, "witness_exit_clean": 0, "clean": "rv-clean"})
+
+    def test_a_witness_that_passes_at_the_head_is_rejected(self):
+        self.make_item("rv-bug", patch=PR_PATCH, seed=self.seed(), witness=True, clean="rv-clean")
+        code, out = self.check("rv-bug")
+        self.assertEqual(code, 1)
+        self.assertIn("witness must fail at the PR head", out)
+
+    def test_a_witness_that_fails_at_the_clean_twin_is_rejected(self):
+        self.make_item("rv-bug", patch=BUG_PATCH, seed=self.seed(), witness=True, clean="rv-also-bug")
+        self.make_item("rv-also-bug", patch=BUG_PATCH)
+        code, out = self.check("rv-bug")
+        self.assertEqual(code, 1)
+        self.assertIn("witness must pass at the clean twin", out)
+
+    def test_a_missing_twin_is_a_problem(self):
+        self.make_item("rv-bug", patch=BUG_PATCH, seed=self.seed(), witness=True, clean="rv-nowhere")
+        code, out = self.check("rv-bug")
+        self.assertEqual(code, 1)
+        self.assertIn("clean twin rv-nowhere not found", out)
+
+    def test_a_loud_seed_marked_quiet_is_rejected(self):
+        self.make_item("rv-loud", patch=LOUD_PATCH, seed=self.seed(), witness=True, clean="rv-clean")
+        code, out = self.check("rv-loud")
+        self.assertEqual(code, 1)
+        self.assertIn("own suite must pass at the head", out)
+
+    def test_a_loud_seed_is_accepted_and_a_quiet_one_marked_loud_is_rejected(self):
+        self.make_item("rv-loud", patch=LOUD_PATCH, seed=self.seed(quiet=False, check="none"))
+        self.assertEqual(self.check("rv-loud", "--update-expected")[0], 0)
+        self.make_item("rv-bug", patch=BUG_PATCH, seed=self.seed(quiet=False, check="none"))
+        code, out = self.check("rv-bug")
+        self.assertEqual(code, 1)
+        self.assertIn("own suite must fail at the head", out)
+
+    def test_a_clean_item_whose_own_suite_fails_is_rejected(self):
+        self.make_item("rv-sick", patch=LOUD_PATCH)
+        code, out = self.check("rv-sick")
+        self.assertEqual(code, 1)
+        self.assertIn("own suite must pass", out)
+
+    def test_a_patch_that_does_not_apply_is_a_problem(self):
+        self.make_item("rv-broken", patch="--- a/nothing.py\n+++ b/nothing.py\n@@ -1 +1 @@\n-x\n+y\n")
+        code, out = self.check("rv-broken")
+        self.assertEqual(code, 1)
+        self.assertIn("problem", out)
+
+
+class ReviewRunTest(ReviewItemCase):
+    def setUp(self):
+        super().setUp()
+        self.stub_base()
+        write(self.scen, "rv-bug/overlay/NOTE.md", "rule\n")
+        self.make_item("rv-bug", patch=BUG_PATCH, seed=self.seed(match="(?i)wrong total"), witness=True, clean="rv-clean",
+                       baseOverlay={"dir": "overlay"})
+        self.make_item("rv-clean")
+
+    def run_dir(self, arm="A", k=1, sid="rv-bug"):
+        return os.path.join(self.results, sid, arm, f"r{k}")
+
+    def review_run(self, sid="rv-bug", report=None, arm="A"):
+        if report is not None:
+            self.behave(review={"report": report})
+        return self.matrix(scenarios=sid, arms=arm)
+
+    def test_only_the_reviewer_runs_on_the_prs_head_and_its_record_is_written(self):
+        report = "```report\nstatus: done\nverdict: changes\nhead: abc1234\n```\n**Blockers**\n1. Wrong total: TOTAL stays 0.\n\n**Nits**\n- none\n"
+        code, out, err = self.review_run(report=report)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.kinds(), ["review"])
+        rec = self.run_json()
+        self.assertEqual(rec["status"], "done")
+        self.assertFalse(rec["grade"]["ran"])
+        self.assertEqual([s["id"] for s in rec["slices"]], ["S1"])
+        s = rec["slices"][0]
+        self.assertEqual((s["branch"], s["pr"], s["fix_rounds"]), ("issue-12-review", 13, 0))
+        run = self.run_dir(sid="rv-bug")
+        self.assertEqual(s["head"], git(run, "--git-dir", os.path.join(run, "remote.git"), "rev-parse", "issue-12-review"))
+        r = rec["review"]
+        self.assertEqual((r["item"], r["seed_type"], r["quiet"]), ("rv-bug", "logic", True))
+        self.assertEqual((r["verdict"], r["how"], r["blockers"]), ("changes", "header", 1))
+        self.assertEqual(r["blockers_text"], "1. Wrong total: TOTAL stays 0.")
+        self.assertTrue(r["matched_blockers"] and r["matched_report"])
+        self.assertEqual((r["cost"], r["turns"]), (0.1, 1))
+        self.assertGreater(r["wall"], 0)
+
+    def test_the_pr_is_a_commit_on_the_base_and_the_shim_serves_it(self):
+        self.review_run()
+        run = self.run_dir()
+        remote = os.path.join(run, "remote.git")
+        self.assertEqual(git(run, "--git-dir", remote, "log", "-1", "--format=%s", "issue-12-review"), "Make the total 5")
+        self.assertEqual(git(run, "--git-dir", remote, "rev-list", "--count", "main..issue-12-review"), "1")
+        # the overlay is in the Base commit
+        self.assertEqual(git(run, "--git-dir", remote, "show", "main:NOTE.md"), "rule")
+        env = {**os.environ, "HRD_EVAL_GH_STATE": os.path.join(run, "gh")}
+        view = json.loads(subprocess.run([sys.executable, os.path.join(SHIM_BIN, "gh"), "pr", "view", "13", "--json", "title,body,headRefName"],
+                                         cwd=os.path.join(run, "work"), env=env, capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(view, {"title": "Make the total 5", "body": "Sets TOTAL.", "headRefName": "issue-12-review"})
+        diff = subprocess.run([sys.executable, os.path.join(SHIM_BIN, "gh"), "pr", "diff", "13"], cwd=os.path.join(run, "work"),
+                              env=env, capture_output=True, text=True, check=True).stdout
+        self.assertIn("+EXTRA = 1", diff)
+        # the reviewer's worktree is at the PR head
+        call = self.fake_calls()[0]
+        self.assertTrue(call["cwd"].endswith("wt-S1"))
+        self.assertEqual(read_text(os.path.join(call["cwd"], "shop.py")), "TOTAL = 0\nEXTRA = 1\n")
+        self.assertIn("Review PR #13 for issue #12", call["prompt"])
+
+    def test_a_blocked_review_without_a_match_and_an_approve_that_mentions_it(self):
+        self.review_run(report="```report\nstatus: done\nverdict: changes\n```\n**Blockers**\n1. Style.\n\n**Nits**\n- wrong total maybe\n")
+        r = read_json(os.path.join(self.run_dir(), "run.json"))["review"]
+        self.assertEqual(r["verdict"], "changes")
+        self.assertFalse(r["matched_blockers"])
+        self.assertTrue(r["matched_report"])
+        shutil.rmtree(self.results)
+        self.review_run(report="```report\nstatus: done\nverdict: approve\n```\nNit: wrong total in a comment.")
+        r = read_json(os.path.join(self.run_dir(), "run.json"))["review"]
+        self.assertEqual(r["verdict"], "approve")
+
+    def test_an_unparsed_review_and_a_clean_item_record_their_fields(self):
+        self.review_run(sid="rv-clean", report="I looked at it.")
+        r = read_json(os.path.join(self.run_dir(sid="rv-clean"), "run.json"))["review"]
+        self.assertEqual((r["verdict"], r["how"], r["blockers"]), (None, "none", None))
+        self.assertEqual((r["seed_type"], r["quiet"], r["matched_blockers"], r["matched_report"]), (None, None, False, False))
+        self.assertEqual(read_json(os.path.join(self.run_dir(sid="rv-clean"), "run.json"))["status"], "done")
+
+    def test_the_reviewer_call_uses_the_arms_pinned_agent(self):
+        write(self.tmp, "repo/agents/reviewer.md", AgentsArmTest.AGENT)
+        arms_dir = os.path.join(self.tmp, "arms")
+        write_json(os.path.join(arms_dir, "P.json"), {"profiles": CONFIG["profiles"], "agents": {"reviewer": "agents/reviewer.md"}})
+        orig = HR.load_arms
+        with mock.patch.object(HR, "load_arms", lambda *a, **k: orig(*a, **{**k, "repo": os.path.join(self.tmp, "repo")})):
+            code, _, err = self.matrix(scenarios="rv-clean", arms="P", arms_dir=arms_dir)
+        self.assertEqual(code, 0, err)
+        argv = self.fake_calls()[0]["argv"]
+        self.assertEqual(argv[argv.index("--agent") + 1], "hrd-eval-reviewer")
+        run = self.run_dir(arm="P", sid="rv-clean")
+        self.assertIn(f"--agents={run}/agents.json", argv)
+        self.assertEqual(read_json(os.path.join(run, "agents.json"))["hrd-eval-reviewer"]["prompt"], "You are the reviewer.\n\nBe strict.")
+
+
+class ReviewDryRunTest(ReviewItemCase):
+    def test_the_estimate_is_the_reviewers_only(self):
+        self.stub_base()
+        self.make_item("rv-clean")
+        arm = HR.load_arms(ARMS, ["A"], self.config)["A"]
+        sc = HR.load_scenario(os.path.join(self.scen, "rv-clean"))
+        self.assertEqual(HR.run_estimate(sc, arm["profiles"]), HR.estimate(arm["profiles"]["reviewer"]))
+        argv = ["--dry-run", "--scenarios-dir", self.scen, "--scenarios", "rv-clean", "--arms", "A", "--config", self.config,
+                "--source-repo", self.src, "--results", self.results, "--repeats", "2"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = HR.main(argv)
+        self.assertEqual(code, 0)
+        self.assertIn("scenario rv-clean (review, 1 slice(s))", out.getvalue())
+        self.assertIn(f"arm A: ${HR.estimate(arm['profiles']['reviewer']):.2f} per run", out.getvalue())
+        self.assertFalse(os.path.exists(self.results))
+
+
 class CostTest(unittest.TestCase):
     def test_a_resumed_calls_cost_is_the_difference_from_the_session_before(self):
         tmp = tempfile.mkdtemp(prefix="hrd-eval-cost-")
