@@ -470,6 +470,7 @@ def read_agent(ref, repo):
         if not os.path.isfile(path):
             raise RunnerError(f"agent {ref}: {path} does not exist")
         text = read_text(path)
+    # Only description and tools are kept: model and effort come from the arm's profile (--model, --effort).
     m = re.match(r"---\r?\n(.*?)\r?\n---[ \t]*\r?\n?(.*)\Z", text, re.S)
     if not m:
         raise RunnerError(f"agent {ref}: no frontmatter (--- lines) at the top")
@@ -1674,7 +1675,7 @@ class Run:
             "matched_blockers": found(blockers),
             "matched_report": found(report),
             "cost": round(sum(c["cost"] for c in self.call_stats), 6),
-            "wall": round(sum(c["wall"] for c in self.call_stats), 1),
+            "wall": round(sum(c["wall"] for c in self.call_stats), 3),
             "turns": sum(c["turns"] for c in self.call_stats),
         }
 

@@ -975,6 +975,13 @@ class ReviewLoadTest(ReviewItemCase):
                 HR.load_scenario(folder)
 
 
+    def test_a_witness_seed_without_a_clean_twin_is_rejected_with_its_reason(self):
+        folder = self.make_item("rv-noclean", seed=self.seed(), witness=True)
+        with self.assertRaises(HR.RunnerError) as ctx:
+            HR.load_scenario(folder)
+        self.assertIn('seed.check witness needs "clean": the id of the clean twin item', str(ctx.exception))
+
+
 class ReviewCheckTest(ReviewItemCase):
     def setUp(self):
         super().setUp()
