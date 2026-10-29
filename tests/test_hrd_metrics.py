@@ -888,6 +888,118 @@ class ResultFiles(unittest.TestCase):
 
 
 
+class PerMergedPr(unittest.TestCase):
+    """Prompt kinds, merged PRs, and turns and wake-ups per merged PR, on a hand-written coordinator."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="hrd-metrics-pr-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.base = int(time.time()) - 3600
+
+    def run_session(self, build):
+        c = Transcript(self.base, self.tmp)
+        c.herdr(0, "b1", "builder", "done", "first")  # a report reaction of 3 turns
+        for i in range(3):
+            c.assistant(1 + i, f"r{i}", OPUS, usage(inp=1), [text("x")])
+        build(c)
+        path = os.path.join(self.tmp, "c.jsonl")
+        c.write(path)
+        return hm.scan(path, self.base - 10)
+
+    def timeline(self, c):
+        # bgtask: 2 turns (one message id split in two records counts once)
+        c._rec(10, "user", {"role": "user", "content": "<task-notification>\n<task-id>x</task-id>\n</task-notification>"})
+        c.assistant(11, "t0", OPUS, usage(inp=1), [text("x")])
+        c.assistant(11, "t0", OPUS, usage(inp=1), [call("m7", "Bash", command="gh pr merge 7 --squash --delete-branch")])
+        c.result(12, "m7")
+        c.assistant(13, "t1", OPUS, usage(inp=1), [call("m8", "Bash", command='gh pr merge 8 --squash --subject "Version 1.0 (#8)"')])
+        c.result(14, "m8")
+        # owner chat: 4 turns, with a shell echo and a slash command in the middle that are not prompts
+        c.human(20, "ok go on")
+        c.assistant(21, "o0", OPUS, usage(inp=1), [text("x")])
+        c._rec(22, "user", {"role": "user", "content": "<bash-input>ls</bash-input>"})
+        c._rec(22, "user", {"role": "user", "content": "<command-name>/effort</command-name>"})
+        for i in (1, 2, 3):
+            c.assistant(22 + i, f"o{i}", OPUS, usage(inp=1), [text("x")])
+
+    def test_prompts_are_sorted_by_kind_and_turns_count_until_the_next_prompt(self):
+        s = self.run_session(self.timeline)
+        self.assertEqual(s.kinds["report"], {"prompts": 1, "turns": 3})
+        self.assertEqual(s.kinds["bgtask"], {"prompts": 1, "turns": 2})
+        self.assertEqual(s.kinds["owner"], {"prompts": 1, "turns": 4})  # the shell echo and slash command are not prompts
+        self.assertEqual(s.kinds["pipeline"], {"prompts": 0, "turns": 0})
+
+    def test_a_merge_counts_unless_it_is_a_version_pr(self):
+        s = self.run_session(self.timeline)
+        self.assertEqual(s.merged, {("", 7)})
+        row = hm.coordinator_row(s)
+        self.assertEqual(row["merged_prs"], 1)
+        self.assertEqual(row["mech_turns_per_pr"], 5.0)  # (3 report + 2 bgtask) / 1
+        self.assertEqual(row["wakeups_per_pr"], 2.0)
+        self.assertEqual(row["prompt_kinds"]["owner"], {"prompts": 1, "turns": 4})
+
+    def test_a_pipeline_merged_prompt_adds_one_and_its_turns_are_mechanical(self):
+        def more(c):
+            self.timeline(c)
+            c._rec(30, "user", {"role": "user", "content": PREAMBLE + '<herdr-pipeline event="merged" pr="9" repo="o/r" head="abc12345">\ndone\n</herdr-pipeline>'})
+            c.assistant(31, "p0", OPUS, usage(inp=1), [text("x")])
+            c._rec(32, "user", {"role": "user", "content": PREAMBLE + '<herdr-pipeline event="ready" pr="10" repo="o/r" head="abc12345">\nok\n</herdr-pipeline>'})
+            c.assistant(33, "p1", OPUS, usage(inp=1), [text("x")])
+        s = self.run_session(more)
+        self.assertEqual(s.merged, {("", 7), ("o/r", 9)})  # a ready event is not a merge
+        row = hm.coordinator_row(s)
+        self.assertEqual(row["prompt_kinds"]["pipeline"], {"prompts": 2, "turns": 2})
+        self.assertEqual(row["mech_turns_per_pr"], 3.5)  # (3 + 2 + 2) / 2
+        self.assertEqual(row["wakeups_per_pr"], 2.0)  # (1 + 1 + 2) / 2
+
+    def test_a_failed_merge_and_a_repeated_merge_count_no_more_than_once(self):
+        def build(c):
+            c.assistant(10, "f0", OPUS, usage(inp=1), [call("m1", "Bash", command="gh pr merge 5 --squash")])
+            c.result(11, "m1", is_error=True)  # failed: not merged
+            c.assistant(12, "f1", OPUS, usage(inp=1), [call("m2", "Bash", command="gh pr merge 5 --squash")])
+            c.result(13, "m2")
+            c.assistant(14, "f2", OPUS, usage(inp=1), [call("m3", "Bash", command="gh pr merge 5 --squash")])
+            c.result(15, "m3")  # the same PR again
+            c.assistant(16, "f3", OPUS, usage(inp=1), [call("m4", "Bash", command="gh pr merge 6 -R o/r --squash -t 'Version 2 (#6)' && gh pr merge 12 -R o/r --squash")])
+            c.result(17, "m4")
+        s = self.run_session(build)
+        self.assertEqual(s.merged, {("", 5), ("o/r", 12)})
+
+    def test_no_merged_pr_gives_none_not_a_division_error(self):
+        s = self.run_session(lambda c: None)
+        row = hm.coordinator_row(s)
+        self.assertEqual((row["merged_prs"], row["mech_turns_per_pr"], row["wakeups_per_pr"]), (0, None, None))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hm.print_text("x", [row], hm.totals([row], [s]), [], {}, set(), "/x")
+        self.assertIn("mrg  t/PR  w/PR", out.getvalue())
+
+    def test_totals_sum_the_sessions(self):
+        a = self.run_session(self.timeline)
+        b = self.run_session(self.timeline)
+        t = hm.totals([hm.coordinator_row(a), hm.coordinator_row(b)], [a, b])
+        self.assertEqual(t["merged_prs"], 2)
+        self.assertEqual(t["prompt_kinds"]["report"], {"prompts": 2, "turns": 6})
+        self.assertEqual((t["mech_turns_per_pr"], t["wakeups_per_pr"]), (5.0, 2.0))
+
+    def test_prompt_kind_by_tag(self):
+        cases = {
+            PREAMBLE + '<herdr-agent name="b" status="done">': "report",
+            "<herdr-pipeline event=\"ready\">": "pipeline",
+            "<task-notification>": "bgtask",
+            "<herdr-decision id=\"1\">": "panel",
+            "<herdr-owner-done id=\"1\">": "panel",
+            "<herdr-context>": "compact",
+            "This session is being continued from a previous conversation": "compact",
+            "can you check this?": "owner",
+            "<bash-input>ls": None,
+            "<local-command-stdout>x": None,
+            "<command-name>/x": None,
+        }
+        for text_, kind in cases.items():
+            self.assertEqual(hm.prompt_kind(text_), kind, text_)
+
+
 class TranscriptsPath(unittest.TestCase):
     """The footer's "transcripts from" path: under the home folder it reads ~/..., elsewhere it is printed in full."""
 

@@ -30,6 +30,15 @@ Reads of RESULT files (Read calls, and Bash cat/head/tail/sed/less on them) are 
 read% is the share of reports followed by one. COORDINATOR-STATE.md edits (Edit/Write calls, and Bash commands that write it: sed -i, > or >>, tee,
 python open(..., 'w')) are counted per session and divided by its reports. A prompt with several
 <herdr-agent> blocks gives one report per block; the reaction goes to the last.
+Prompt kinds: each coordinator prompt is a report (<herdr-agent), pipeline (<herdr-pipeline), bgtask (<task-notification),
+panel (<herdr-decision, <herdr-owner-done), compact (<herdr-context, or Claude Code's own continuation summary) or owner
+(other text; shell echoes and slash-command records are not prompts). prompt_kinds counts the prompts of each kind and
+the unique assistant message ids (model turns) after them, up to the next prompt.
+merged_prs counts worker-built PRs merged in the window: Bash `gh pr merge N` calls whose result is not an error, leaving
+out those with a --subject that starts with Version, plus <herdr-pipeline event="merged" pr="N"> prompts; unique per
+repo (-R/--repo, else none) and number.
+mech_turns_per_pr is the turns after report, pipeline and bgtask prompts per merged PR; wakeups_per_pr counts those
+prompts (None when nothing merged). Text columns: mrg, t/PR, w/PR.
 Spawn lead is the coordinator's assistant turns before each successful spawn: from the last user or plugin
 prompt, or the previous spawn/message/stop result, up to the spawn call (that turn included).
 wt_calls counts Bash calls that run `git worktree add`, plus the `git fetch` call right before one (a fetch
@@ -101,6 +110,57 @@ RESULT_WRITE = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*[\"']?([^\s\"'<>|;&]*?)RES
 RESULT_OUT = re.compile(r">>?\s*\S*RESULT(?:-\w+)?\.md")  # a segment that writes a RESULT file is not a read
 SKIP_LINES = (b'{"type":"api-request',)  # the big system-prompt dumps; no metric reads them
 DEFAULT_DAYS = 7
+# What woke the coordinator. `report`, `pipeline` and `bgtask` prompts are mechanical: no human asked for them.
+KINDS = ("report", "pipeline", "bgtask", "panel", "compact", "owner")
+MECH = ("report", "pipeline", "bgtask")
+PLUGIN_PREAMBLE = re.compile(r"\s*(?:The herdr-agents plugin sent a message:\s*)?")
+KIND_TAGS = (
+    ("<herdr-agent", "report"),
+    ("<herdr-pipeline", "pipeline"),
+    ("<task-notification", "bgtask"),
+    ("<herdr-decision", "panel"),
+    ("<herdr-owner-done", "panel"),
+    ("<herdr-context", "compact"),
+    ("This session is being continued", "compact"),  # Claude Code's own compaction summary
+)
+# Shell echoes and slash-command records Claude Code stores as user records: not prompts, they wake nobody.
+NOT_PROMPTS = ("<bash-input>", "<bash-stdout>", "<bash-stderr>", "<local-command", "<command-")
+MERGE_CMD = re.compile(r"\bgh\s+pr\s+merge\s+(?:\S*/pull/)?(\d+)")
+MERGE_REPO = re.compile(r"(?:--repo|-R)[ =]\s*[\"']?([\w.-]+/[\w.-]+)")
+MERGE_VERSION = re.compile(r"(?:--subject|-t)[ =]\s*[\"']?Version\b")
+MERGED_EVENT = re.compile(r'<herdr-pipeline\b([^>]*\bevent="merged"[^>]*)>')
+
+
+def prompt_kind(text):
+    """The kind of a prompt (see KINDS), or None for a record that is not a prompt (a shell echo, a slash command)."""
+    body = text[PLUGIN_PREAMBLE.match(text).end() :]
+    if body.startswith(NOT_PROMPTS):
+        return None
+    for prefix, kind in KIND_TAGS:
+        if body.startswith(prefix):
+            return kind
+    return "owner"
+
+
+def merges(cmd):
+    """[(repo, number, is_version)] for each `gh pr merge` in a Bash command; repo is "" unless -R/--repo names it."""
+    found = list(MERGE_CMD.finditer(cmd))
+    out = []
+    for i, m in enumerate(found):
+        rest = cmd[m.end() : found[i + 1].start() if i + 1 < len(found) else len(cmd)]
+        repo = MERGE_REPO.search(rest)
+        out.append((repo.group(1) if repo else "", int(m.group(1)), bool(MERGE_VERSION.search(rest))))
+    return out
+
+
+def merged_events(text):
+    """[(repo, number)] for each <herdr-pipeline event="merged" pr="N"> tag in a prompt."""
+    out = []
+    for m in MERGED_EVENT.finditer(text):
+        attrs = dict(ATTR.findall(m.group(1)))
+        if attrs.get("pr", "").isdigit():
+            out.append((attrs.get("repo", ""), int(attrs["pr"])))
+    return out
 
 
 def epoch(stamp):
@@ -308,6 +368,8 @@ class Session:
         self.unpriced = set()
         self.worker = None
         self.quiet = 0
+        self.kinds = {k: {"prompts": 0, "turns": 0} for k in KINDS}  # prompts that woke the coordinator, and model turns after them
+        self.merged = set()  # (repo, number) of each worker-built PR merged in the window
 
     def reports_in(self, ts, tag, text):
         """Adds a report for every <herdr-agent> block in the prompt; returns the last, which takes the reaction."""
@@ -337,6 +399,8 @@ def scan(path, since):
     cur = None  # the report whose reaction is still running
     lead = set()  # assistant turns since the last boundary (prompt, or spawn/message/stop result)
     prompts = 0
+    kind = None  # the kind of the prompt whose turns are being counted
+    merging = {}  # Bash tool_use id -> [(repo, number)] of a `gh pr merge` call whose result is not in yet
     fetch_before = False  # the previous Bash call was a git fetch
     for d in records(path):
         ts = epoch(d["timestamp"])
@@ -357,9 +421,18 @@ def scan(path, since):
                             s.spawn_lead.append(turns)
                             s.spawn_branch += branch
                         lead = set()
+                    for key in merging.pop(b.get("tool_use_id") if isinstance(b, dict) else None, ()):
+                        if not b.get("is_error"):
+                            s.merged.add(key)
                 continue
             if d.get("isMeta"):  # Claude Code's own context records, not a prompt
                 continue
+            new = prompt_kind(text)
+            if new is None:
+                continue
+            kind = new
+            s.kinds[kind]["prompts"] += 1
+            s.merged.update(merged_events(text))
             lead = set()
             tag = PROMPT_TAG.match(text)
             if tag:
@@ -385,6 +458,8 @@ def scan(path, since):
                 s.unpriced.add(model)
             add(s.tot, u, c)
             add(s.by_model.setdefault(model, new_tot()), u, c)
+            if kind is not None:
+                s.kinds[kind]["turns"] += 1
             if cur is not None:
                 add(cur.tot, u, c)
         lead.add(mid)
@@ -412,6 +487,9 @@ def scan(path, since):
                     cur.read = True
             elif name == "Bash":
                 cmd = str(args.get("command") or "")
+                keys = [(repo, n) for repo, n, version in merges(cmd) if not version]
+                if keys:
+                    merging[b.get("id")] = keys
                 if WORKTREE_ADD.search(cmd):
                     s.wt_calls += 1 + (fetch_before and not GIT_FETCH.search(cmd))  # the fetch call right before counts too
                 fetch_before = bool(GIT_FETCH.search(cmd)) and not WORKTREE_ADD.search(cmd)
@@ -570,6 +648,16 @@ def det_missing(reports):
     return dict(collections.Counter(why))
 
 
+def per_pr(kinds, merged):
+    """prompt_kinds, merged_prs, and the mechanical turns and wake-ups per merged PR (None when nothing merged)."""
+    return {
+        "prompt_kinds": {k: dict(v) for k, v in kinds.items()},
+        "merged_prs": merged,
+        "mech_turns_per_pr": share(sum(kinds[k]["turns"] for k in MECH), merged),
+        "wakeups_per_pr": share(sum(kinds[k]["prompts"] for k in MECH), merged),
+    }
+
+
 def coordinator_row(s):
     reports = s.reports
     n = len(reports)
@@ -599,6 +687,7 @@ def coordinator_row(s):
         "quiet": s.quiet,
         "tokens": dict(s.tot),
         "reaction_cost_per_report": share(sum(r.tot["cost"] for r in reports), n),
+        **per_pr(s.kinds, len(s.merged)),
     }
 
 
@@ -607,9 +696,13 @@ def totals(rows, coords):
     reports = [r for s in coords for r in s.reports]
     n = len(reports)
     tok = new_tot()
+    kinds = {k: {"prompts": 0, "turns": 0} for k in KINDS}
     for s in coords:
         for k in tok:
             tok[k] += s.tot[k]
+        for k in KINDS:
+            for f in ("prompts", "turns"):
+                kinds[k][f] += s.kinds[k][f]
     return {
         "sessions": len(rows),
         "reports": n,
@@ -633,6 +726,7 @@ def totals(rows, coords):
         "quiet": sum(s.quiet for s in coords),
         "tokens": tok,
         "reaction_cost_per_report": share(sum(r.tot["cost"] for r in reports), n),
+        **per_pr(kinds, sum(len(s.merged) for s in coords)),
     }
 
 
@@ -685,7 +779,8 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
         print("   none: no transcript in the window got a <herdr-agent> prompt")
     else:
         print("start        session  cwd                              rpts turns read% ptr%  reads edit/r"
-              "  det med  p90  max  queue med  p90  max  act med  p90  spawn med  max lead med wt/sp br% sfail quiet")
+              "  det med  p90  max  queue med  p90  max  act med  p90  spawn med  max lead med wt/sp br% sfail quiet"
+              "  mrg  t/PR  w/PR")
         for r in rows + [None]:
             row = tot if r is None else r
             label = "total" if r is None else short(r["project"], 32)
@@ -699,11 +794,16 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
                   f"{fmt_s(det['max']):>4s}  {fmt_s(queue['median']):>9s} {fmt_s(queue['p90']):>4s} {fmt_s(queue['max']):>4s}  "
                   f"{fmt_s(act['median']):>7s} {fmt_s(act['p90']):>4s}  "
                   f"{fmt_s(spawn['median']):>9s} {fmt_s(spawn['max']):>4s} {fmt_1(row['spawn_lead']['median']):>8s} "
-                  f"{fmt_ratio(row['wt_per_spawn']):>5s} {fmt_pct(row['branch_share']):>4s} {row['start_failed']:5d} {row['quiet']:5d}")
+                  f"{fmt_ratio(row['wt_per_spawn']):>5s} {fmt_pct(row['branch_share']):>4s} {row['start_failed']:5d} {row['quiet']:5d}"
+                  f" {row['merged_prs']:4d} {fmt_1(row['mech_turns_per_pr']):>5s} {fmt_1(row['wakeups_per_pr']):>5s}")
         print("   turns: model turns per report up to its spawn/message/stop call; read%: reports followed by a RESULT read"
               " (Read or Bash); ptr%: reports whose prompt pointed at the file")
         print("   det s: the worker's earliest RESULT.md write to RESULT-<token>.md; queue s: RESULT-<token>.md to the prompt;"
               " act s: prompt to its spawn/message/stop call; spawn: the tool call; lead: coordinator turns before a spawn; wt/sp: git worktree add/fetch calls per spawn; br%: spawns that passed branch; sfail: workers that did not start; quiet: SCREEN files (stopped without a report)")
+        print("   mrg: worker-built PRs merged (gh pr merge that worked, not Version; plus pipeline merged events); "
+              "t/PR, w/PR: model turns and wake-ups from report, pipeline and background-task prompts, per merged PR")
+        print("   prompt kinds (turns/prompts): " + ", ".join(
+            f"{k} {tot['prompt_kinds'][k]['turns']}/{tot['prompt_kinds'][k]['prompts']}" for k in KINDS))
         print("\n== tokens and cost (session = every turn in the window; $/rpt = cost inside each report's reaction)")
         print("start        session  rpts        input      cache-r      cache-w      output       cost  $/rpt")
         for r in rows + [None]:
