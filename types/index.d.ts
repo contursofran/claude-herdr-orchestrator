@@ -34,6 +34,8 @@ export type Job = {
   reportFile?: string
   // also 'failed' (it did not start) and 'stopped' (stopped while it started)
   reportStatus?: string
+  // set on a worker the PR pipeline started: the pipe it works for (Pipe.key) and its role there
+  pipe?: { key: string; role: 'review' | 'fix' | 'update' }
 }
 
 // `every` and `max` in minutes; `lastAt` is when `check` last ran.
@@ -232,6 +234,8 @@ export type PipeFact =
     }
   | { kind: 'ci'; head: string; ci: PipeCi; log?: string }
   | { kind: 'stopped' | 'merged' | 'closed' | 'tick' | 'ownerOk' }
+  // the runner could not carry on (a step could not start): hand the PR to the coordinator
+  | { kind: 'failed'; reason: string }
   | { kind: 'limit'; until?: number }
   | { kind: 'release' | 'resume' }
 
@@ -259,6 +263,7 @@ declare module 'claude-code' {
   interface PluginState {
     'herdr-agents': {
       jobs: Record<string, Job>
+      pipes: Record<string, Pipe>
       board: Board
       reset: Reset | null
       decisions: Decision[]

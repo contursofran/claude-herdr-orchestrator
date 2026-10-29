@@ -257,6 +257,9 @@ export function step(pipe: Pipe | undefined, fact: Fact, cfg: PipelineSettings, 
     case 'stopped':
       hand(p, now, 'stopped by the coordinator', actions)
       break
+    case 'failed':
+      hand(p, now, fact.reason, actions)
+      break
     case 'merged':
     case 'closed': {
       const mine = p.stage === 'merging'

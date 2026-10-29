@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Reset } from '../types'
 import { refresh } from './board'
-import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
+import { config, pipelineSettings, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
 import { AUTO_END, AUTO_START, SAVE_WAIT_MS, WRAP_UP } from './defaults'
 import { pinned } from './owner'
 import { cmd, session } from './session'
@@ -35,6 +35,15 @@ export async function setWrapUp($: EngineInterface, on: boolean) {
   void refresh($)
 }
 
+// The playbook's issue line: with the pipeline on, the mod runs reviews and fix rounds, so the coordinator only
+// starts the builder and is told what the mod owns.
+export function issueLines(steps: string[], piped: boolean, off: Set<string>, small?: string) {
+  const smallLine = small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''
+  if (piped)
+    return `- Each issue: ${steps[0]}.${smallLine}\n- PRs: when a builder reports one PR, the mod runs review, fix rounds and CI for it and sends you only \`<herdr-pipeline>\` prompts (ready, handed, paused). Don't spawn reviewers or fix builders for a PR it owns; \`pipeline release\` takes one back.`
+  return `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${smallLine}`
+}
+
 // What the orchestrate command hands the session, and again after each compaction.
 // `playbook` in herdr-agents.json (a line or a list of lines) adds the person's own.
 export async function playbook($: EngineInterface, statePath: string) {
@@ -42,6 +51,7 @@ export async function playbook($: EngineInterface, statePath: string) {
   const off = await turnedOff($)
   const extra = (await config($)).playbook ?? []
   const small = await smallTasks($)
+  const piped = (await pipelineSettings($)) !== undefined
   const steps = [
     off.has('planner')
       ? 'spawn `builder` with the issue; it plans before it builds'
@@ -56,7 +66,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     `- State: keep ${statePath} current. The mod rewrites its block between ${AUTO_START} and ${AUTO_END} (running and waiting workers, recent reports) on every change; never edit that block. You own Ready (planned items that can start now, at least 3), Decisions and Next: update them when they change, not after every report. A fresh context carries on from the file alone.`,
     "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report. Its status is done, blocked, failed (also a worker that did not start) or gone (its tab is gone).",
     "- Worktrees: give spawn `branch` (and `repo` when the folder holds several) and the mod fetches and creates the worker's worktree off the base branch at ../<repo>-wt/<branch>; give `cwd` instead only to reuse a worktree (a fix round). Never two writers in one.",
-    `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
+    issueLines(steps, piped, off, small),
     `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
     '- Waiting: never poll or sleep; reports, WAIT.json checks and decisions arrive by themselves.',
     '- The owner: ask only what is theirs (product, design or rule choices, approvals) with ask_owner, a few at a time; settle the rest yourself with decided. Merge only as the repo rules allow.',

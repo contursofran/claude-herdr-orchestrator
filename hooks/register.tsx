@@ -9,6 +9,8 @@ import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS, TICK_MS } from
 import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, openQuestions, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
+import { pipelineTool, startPipes, tickPipes } from './piperun'
+import type { PipelineArgs } from './piperun'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
 import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
@@ -72,6 +74,8 @@ export const register: Register = on => {
       return started
     }
     void sweep($, closeMinutes).catch(() => {})
+    // PRs the pipeline owns: a step a reload cut off starts again, once.
+    void startPipes($).catch(() => {})
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
@@ -97,6 +101,7 @@ export const register: Register = on => {
     // closeIdle step depends on closeIdleMinutes.
     $.clock.every(SWEEP_MS, () => {
       void sweep($, closeMinutes).catch(() => {})
+      void tickPipes($).catch(() => {})
       retry($)
     })
     return started
@@ -109,6 +114,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__herdr-agents__spawn' }, ($, e) => spawnWorker($, e as unknown as SpawnArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__message' }, ($, e) => messageWorker($, e as unknown as { worker: string; text: string }))
   on('tool.call', { tool: 'mcp__herdr-agents__stop' }, ($, e) => stopWorker($, e as unknown as { worker: string }))
+  on('tool.call', { tool: 'mcp__herdr-agents__pipeline' }, ($, e) => pipelineTool($, e as unknown as PipelineArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__ask_owner' }, ($, e) => askOwner($, e as unknown as AskArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__decided' }, ($, e) => settle($, e as unknown as DecidedArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__pin_for_owner' }, ($, e) => pinForOwner($, e as unknown as PinArgs))

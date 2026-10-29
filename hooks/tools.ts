@@ -74,6 +74,24 @@ export async function registerTools($: EngineInterface) {
     isDeferred: false,
   })
   await $.tool.register({
+    name: 'pipeline',
+    description: [
+      'The PR pipeline (when "pipeline" is enabled in herdr-agents.json): the mod reviews each PR a builder reports, runs the fix rounds and sends you only <herdr-pipeline> prompts (ready, handed).',
+      '`status` lists the PRs it owns; `release` takes one back (its workers then report to you as usual); `resume` puts a handed PR back in; `add` enrolls an open PR you built by hand (needs `cwd`, its worktree).',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['status', 'release', 'resume', 'add'] },
+        pr: { type: 'number', description: 'The PR number; required except for status.' },
+        repo: { type: 'string', description: 'owner/name, when the PR number is not enough (several repos) or for add.' },
+        cwd: { type: 'string', description: "For add: the PR's worktree." },
+      },
+      required: ['action'],
+    },
+    isDeferred: false,
+  })
+  await $.tool.register({
     name: 'ask_owner',
     description: [
       'Pin a question only the person can answer (a product rule, a design choice, an approval) above their prompt, with a herdr notification.',
