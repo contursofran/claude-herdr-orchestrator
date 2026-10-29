@@ -106,3 +106,7 @@ export const PIPE_PAUSE_MINUTES = 30
 export const PIPE_MAX_SPAWNS = 8
 // Lines kept in a pipe's log.
 export const PIPE_LOG_KEPT = 40
+// A session's pipes in $.store, under this prefix and its id (see pipestore.ts).
+export const PIPES_PREFIX = 'pipes:'
+// Lines the digest in a pipeline prompt may have.
+export const PIPE_DIGEST_LINES = 8

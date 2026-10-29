@@ -58,6 +58,10 @@ function element(part: string, note: string): string | undefined {
       .trim()
     return `✓ ${attr(tag, 'id') ?? ''} owner did: ${did ?? text1}`
   }
+  if (tag.startsWith('<herdr-pipeline ')) {
+    const first = inner.find(l => !l.startsWith('[') && !l.startsWith('Pipeline since') && !l.startsWith('- ')) ?? ''
+    return `⛓ #${attr(tag, 'pr') ?? ''} ${attr(tag, 'event') ?? ''}: ${first}${note}`
+  }
   if (tag.startsWith('<herdr-context')) return `↻ herdr-agents: ${text1}`
   return undefined
 }

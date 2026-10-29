@@ -18,6 +18,7 @@ import {
 import { acceptFolderTrust, herdr, type HerdrAgent, lastStatus, notify } from './herdr'
 import { ask, openQuestions } from './owner'
 import { post } from './outbox'
+import { drainPipes, ownerOf, pipeStopped, takeReport } from './piperun'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
@@ -156,7 +157,7 @@ const heldPrompt = (queued: string[]) =>
 
 // Runs fn once the worker's earlier steps are done, so a wait and a sweep never deliver,
 // prompt or check the same job twice. An error ends that step only.
-function serial(name: string, fn: () => Promise<void>): Promise<void> {
+export function serial(name: string, fn: () => Promise<void>): Promise<void> {
   const next = (chains.get(name) ?? Promise.resolve()).then(fn).catch(() => {})
   chains.set(name, next)
   return next
@@ -510,6 +511,8 @@ export async function deliver(
   // The file this report was kept in, for the state file's block.
   let reportFile: string | undefined
   let tail: Job['tail']
+  // The questions the report asks of the coordinator: DECISION lines and the header's ask.
+  let asks = 0
   if (await reported($, current)) {
     if (status === 'done' && opts.early) tail = 'early'
     body = reportBody(await $.fs.read(resultPath))
@@ -546,6 +549,7 @@ export async function deliver(
       const shown = options.map((o, i) => (i === recommended ? `${o} (recommended)` : o))
       pinnedLines.push(`D${id} ${titled ? `[${titled[1]}] ` : ''}${question}${shown.length ? ` | ${shown.join(' | ')}` : ''}`)
     }
+    asks = asked.length + (header?.ask ? 1 : 0)
     if (header) body = summaryOf(header, full, lines.length, pinnedLines)
     else if (lines.length > INLINE_LINES || body.length > INLINE_CHARS) {
       const first = (lines[0] ?? '').replace(/^#+\s*/, '').slice(0, 200)
@@ -605,6 +609,9 @@ export async function deliver(
       body += `\n\n[${queued.length} message(s) held for it were not sent, as it did not finish (${status}): ${queued.join(', ')}.]`
     }
   }
+  // The PR pipeline may take the report (it runs the PR's next step and posts only what needs the coordinator).
+  // A worker that was sent held messages works again, so its report is not the pipeline's yet.
+  if (queued.length === 0 && (await takeReport($, after, { status, header, asks, file: reportFile }))) return
   // The header's result and PRs, when it has them (see report.ts).
   const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}${header?.verdict ? ` verdict="${header.verdict}"` : ''}`
   await post(
@@ -612,6 +619,8 @@ export async function deliver(
     `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}"${attrs}>\n${body.trim()}\n</herdr-agent>`,
     true,
   )
+  // its slot is free
+  void drainPipes($).catch(() => {})
 }
 
 // session.start: each running worker gets its wait back, since a reload killed the children.
@@ -623,7 +632,17 @@ export function resumeWatching($: EngineInterface, list: Job[]) {
   }
 }
 
-export type SpawnArgs = { worker: string; profile: string; task: string; cwd?: string; repo?: string; branch?: string; base?: string }
+export type SpawnArgs = {
+  worker: string
+  profile: string
+  task: string
+  cwd?: string
+  repo?: string
+  branch?: string
+  base?: string
+  // set by the PR pipeline for its own workers (see piperun.ts): they may enter an owned worktree
+  pipe?: NonNullable<Job['pipe']>
+}
 
 // A worktree for spawn to make before the worker starts.
 type NewTree = { top: string; branch: string; base: string }
@@ -670,6 +689,15 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
     }
   }
 
+  // A worktree the pipeline runs is the pipeline's: the coordinator releases the PR first.
+  if (!e.pipe) {
+    const owner = await ownerOf($, cwd)
+    if (owner)
+      return {
+        deny: `PR #${owner.pr} is run by the pipeline (stage ${owner.stage}); call pipeline with action release first, or message its worker`,
+      }
+  }
+
   // One writer per worktree. A fix round goes to a fresh builder once the one that
   // wrote the PR is stopped, so its context stays small. The debugger takes over after failed rounds.
   if (!reviewsOnly(profile) && profile !== 'debugger') {
@@ -689,7 +717,16 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   // Inside the worktree, so sandboxed CLIs may write RESULT.md there;
   // git's local exclude keeps it out of commits.
   const dir = `${cwd}/.herdr-agents/${worker}`
-  const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'starting', ...briefRefs(task, worker) }
+  const job: Job = {
+    name: worker,
+    profile,
+    cwd,
+    dir,
+    startedAt: await $.clock.now(),
+    status: 'starting',
+    ...briefRefs(task, worker),
+    ...(e.pipe ? { pipe: e.pipe } : {}),
+  }
   await saveJob($, job)
   // The tab, the CLI and the first prompt take many seconds: they run on, and the result of the start
   // (the first report, or a failed one) reaches the coordinator as a message.
@@ -797,6 +834,12 @@ async function startFailed($: EngineInterface, job: Job, err: unknown) {
   if (!after) return
   const reason = err instanceof Error ? err.message : String(err)
   const held = before?.queued ?? []
+  if (held.length === 0 && (await takeReport($, after, { status: 'failed', asks: 0, file: reportFile }))) {
+    void drainPipes($).catch(() => {})
+    $.ui.toast(`herdr worker ${job.name}: failed to start`)
+    void refresh($)
+    return
+  }
   const body = [
     `The worker did not start: ${reason}.${reportFile ? ` The screen of its tab is in ${reportFile}.` : ''}${current.tab ? ' Its tab was closed.' : ''}`,
     ...(held.length > 0 ? [`[${held.length} message(s) held for it were not sent: ${held.join(', ')}.]`] : []),
@@ -897,7 +940,15 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   return result ?? { deny: `could not send to ${e.worker}; try again` }
 }
 
+// The stop tool. A pipeline worker stopped by hand hands its PR back to the coordinator.
 export async function stopWorker($: EngineInterface, e: { worker: string }) {
+  const out = await stopJob($, e)
+  if (!('deny' in out)) await pipeStopped($, e.worker)
+  return out
+}
+
+// The stop itself, for the pipeline too (it stops a PR's last writer before a fix round).
+export async function stopJob($: EngineInterface, e: { worker: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
   if (job.status === 'starting') {

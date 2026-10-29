@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 import { target, wrappingUp } from './config'
 import { notify } from './herdr'
+import { waitingSteps } from './pipestore'
 import { cmd } from './session'
 import { active, jobs } from './state'
 
@@ -17,7 +18,8 @@ export async function belowTarget($: EngineInterface) {
     return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand, then stop. The owner ends it with ${cmd('wrap-up')} off.]`
   }
   const want = await target($)
-  const running = all.filter(j => active(j) && !j.wait).length
+  // a pipeline step waiting for a free slot is busy work that has not started yet
+  const running = all.filter(j => active(j) && !j.wait).length + (await waitingSteps($))
   if (running >= want) return ''
   return `\n\n[${running} of ${want} workers working (waiting ones don't count). Start ${want - running} more now from the Ready list in the state file; if it has fewer than 3 items, also start a planner on the next backlog issue.]`
 }

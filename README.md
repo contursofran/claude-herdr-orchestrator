@@ -58,6 +58,10 @@ The panel shows the coordinator's context (`ctx 75k / 200k`); the sidebar shows 
 
 Builder, then reviewer; the builder plans for itself, and the planner goes first only for work that needs several PRs or leaves the approach open. Each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run.
 
+### The PR pipeline (opt in)
+
+With `"pipeline": {"enabled": true}`, the mod runs a PR after its builder reports it: when a builder (or `smallTasks`) report is `done` with exactly one PR, no question and an open PR, the mod starts a `reviewer` in the PR's worktree with a brief it writes. A review with `verdict: changes` stops the builder and starts a fresh builder for the fix round (`rescue` after `rescueAfter` rounds), then a re-review of the new diff; `rounds` failed rounds, a missing verdict, a worker that fails or is stopped by you hand the PR back. The coordinator gets one `<herdr-pipeline>` prompt when a PR is approved and its CI is green (`ready`) or handed back (`handed`), each with a digest of the steps since its last prompt. Steps wait while the worker count is at `cap` (default `target`). The `pipeline` tool lists the PRs it owns (`status`), takes one back (`release`), puts a handed one back (`resume`) or enrolls one built by hand (`add`). While a PR is owned, `spawn` into its worktree is denied. The mod does not merge yet and does not watch CI after the review (it reads CI once, when the review approves).
+
 ### Wrap-up and cleanup
 
 `/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches; each report is also kept in `~/.herdr-agents/reports/`, so the metrics outlive the worktree. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
@@ -149,6 +153,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `closeIdleMinutes` | `30` | How long a worker's tab stays open, idle, after its report; `0` keeps it open. |
 | `repos` | from git remotes | Short names for `#123` links, e.g. `{"web": "owner/website"}`. The repos of the session's and workers' folders are known already, by name and by the part after the last dash (`acme-client`, `client`). |
 | `wrapUp` | off | `true` wraps up every coordinator on the machine; `/hrd-wrap-up off` clears it. |
+| `pipeline` | off | The PR pipeline above: `enabled`, `rounds` (3), `rescueAfter` (2), `profiles` (`build`, `review`, `rescue`), `cap`, `maxSpawns` (8). A folder's keys win one by one. |
 | `view` | `band` | Where the workers and what needs you show: `band` above the prompt or `side`, the sidebar, opened at the start of each session. Only one shows; `/hrd-side` switches for the session. |
 
 Built-in profiles, the playbook's steps: `planner`, `builder`, `reviewer` (the subagents above) and `debugger` (Opus medium, full tools, for root-cause hunts and fixes that failed twice). A profile of the same name under `profiles` changes its model or flags and keeps its place in the playbook; `/hrd-help` marks it customized. Any other name is a profile of your own. A profile is `{"kind": "claude" | "codex" | "opencode", "args": [...], "env": {...}, "note": "..."}`; `kind` is the CLI herdr starts and `args` its flags. Other CLIs or models are a profile away:
@@ -195,6 +200,7 @@ npm run check                   # formatting, type check, both manifests, tests
 | `workers.ts` | `spawn`, `message`, `stop`: starting workers, watching them, delivering `RESULT.md`, `WAIT.json` waits. |
 | `stateblock.ts` | The Workers block the mod keeps in the state file: running and waiting workers, recent reports. |
 | `archive.ts` | The copy of each delivered report in `~/.herdr-agents/reports`, which outlives a pruned worktree. |
+| `pipeline.ts`, `piperun.ts`, `pipestore.ts` | The PR pipeline: the pure rules (facts in, state and actions out), the runner that starts its workers and posts its prompts, and the stored PRs. |
 | `report.ts` | The report header workers write at the top of `RESULT.md`, and its parsing. |
 | `owner.ts` | Questions (`ask_owner`, `DECISION:` lines) and to-dos (`pin_for_owner`) waiting for the person. |
 | `outbox.ts` | Holds the coordinator's prompts and sends the ones that arrive together as one. |

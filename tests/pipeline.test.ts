@@ -290,7 +290,7 @@ test('an approved pipe waiting for CI re-reviews when the head moves', () => {
 })
 
 test('a late CI result for an old head does not move the head back', () => {
-  const { pipe, actions } = run([
+  const { pipe } = run([
     built,
     reviewed('r5', 'changes', H1),
     { kind: 'report', job: 'f5-1', profile: 'builder', status: 'done', prs: [5], asks: 0, head: H2 },
@@ -299,4 +299,14 @@ test('a late CI result for an old head does not move the head back', () => {
   expect(pipe?.head).toBe(H2)
   expect(pipe?.ci).toBe('unknown')
   expect(pipe?.stage).toBe('review')
+})
+
+test("a failed fact hands the PR back with the runner's reason, once", () => {
+  const { pipe, actions } = run([built, { kind: 'failed', reason: 'could not start r5: reviewer is turned off' }])
+  expect(pipe?.stage).toBe('handed')
+  expect(pipe?.reason).toBe('could not start r5: reviewer is turned off')
+  expect(pipe?.waiting).toEqual([])
+  expect(actions).toEqual([{ kind: 'post', event: 'handed' }])
+  const again = step(pipe, { kind: 'failed', reason: 'x' }, CFG, 0)
+  expect(again.actions).toEqual([])
 })
