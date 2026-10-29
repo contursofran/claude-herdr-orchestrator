@@ -11,10 +11,10 @@ import { PIPE_LOG_KEPT } from './defaults'
 // - `stage: 'review'` with no `worker` means approved and waiting for CI.
 // - Every step is keyed `kind@head` in `pipe.done` and never taken twice.
 
-type Enroll = { repo: string; cwd: string; branch?: string; base?: string; issue?: number; head?: string }
+export type Enroll = { repo: string; cwd: string; branch?: string; base?: string; issue?: number; head?: string }
 
 // A report fact may carry what a new pipe needs; the runner adds it for builder-type jobs only.
-type Fact = PipeFact & { enroll?: Enroll }
+export type Fact = PipeFact & { enroll?: Enroll }
 
 const ENDED = ['merged', 'closed', 'handed']
 
@@ -223,6 +223,8 @@ export function step(pipe: Pipe | undefined, fact: Fact, cfg: PipelineSettings, 
       break
     }
     case 'ci': {
+      // a late result for a head this pipe already left (a step is keyed by it) is dropped
+      if (fact.head !== p.head && p.done.some(k => k.endsWith(`@${fact.head}`) && /^(review|review-old|fix\d+)@/.test(k))) break
       if (fact.head !== p.head) {
         const moved = p.head !== undefined
         setHead(p, fact.head)
@@ -235,8 +237,8 @@ export function step(pipe: Pipe | undefined, fact: Fact, cfg: PipelineSettings, 
       if (fact.ci === 'fail') {
         log(p, now, `CI fail at ${shortSha(fact.head)}`)
         if (!p.worker) fix(p, cfg, now, actions)
-      } else if (!p.worker && !p.approved && p.reviewed !== p.head && p.stage === 'ready') {
-        // someone pushed to a ready PR: the verdict no longer covers it
+      } else if (!p.worker && !p.approved && p.reviewed !== p.head && (p.stage === 'ready' || p.stage === 'review')) {
+        // someone pushed to an approved PR (ready, or waiting for CI): the verdict no longer covers it
         review(p, cfg, now, actions)
       } else if (fact.ci === 'pass') ready(p, cfg, now, actions)
       break

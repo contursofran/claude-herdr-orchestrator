@@ -281,3 +281,22 @@ test('facts do not change the pipe they were given', () => {
   step(pipe, reviewed('r5', 'changes', H1), CFG, 9 * MIN)
   expect(pipe).toEqual(copy)
 })
+
+test('an approved pipe waiting for CI re-reviews when the head moves', () => {
+  const { pipe } = run([built, reviewed('r5', 'approve', H1), ci(H2, 'pass')])
+  expect(pipe?.head).toBe(H2)
+  expect(pipe?.worker).toBe('r5-2')
+  expect(pipe?.waiting).toContainEqual(expect.objectContaining({ kind: 'spawn', role: 'review' }))
+})
+
+test('a late CI result for an old head does not move the head back', () => {
+  const { pipe, actions } = run([
+    built,
+    reviewed('r5', 'changes', H1),
+    { kind: 'report', job: 'f5-1', profile: 'builder', status: 'done', prs: [5], asks: 0, head: H2 },
+    ci(H1, 'fail', 'log'),
+  ])
+  expect(pipe?.head).toBe(H2)
+  expect(pipe?.ci).toBe('unknown')
+  expect(pipe?.stage).toBe('review')
+})

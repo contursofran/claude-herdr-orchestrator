@@ -66,13 +66,21 @@ export async function userConfigPath($: EngineInterface): Promise<string> {
   return `${(await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`}/herdr-agents.json`
 }
 
+// The folder's `pipeline` keys win over the user's one by one, but `merge: "auto"` counts
+// only from the folder file: a user-level "auto" would merge in every repo.
+export function mergePipeline(user: PipelineFile | undefined, repo: PipelineFile | undefined): PipelineFile | undefined {
+  if (!user && !repo) return undefined
+  const { merge, ...rest } = user ?? {}
+  return { ...rest, ...(merge !== undefined && merge !== 'auto' && { merge }), ...repo }
+}
+
 // ~/.claude/herdr-agents.json (or $CLAUDE_CONFIG_DIR's), with the repo's own
 // <session cwd>/.claude/herdr-agents.json over it (its profiles merged by name),
 // so each repo can set its target, state file, profiles and the rest.
 export async function config($: EngineInterface): Promise<Settings> {
   const user = await readJson($, await userConfigPath($))
   const repo = session.cwd ? await readJson($, `${session.cwd}/.claude/herdr-agents.json`) : {}
-  const pipeline = user.pipeline || repo.pipeline ? { ...user.pipeline, ...repo.pipeline } : undefined
+  const pipeline = mergePipeline(user.pipeline, repo.pipeline)
   return { ...user, ...repo, profiles: { ...user.profiles, ...repo.profiles }, ...(pipeline && { pipeline }) }
 }
 
@@ -173,7 +181,7 @@ export function parsePipeline(p: PipelineFile | undefined, known: Record<string,
     return fallback
   }
   const rounds = whole(p.rounds, PIPE_ROUNDS, 1, 10)
-  const cap = typeof p.cap === 'number' && Number.isFinite(p.cap) ? Math.max(1, Math.round(p.cap)) : null
+  const cap = typeof p.cap === 'number' && Number.isFinite(p.cap) ? Math.min(20, Math.max(1, Math.round(p.cap))) : null
   return {
     enabled: true,
     merge: p.merge === 'auto' ? 'auto' : 'ready',

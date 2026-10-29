@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { PROFILES, parsePipeline } from '../hooks/config'
+import { PROFILES, mergePipeline, parsePipeline } from '../hooks/config'
 import type { Profile } from '../types'
 
 // The `pipeline` settings (parsePipeline in config.ts): off by default, clamped, and
@@ -66,4 +66,16 @@ test('a profile that is turned off is not known', () => {
   const { reviewer: _, ...without } = KNOWN
   const cfg = parsePipeline({ enabled: true, profiles: { review: 'reviewer' } }, without)
   expect(cfg?.warning).toMatch(/pipeline\.profiles\.review "reviewer" is not a profile/)
+})
+
+test('merge auto counts only from the folder file', () => {
+  expect(mergePipeline({ enabled: true, merge: 'auto' }, undefined)?.merge).toBeUndefined()
+  expect(mergePipeline({ enabled: true, merge: 'auto' }, { rounds: 2 })).toEqual({ enabled: true, rounds: 2 })
+  expect(mergePipeline({ enabled: true, merge: 'auto' }, { merge: 'auto' })?.merge).toBe('auto')
+  expect(mergePipeline({ enabled: true, rounds: 4 }, { rounds: 2 })).toEqual({ enabled: true, rounds: 2 })
+  expect(mergePipeline(undefined, undefined)).toBeUndefined()
+})
+
+test('cap has an upper clamp', () => {
+  expect(parsePipeline({ enabled: true, cap: 500 }, KNOWN)?.cap).toBe(20)
 })
