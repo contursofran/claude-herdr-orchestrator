@@ -1279,3 +1279,151 @@ test('a reload during start reports it failed and closes its tab', async ($, on)
   expect(closed).toContain('t-w')
   expect(jobOf(store, 'w')).toMatchObject({ status: 'reported', reportStatus: 'failed', closed: true })
 })
+
+// Spawn with a branch: the mod makes the worktree. Git answers come from `runs`.
+const git = (cmd: string, stdout = '', exitCode = 0, stderr = '') => ['git ' + cmd, [{ exitCode, stdout, stderr }]] as const
+const answerGit = (runs: Map<string, { exitCode: number; stdout?: string; stderr?: string }[]>, ...list: (readonly [string, any])[]) => {
+  for (const b of ['fix-x', 'feat/a']) runs.set(`git check-ref-format --branch ${b}`, [{ exitCode: 0 }])
+  for (const [k, v] of list) runs.set(k, v)
+}
+const spawnBranch = ($: any, extra: Record<string, unknown> = {}, worker = 'w-tree') =>
+  $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker, profile: 'builder', task: 'Build it.', branch: 'fix-x', ...extra })
+
+test('spawn with a branch fetches, creates the worktree next to the repo and starts there', async ($, on) => {
+  const { runs, shell, calls, files } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main'),
+  )
+  const r = await spawnBranch($)
+  expect(r.result).toMatch(/^\{"worker":"w-tree","cwd":"\/repo-wt\/fix-x","status":"starting","branch":"fix-x"\}\n/)
+  await settled()
+  const fetch = shell.indexOf('git -C /repo fetch origin main')
+  expect(fetch).toBeGreaterThan(-1)
+  expect(shell.indexOf('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/main')).toBeGreaterThan(fetch)
+  expect(calls.some(c => c.join(' ').startsWith('herdr tab create --cwd /repo-wt/fix-x'))).toBe(true)
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBe('Build it.')
+})
+
+test('a branch with a slash gets a folder with a dash, and an existing local branch is used', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo fetch origin dev', '', 0),
+    git('-C /repo rev-parse --verify --quiet refs/heads/feat/a', 'abc\n'),
+    git('-C /repo worktree add /repo-wt/feat-a feat/a'),
+  )
+  const r = await spawnBranch($, { branch: 'feat/a', base: 'dev' })
+  expect(r.result).toContain('"cwd":"/repo-wt/feat-a"')
+  await settled()
+  expect(shell).toContain('git -C /repo worktree add /repo-wt/feat-a feat/a')
+})
+
+test("a branch only on origin is checked out from origin's copy", async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo rev-parse --verify --quiet refs/heads/fix-x', '', 1),
+    git('-C /repo rev-parse --verify --quiet refs/remotes/origin/fix-x', 'abc\n'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/fix-x'),
+  )
+  await spawnBranch($)
+  await settled()
+  expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/fix-x')
+})
+
+test('an existing worktree on the same branch is reused with no fetch', async ($, on) => {
+  const { runs, shell, files } = await start($, on)
+  files['/repo-wt/fix-x/package.json'] = '{}'
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo rev-parse --path-format=absolute --git-common-dir', '/repo/.git\n'),
+    git('-C /repo-wt/fix-x rev-parse --path-format=absolute --git-common-dir', '/repo/.git\n'),
+    git('-C /repo-wt/fix-x branch --show-current', 'fix-x\n'),
+  )
+  const r = await spawnBranch($)
+  expect(r.result).toContain('"cwd":"/repo-wt/fix-x"')
+  await settled()
+  expect(shell.some(c => c.includes(' fetch ') || c.includes('worktree add'))).toBe(false)
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBe('Build it.')
+})
+
+test('a folder that exists on another branch is denied at once', async ($, on) => {
+  const { runs, files } = await start($, on)
+  files['/repo-wt/fix-x/package.json'] = '{}'
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo rev-parse --path-format=absolute --git-common-dir', '/repo/.git\n'),
+    git('-C /repo-wt/fix-x rev-parse --path-format=absolute --git-common-dir', '/repo/.git\n'),
+    git('-C /repo-wt/fix-x branch --show-current', 'other\n'),
+  )
+  const r = await spawnBranch($)
+  expect(r.deny).toMatch(/\/repo-wt\/fix-x exists and is not a worktree of \/repo on fix-x; pass cwd to use it, or pick another branch/)
+})
+
+test('a branch checked out in another worktree is denied with that folder', async ($, on) => {
+  const { runs } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo worktree list --porcelain', 'worktree /repo\nbranch refs/heads/main\n\nworktree /elsewhere\nbranch refs/heads/fix-x\n'),
+  )
+  const r = await spawnBranch($)
+  expect(r.deny).toMatch(/fix-x is already checked out in \/elsewhere; pass cwd=\/elsewhere/)
+})
+
+test('a bad branch name, or a folder that is no checkout, is denied', async ($, on) => {
+  const { runs } = await start($, on)
+  answerGit(runs, git('-C /repo rev-parse --show-toplevel', '/repo\n'), git('check-ref-format --branch bad..name', '', 1))
+  expect((await spawnBranch($, { branch: 'bad..name' })).deny).toMatch(/not a valid branch name/)
+  runs.set('git -C /nowhere rev-parse --show-toplevel', [{ exitCode: 128 }])
+  expect((await spawnBranch($, { repo: '/nowhere' })).deny).toMatch(/\/nowhere is not a git checkout/)
+})
+
+test("a failed worktree add is a failed report with git's error, and no folder is created", async ($, on) => {
+  const { runs, submitted, clock, files } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main', '', 128, 'fatal: bad object'),
+  )
+  await spawnBranch($)
+  await settled()
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/status="failed">\nThe worker did not start: .*fatal: bad object/)
+  expect(Object.keys(files).filter(f => f.startsWith('/repo-wt'))).toEqual([])
+})
+
+test('cwd alone works as before, without git worktree calls', async ($, on) => {
+  const { shell } = await start($, on)
+  const r = await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-cwd', profile: 'builder', cwd: '/repo/wt', task: 'x' })
+  expect(r.result).toContain('"cwd":"/repo/wt"')
+  expect(r.result).not.toContain('"branch"')
+  await settled()
+  expect(shell.some(c => c.includes('fetch') || c.includes('worktree'))).toBe(false)
+})
+
+test('cwd and branch together, neither, or repo/base without a branch are denied', async ($, on) => {
+  await start($, on)
+  const call = (extra: Record<string, unknown>) =>
+    $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-bad', profile: 'builder', task: 'x', ...extra })
+  expect((await call({ cwd: '/repo/wt', branch: 'b' })).deny).toMatch(/exactly one of cwd/)
+  expect((await call({})).deny).toMatch(/exactly one of cwd/)
+  expect((await call({ cwd: '/repo/wt', base: 'dev' })).deny).toMatch(/repo and base go with branch/)
+})
+
+test('the spawn tool offers branch, repo and base, and only worker, profile and task are required', async ($, on) => {
+  const { tools } = await start($, on)
+  const spec = tools.spawn as any
+  expect(Object.keys(spec.inputSchema.properties)).toEqual(expect.arrayContaining(['branch', 'repo', 'base']))
+  expect(spec.inputSchema.required).toEqual(['worker', 'profile', 'task'])
+})

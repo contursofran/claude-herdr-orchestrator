@@ -1,5 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import { herdr, type HerdrAgent } from './herdr'
+import { session } from './session'
 import { dropOldJobs, jobs } from './state'
 
 // Every `pruneMinutes`, and on the prune command: removes the linked worktrees of the
@@ -95,4 +96,72 @@ export async function excludeFromGit($: EngineInterface, cwd: string) {
   const path = ran.stdout.trim()
   const text = (await $.fs.exists(path)) ? await $.fs.read(path) : ''
   if (!text.split('\n').includes('.herdr-agents/')) await $.fs.write(path, `${text.replace(/\n?$/, '\n')}.herdr-agents/\n`)
+}
+
+// Where spawn puts a worker's worktree: next to the repo, in <repo>-wt, one folder per branch.
+export const worktreePath = (top: string, branch: string) => {
+  const at = top.lastIndexOf('/')
+  return `${top.slice(0, at)}/${top.slice(at + 1)}-wt/${branch.replaceAll('/', '-')}`
+}
+
+async function git($: EngineInterface, args: string[], timeoutMs = 10_000) {
+  try {
+    const r = await $.process.run(['git', ...args], { timeoutMs })
+    return { ok: r.exitCode === 0, out: r.stdout.trim(), err: r.stderr.trim() }
+  } catch (err) {
+    return { ok: false, out: '', err: String(err) }
+  }
+}
+
+// The checkout `repo` names (default: the coordinator's folder), or undefined when it is not one.
+export async function repoTop($: EngineInterface, repo?: string) {
+  const dir = !repo ? session.cwd : repo.startsWith('/') ? repo : `${session.cwd}/${repo}`
+  const r = await git($, ['-C', dir, 'rev-parse', '--show-toplevel'])
+  return r.ok && r.out ? r.out : undefined
+}
+
+// The branch origin/HEAD points to; main when the repo has none.
+export async function defaultBase($: EngineInterface, top: string) {
+  const r = await git($, ['-C', top, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+  return (r.ok && r.out.replace(/^origin\//, '')) || 'main'
+}
+
+// The quick, local checks before a worktree is made. Returns a denial reason, or whether the folder
+// is already the worktree on that branch (then nothing is fetched or added).
+export async function checkWorktree(
+  $: EngineInterface,
+  top: string,
+  branch: string,
+  path: string,
+): Promise<{ deny: string } | { reuse: boolean }> {
+  if (!(await git($, ['check-ref-format', '--branch', branch])).ok) return { deny: `${branch} is not a valid branch name` }
+  if (await $.fs.exists(path)) {
+    const mine = await git($, ['-C', top, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    const there = await git($, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+    const on = await git($, ['-C', path, 'branch', '--show-current'])
+    if (mine.ok && there.ok && mine.out === there.out && on.ok && on.out === branch) return { reuse: true }
+    return { deny: `${path} exists and is not a worktree of ${top} on ${branch}; pass cwd to use it, or pick another branch` }
+  }
+  const list = await git($, ['-C', top, 'worktree', 'list', '--porcelain'])
+  for (const block of list.out.split('\n\n')) {
+    if (block.match(/^branch refs\/heads\/(.+)$/m)?.[1] !== branch) continue
+    const where = block.match(/^worktree (.+)$/m)?.[1]
+    return { deny: `${branch} is already checked out in ${where}; pass cwd=${where} to use it` }
+  }
+  return { reuse: false }
+}
+
+// Fetches the base and adds the worktree: on the local branch if there is one, else on origin's, else a
+// new branch off origin/<base>. Throws with git's error.
+export async function createWorktree($: EngineInterface, top: string, branch: string, base: string, path: string) {
+  const fetched = await git($, ['-C', top, 'fetch', 'origin', base], 120_000)
+  if (!fetched.ok) throw new Error(`git fetch origin ${base} failed: ${fetched.err || fetched.out}`)
+  const has = async (ref: string) => (await git($, ['-C', top, 'rev-parse', '--verify', '--quiet', ref])).ok
+  const args = (await has(`refs/heads/${branch}`))
+    ? ['worktree', 'add', path, branch]
+    : (await has(`refs/remotes/origin/${branch}`))
+      ? ['worktree', 'add', '-b', branch, path, `origin/${branch}`]
+      : ['worktree', 'add', '-b', branch, path, `origin/${base}`]
+  const added = await git($, ['-C', top, ...args], 120_000)
+  if (!added.ok) throw new Error(`git ${args.join(' ')} failed: ${added.err || added.out}`)
 }

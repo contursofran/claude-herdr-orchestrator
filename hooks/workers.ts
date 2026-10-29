@@ -19,11 +19,11 @@ import { acceptFolderTrust, herdr, type HerdrAgent, lastStatus, notify } from '.
 import { ask, openQuestions } from './owner'
 import { post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
-import { cmd } from './session'
+import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
 import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
-import { excludeFromGit } from './worktrees'
+import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, worktreePath } from './worktrees'
 
 // Worker agents that run in herdr tabs. spawn opens a tab, starts the CLI there,
 // hands it the task and returns at once. When the worker ends its turn, its RESULT.md
@@ -623,7 +623,10 @@ export function resumeWatching($: EngineInterface, list: Job[]) {
   }
 }
 
-export type SpawnArgs = { worker: string; profile: string; cwd: string; task: string }
+export type SpawnArgs = { worker: string; profile: string; task: string; cwd?: string; repo?: string; branch?: string; base?: string }
+
+// A worktree for spawn to make before the worker starts.
+type NewTree = { top: string; branch: string; base: string }
 
 // The branch checked out in a folder, for the state file's block; undefined when git says none or fails.
 async function currentBranch($: EngineInterface, cwd: string) {
@@ -636,8 +639,10 @@ async function currentBranch($: EngineInterface, cwd: string) {
 }
 
 export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
-  const { worker, profile, cwd, task } = e
+  const { worker, profile, task, branch } = e
   if (!NAME.test(worker)) return { deny: `worker must match ${NAME}` }
+  if (!!e.cwd === !!branch) return { deny: 'give exactly one of cwd (an existing folder) or branch (a new worktree)' }
+  if (!branch && (e.repo || e.base)) return { deny: 'repo and base go with branch; cwd alone names an existing folder' }
   const off = await turnedOff($)
   if (off.has(profile)) return { deny: `${profile} is turned off in this folder's settings (disable); ${cmd('config')} turns it on.` }
   const all = await profiles($)
@@ -650,6 +655,17 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   const known = (await jobs($))[worker]
   if (known && active(known)) return { deny: `worker ${worker} is still running; use message or stop` }
   if (!(await $.env.get('HERDR_SOCKET_PATH'))) return { deny: 'this session is not running inside herdr' }
+
+  let cwd = e.cwd ?? ''
+  let tree: NewTree | undefined
+  if (branch) {
+    const top = await repoTop($, e.repo)
+    if (!top) return { deny: `${e.repo ?? session.cwd} is not a git checkout; pass repo` }
+    cwd = worktreePath(top, branch)
+    const checked = await checkWorktree($, top, branch, cwd)
+    if ('deny' in checked) return checked
+    if (!checked.reuse) tree = { top, branch, base: e.base || (await defaultBase($, top)) }
+  }
 
   // One writer per worktree. A fix round goes to a fresh builder once the one that
   // wrote the PR is stopped, so its context stays small. The debugger takes over after failed rounds.
@@ -674,16 +690,16 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   await saveJob($, job)
   // The tab, the CLI and the first prompt take many seconds: they run on, and the result of the start
   // (the first report, or a failed one) reaches the coordinator as a message.
-  void serial(worker, () => startWorker($, job, task, p))
+  void serial(worker, () => startWorker($, job, task, p, tree))
   void refresh($)
   return {
-    result: `${JSON.stringify({ worker, cwd, status: 'starting' })}\nStarting ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}". Its report, or a failed report if it does not start, arrives as a <herdr-agent> message.`,
+    result: `${JSON.stringify({ worker, cwd, status: 'starting', ...(branch ? { branch } : {}) })}\nStarting ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}". Its report, or a failed report if it does not start, arrives as a <herdr-agent> message.`,
   }
 }
 
 // The background half of spawn. Each step that takes long is followed by a check that the job is still
 // 'starting': a stop meanwhile ends it, and the tab it made is closed.
-async function startWorker($: EngineInterface, job: Job, task: string, p: Profile) {
+async function startWorker($: EngineInterface, job: Job, task: string, p: Profile, tree?: NewTree) {
   const { name: worker, cwd, dir } = job
   const closeTab = async (tab: string) => {
     try {
@@ -691,6 +707,7 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     } catch {}
   }
   try {
+    if (tree) await createWorktree($, tree.top, tree.branch, tree.base, cwd)
     await $.fs.write(`${dir}/TASK.md`, task)
     await excludeFromGit($, cwd)
     // The role comes last, so a profile's env cannot drop it. A worker's own session
