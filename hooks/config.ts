@@ -1,6 +1,18 @@
 import type { EngineInterface } from 'claude-code'
-import type { Profile, Settings } from '../types'
-import { RESET_AT, STATE_OWNER, TARGET, WRAP_UP } from './defaults'
+import type { PipelineFile, PipelineSettings, Profile, Settings } from '../types'
+import {
+  PIPE_CI_EVERY_MINUTES,
+  PIPE_CI_MAX_MINUTES,
+  PIPE_MAX_SPAWNS,
+  PIPE_NO_CI_MINUTES,
+  PIPE_PAUSE_MINUTES,
+  PIPE_RESCUE_AFTER,
+  PIPE_ROUNDS,
+  RESET_AT,
+  STATE_OWNER,
+  TARGET,
+  WRAP_UP,
+} from './defaults'
 import { session } from './session'
 
 // Claude workers run in their reviewed auto mode (each approval goes to the
@@ -54,13 +66,22 @@ export async function userConfigPath($: EngineInterface): Promise<string> {
   return `${(await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`}/herdr-agents.json`
 }
 
+// The folder's `pipeline` keys win over the user's one by one, but `merge: "auto"` counts
+// only from the folder file: a user-level "auto" would merge in every repo.
+export function mergePipeline(user: PipelineFile | undefined, repo: PipelineFile | undefined): PipelineFile | undefined {
+  if (!user && !repo) return undefined
+  const { merge, ...rest } = user ?? {}
+  return { ...rest, ...(merge !== undefined && merge !== 'auto' && { merge }), ...repo }
+}
+
 // ~/.claude/herdr-agents.json (or $CLAUDE_CONFIG_DIR's), with the repo's own
 // <session cwd>/.claude/herdr-agents.json over it (its profiles merged by name),
 // so each repo can set its target, state file, profiles and the rest.
 export async function config($: EngineInterface): Promise<Settings> {
   const user = await readJson($, await userConfigPath($))
   const repo = session.cwd ? await readJson($, `${session.cwd}/.claude/herdr-agents.json`) : {}
-  return { ...user, ...repo, profiles: { ...user.profiles, ...repo.profiles } }
+  const pipeline = mergePipeline(user.pipeline, repo.pipeline)
+  return { ...user, ...repo, profiles: { ...user.profiles, ...repo.profiles }, ...(pipeline && { pipeline }) }
 }
 
 // Every profile, the turned-off built-ins too.
@@ -136,4 +157,48 @@ export async function target($: EngineInterface): Promise<number> {
 export async function wrappingUp($: EngineInterface): Promise<boolean> {
   const folders = ((await $.store.get(WRAP_UP)) ?? {}) as Record<string, boolean>
   return folders[session.cwd] === true || (await config($)).wrapUp === true
+}
+
+const whole = (v: unknown, fallback: number, min: number, max: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : fallback
+
+// The PR pipeline's settings, or undefined while `pipeline.enabled` is not true. Numbers are
+// clamped; a profile name that is not a profile in effect falls back to its default, with a
+// `warning` for the pipeline tool's status. A folder's keys win over the user's one by one.
+export async function pipelineSettings($: EngineInterface): Promise<PipelineSettings | undefined> {
+  return parsePipeline((await config($)).pipeline, await profiles($))
+}
+
+// The pure part: the `pipeline` key and the profiles in effect in, the settings out.
+export function parsePipeline(p: PipelineFile | undefined, known: Record<string, Profile>): PipelineSettings | undefined {
+  if (!p || p.enabled !== true) return undefined
+  const warnings: string[] = []
+  const pick = (role: 'build' | 'review' | 'rescue', fallback: string) => {
+    const named: unknown = p.profiles?.[role]
+    if (named === undefined) return fallback
+    if (typeof named === 'string' && known[named]) return named
+    warnings.push(`pipeline.profiles.${role} "${String(named)}" is not a profile; using ${fallback}`)
+    return fallback
+  }
+  const rounds = whole(p.rounds, PIPE_ROUNDS, 1, 10)
+  const cap = typeof p.cap === 'number' && Number.isFinite(p.cap) ? Math.min(20, Math.max(1, Math.round(p.cap))) : null
+  return {
+    enabled: true,
+    merge: p.merge === 'auto' ? 'auto' : 'ready',
+    rounds,
+    rescueAfter: whole(p.rescueAfter, PIPE_RESCUE_AFTER, 0, rounds),
+    profiles: {
+      build: pick('build', 'builder'),
+      review: pick('review', 'reviewer'),
+      rescue: pick('rescue', 'debugger'),
+    },
+    cap,
+    ciEveryMinutes: whole(p.ciEveryMinutes, PIPE_CI_EVERY_MINUTES, 1, 30),
+    ciMaxMinutes: whole(p.ciMaxMinutes, PIPE_CI_MAX_MINUTES, 1, 24 * 60),
+    noCiMinutes: whole(p.noCiMinutes, PIPE_NO_CI_MINUTES, 0, 24 * 60),
+    pauseMinutes: whole(p.pauseMinutes, PIPE_PAUSE_MINUTES, 1, 24 * 60),
+    maxSpawns: whole(p.maxSpawns, PIPE_MAX_SPAWNS, 1, 50),
+    ownerTest: Array.isArray(p.ownerTest) ? p.ownerTest.filter((g): g is string => typeof g === 'string' && g !== '') : [],
+    ...(warnings.length && { warning: warnings.join('; ') }),
+  }
 }
