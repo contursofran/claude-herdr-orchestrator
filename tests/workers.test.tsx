@@ -1458,3 +1458,18 @@ test('the spawn tool offers branch, repo and base, and only worker, profile and 
   expect(Object.keys(spec.inputSchema.properties)).toEqual(expect.arrayContaining(['branch', 'repo', 'base']))
   expect(spec.inputSchema.required).toEqual(['worker', 'profile', 'task'])
 })
+
+test('a header verdict reaches the coordinator on the prompt tag', async ($, on) => {
+  const { clock, submitted, typed, files, finish } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'reviewer', cwd: '/repo/wt', task: 'Review it.' })
+  await settled()
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
+    `<!-- report ${token} -->\n\`\`\`report\nstatus: done\npr: 12\nverdict: approve\nhead: abc1234\nsummary: Fine.\n\`\`\``
+  await finish('w-busy')
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(
+    /^<herdr-agent name="w-busy" profile="reviewer" status="done" result="done" pr="12" verdict="approve">\n/,
+  )
+  await stopAll($, clock, ['w-busy'])
+})

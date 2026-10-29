@@ -123,3 +123,25 @@ test('the view draws a batch as one line: each element, and the worker count onc
     '⇠ 2 updates: w-a done: Done: approve. · ◆ D3 owner chose: Yes · Ship it? · 0/4 working',
   )
 })
+
+test('verdict and head are read from a fenced header and stay out of the rest', () => {
+  const header = parseHeader(
+    ['```report', 'status: done', 'verdict: approve', 'head: abc1234', 'summary: Looks good.', '```', 'Details.'].join('\n'),
+  )
+  expect(header).toEqual({ status: 'done', prs: [], summary: ['Looks good.'], verdict: 'approve', head: 'abc1234', rest: 'Details.' })
+})
+
+test('verdict words map to approve or changes, and an unknown word gives none', () => {
+  const verdict = (word: string) => parseHeader(`status: done\nverdict: ${word}\nsummary: x`)?.verdict
+  for (const w of ['approve', 'Approved', 'LGTM']) expect(verdict(w)).toBe('approve')
+  for (const w of ['changes', 'changes-needed', 'request-changes', 'blocked']) expect(verdict(w)).toBe('changes')
+  expect(verdict('maybe')).toBeUndefined()
+})
+
+test('a head that is not 7 to 40 hex characters is ignored', () => {
+  const head = (value: string) => parseHeader(`status: done\nhead: ${value}\nsummary: x`)?.head
+  expect(head('0123456789abcdef0123456789abcdef01234567')).toBe('0123456789abcdef0123456789abcdef01234567')
+  expect(head('abc12')).toBeUndefined()
+  expect(head('not-a-sha')).toBeUndefined()
+  expect(head(`${'a'.repeat(41)}`)).toBeUndefined()
+})
