@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
 import { briefRefs, groupTasks } from '../hooks/tasks'
 import type { Job } from '../types'
-import { BAND, command, start, stopAll, until } from './harness'
+import { BAND, command, settled, start, stopAll, until } from './harness'
 
 // The sidebar (/hrd-side): work by issue or PR, what needs the person, and the answer box.
 
@@ -22,6 +22,7 @@ test('workers on one issue share a row, and an answer stays in its slot until cl
     cwd: '/repo',
     task: '# Plan acme/app-client issue #640 (Sort bags)\n\nRead the issue.',
   })
+  await settled()
   await $.tool.call({
     tool: 'mcp__herdr-agents__spawn',
     worker: 'w-busy',
@@ -29,6 +30,7 @@ test('workers on one issue share a row, and an answer stays in its slot until cl
     cwd: '/repo/wt',
     task: 'Build #640: sort by type',
   })
+  await settled()
   await $.tool.call({
     tool: 'mcp__herdr-agents__ask_owner',
     question: 'Sort bags by type or by weight?',
@@ -81,6 +83,7 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
     cwd: '/repo/wt',
     task: '# Build #12: hotbar keys',
   })
+  await settled()
   await clock.settle()
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-done/RESULT.md'] =
@@ -93,6 +96,7 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
     cwd: '/repo',
     task: 'Review acme/app-client PR #15 (hotbar keys)',
   })
+  await settled()
   prs['acme/app-client#15'] = { state: 'OPEN', statusCheckRollup: [{ __typename: 'CheckRun', status: 'IN_PROGRESS' }] }
   await command($, 'hrd-side')
   await clock.advance(3000)
@@ -124,6 +128,7 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
 
   // A new worker on it brings the row back.
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'f-12', profile: 'builder', cwd: '/repo/wt2', task: 'Fix round for #12' })
+  await settled()
   await clock.advance(3000)
   expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/#12 +hotbar keys +· +◐/)
   await ui.unmount()
@@ -132,8 +137,10 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
 
 test('one number in two repos is two rows, and a row that joins another keeps its slot', async ($, on) => {
   const { clock, typed, files, prs } = await start($, on)
-  const spawn = (worker: string, profile: string, cwd: string, task: string) =>
-    $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker, profile, cwd, task })
+  const spawn = async (worker: string, profile: string, cwd: string, task: string) => {
+    await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker, profile, cwd, task })
+    await clock.settle()
+  }
   await spawn('c-640', 'builder', '/repo', 'Build #640: sort bags')
   await spawn('s-640', 'builder', '/srv', 'Build #640: bag weights')
   await spawn('w-12', 'builder', '/repo/wt', 'Build #12: hotbar keys')
@@ -243,7 +250,9 @@ test('workers join through shared numbers, and only a role name gives a number',
 test("a report's PR goes to its worker's row on the sidebar: the header's, else the link in a report without one", async ($, on) => {
   const { clock, typed, files, finish } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-link', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+  await settled()
   const tokens = [typed[0], typed[1]].map(t => t?.match(/<!-- report (\S+) -->/)?.[1])
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] =
     `<!-- report ${tokens[0]} -->\n\`\`\`report\nstatus: done\npr: 12\nsummary: Opened PR #12.\n\`\`\``

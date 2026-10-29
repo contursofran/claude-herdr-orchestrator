@@ -1,5 +1,5 @@
 import type { EngineInterface } from 'claude-code'
-import type { Job } from '../types'
+import type { Job, Profile } from '../types'
 import { archive } from './archive'
 import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
@@ -20,7 +20,7 @@ import { ask, openQuestions } from './owner'
 import { post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd } from './session'
-import { jobs, latestJob, patchJob, saveJob, updateJob } from './state'
+import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
 import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
 import { excludeFromGit } from './worktrees'
@@ -617,7 +617,8 @@ export async function deliver(
 // session.start: each running worker gets its wait back, since a reload killed the children.
 export function resumeWatching($: EngineInterface, list: Job[]) {
   for (const job of list) {
-    if (job.status === 'running') arm($, job, 'finish')
+    if (job.status === 'starting') void serial(job.name, () => startFailed($, job, new Error('the mod reloaded while it started')))
+    else if (job.status === 'running') arm($, job, 'finish')
     else if (job.tail) arm($, job, job.tail === 'blocked' ? 'resume' : 'finish')
   }
 }
@@ -646,7 +647,8 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
     return {
       deny: `Wrapping up: the owner stopped new work (${cmd('wrap-up')}). Let the running workers finish and send fixes to an open worker with message; only a reviewer for an open PR may start. The owner ends it with ${cmd('wrap-up')} off.`,
     }
-  if ((await jobs($))[worker]?.status === 'running') return { deny: `worker ${worker} is still running; use message or stop` }
+  const known = (await jobs($))[worker]
+  if (known && active(known)) return { deny: `worker ${worker} is still running; use message or stop` }
   if (!(await $.env.get('HERDR_SOCKET_PATH'))) return { deny: 'this session is not running inside herdr' }
 
   // One writer per worktree. A fix round goes to a fresh builder once the one that
@@ -668,15 +670,46 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   // Inside the worktree, so sandboxed CLIs may write RESULT.md there;
   // git's local exclude keeps it out of commits.
   const dir = `${cwd}/.herdr-agents/${worker}`
-  await $.fs.write(`${dir}/TASK.md`, task)
-  await excludeFromGit($, cwd)
+  const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'starting', ...briefRefs(task, worker) }
+  await saveJob($, job)
+  // The tab, the CLI and the first prompt take many seconds: they run on, and the result of the start
+  // (the first report, or a failed one) reaches the coordinator as a message.
+  void serial(worker, () => startWorker($, job, task, p))
+  void refresh($)
+  return {
+    result: `${JSON.stringify({ worker, cwd, status: 'starting' })}\nStarting ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}". Its report, or a failed report if it does not start, arrives as a <herdr-agent> message.`,
+  }
+}
 
+// The background half of spawn. Each step that takes long is followed by a check that the job is still
+// 'starting': a stop meanwhile ends it, and the tab it made is closed.
+async function startWorker($: EngineInterface, job: Job, task: string, p: Profile) {
+  const { name: worker, cwd, dir } = job
+  const closeTab = async (tab: string) => {
+    try {
+      await herdr($, ['tab', 'close', tab])
+    } catch {}
+  }
   try {
+    await $.fs.write(`${dir}/TASK.md`, task)
+    await excludeFromGit($, cwd)
     // The role comes last, so a profile's env cannot drop it. A worker's own session
     // reads it (see session.start).
     const env = [...Object.entries(p.env ?? {}), ['HERDR_AGENTS_ROLE', 'worker']].flatMap(([k, v]) => ['--env', `${k}=${v}`])
-    const tab = await herdr<{ root_pane: { pane_id: string } }>($, ['tab', 'create', '--cwd', cwd, '--label', worker, '--no-focus', ...env])
-    const pane = tab.root_pane.pane_id
+    const made = await herdr<{ tab: { tab_id: string }; root_pane: { pane_id: string } }>($, [
+      'tab',
+      'create',
+      '--cwd',
+      cwd,
+      '--label',
+      worker,
+      '--no-focus',
+      ...env,
+    ])
+    const tab = made.tab.tab_id
+    const pane = made.root_pane.pane_id
+    const saved = await updateJob($, worker, j => (j.status === 'starting' ? { ...j, tab, pane } : undefined))
+    if (!saved.after) return await closeTab(tab)
     // A fresh tab's shell may still be starting; herdr then reports the
     // pane busy, so try again for a few seconds.
     for (let tries = 0; ; tries++) {
@@ -690,24 +723,60 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
       }
     }
     const branch = await currentBranch($, cwd)
-    const job: Job = {
-      name: worker,
-      profile,
-      cwd,
-      dir,
-      startedAt: await $.clock.now(),
-      status: 'running',
-      ...(branch ? { branch } : {}),
-      ...briefRefs(task, worker),
-    }
-    await prompt($, job, `Your task is in ${dir}/TASK.md. Read it and do it.`, true)
+    const { before, after } = await updateJob($, worker, j =>
+      j.status === 'starting' ? { ...j, status: 'running', ...(branch ? { branch } : {}), queued: [] } : undefined,
+    )
+    if (!after) return await closeTab(tab)
+    // Messages sent while it started go in with its task (see messageWorker).
+    const held = before?.queued ?? []
+    const extra =
+      held.length > 0
+        ? ` Your coordinator also sent ${held.length} message(s) after the task: ${held.join(', ')}. Read them after TASK.md.`
+        : ''
+    await prompt($, after, `Your task is in ${dir}/TASK.md. Read it and do it.${extra}`, true)
     void refresh($)
-    return {
-      result: `Started ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}" (pane ${pane}). Its report will arrive as a <herdr-agent> message.`,
-    }
   } catch (err) {
-    return { deny: String(err) }
+    await startFailed($, job, err)
   }
+}
+
+// A start that failed (or was cut off by a reload): the screen of its tab is kept, the tab is closed
+// and the coordinator gets a failed report.
+async function startFailed($: EngineInterface, job: Job, err: unknown) {
+  const current = await latestJob($, job.name)
+  if (!current || current.status !== 'starting') return
+  const now = await $.clock.now()
+  let reportFile: string | undefined
+  if (current.pane && (await $.fs.exists(current.dir))) {
+    try {
+      const ran = await $.process.run(['herdr', 'pane', 'read', current.pane, '--source', 'visible'])
+      const text = ran.stdout.slice(-4000)
+      const file = `${current.dir}/SCREEN-start-${now}.txt`
+      await $.fs.write(file, text)
+      await archive($, current.dir, file.slice(current.dir.length + 1), text)
+      reportFile = file
+    } catch {}
+  }
+  if (current.tab) {
+    try {
+      await herdr($, ['tab', 'close', current.tab])
+    } catch {}
+  }
+  const { before, after } = await updateJob($, job.name, j =>
+    j.status === 'starting'
+      ? { ...j, status: 'reported', reportStatus: 'failed', endedAt: now, closed: true, reportFile, queued: [] }
+      : undefined,
+  )
+  if (!after) return
+  const reason = err instanceof Error ? err.message : String(err)
+  const held = before?.queued ?? []
+  const body = [
+    `The worker did not start: ${reason}.${reportFile ? ` The screen of its tab is in ${reportFile}.` : ''}${current.tab ? ' Its tab was closed.' : ''}`,
+    ...(held.length > 0 ? [`[${held.length} message(s) held for it were not sent: ${held.join(', ')}.]`] : []),
+  ].join('\n')
+  await post($, `<herdr-agent name="${job.name}" profile="${job.profile}" status="failed">\n${body}\n</herdr-agent>`, true)
+  $.ui.toast(`herdr worker ${job.name}: failed to start`)
+  void refresh($)
 }
 
 export async function messageWorker($: EngineInterface, e: { worker: string; text: string }) {
@@ -737,6 +806,13 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
       job.name,
       `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
     ])
+  if (job.status === 'starting') {
+    // It has no CLI yet: the message goes in with its first prompt (see startWorker).
+    const { after } = await updateJob($, job.name, j =>
+      j.status === 'starting' ? { ...j, queued: [...(j.queued ?? []), path] } : undefined,
+    )
+    if (after) return { result: `${e.worker} is still starting; the message is handed to it with its task.` }
+  }
   const heldResult = { result: `${e.worker} (${kind}) is mid-task, so the message is held and sent the moment it reports.` }
   if (job.status === 'running') {
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
@@ -797,6 +873,20 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
 export async function stopWorker($: EngineInterface, e: { worker: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
+  if (job.status === 'starting') {
+    const endedAt = await $.clock.now()
+    const { after } = await updateJob($, job.name, j =>
+      j.status === 'starting' ? { ...j, status: 'reported', reportStatus: 'stopped', endedAt, closed: true, tail: undefined } : undefined,
+    )
+    if (after) {
+      if (after.tab) {
+        try {
+          await herdr($, ['tab', 'close', after.tab])
+        } catch {}
+      }
+      return { result: `Stopped ${e.worker} while it was starting.${await belowTarget($)}` }
+    }
+  }
   await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now(), tail: undefined })
   try {
     const agent = await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])
