@@ -166,6 +166,21 @@ test('renderBlock orders running by start and reports by end, newest first, and 
   )
 })
 
+test('renderBlock lists a failed start under recent reports with its screen file', () => {
+  const text = renderBlock([
+    job({
+      name: 'w',
+      status: 'reported',
+      reportStatus: 'failed',
+      closed: true,
+      endedAt: at('2026-10-02 10:05'),
+      reportFile: '/r/.herdr-agents/w/SCREEN-start-1.txt',
+    }),
+  ])
+  expect(text).toContain('### Running\n- none\n')
+  expect(text).toContain('### Recent reports\n- 2026-10-02 10:05 w (builder) failed: /r/.herdr-agents/w/SCREEN-start-1.txt\n')
+})
+
 test('renderBlock lists a starting job as running work that is starting', () => {
   const text = renderBlock([job({ name: 'w', status: 'starting', cwd: '/repo/wt', startedAt: at('2026-10-02 10:00') })])
   expect(text).toContain('### Running\n- w (builder) in /repo/wt · starting since 2026-10-02 10:00\n### Waiting\n- none\n')

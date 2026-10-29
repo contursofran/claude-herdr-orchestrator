@@ -1280,10 +1280,18 @@ test('a reload during start reports it failed and closes its tab', async ($, on)
   expect(jobOf(store, 'w')).toMatchObject({ status: 'reported', reportStatus: 'failed', closed: true })
 })
 
+test('an error in the first prompt after the job is running is toasted, not lost', async ($, on) => {
+  const { runs, toasts } = await start($, on)
+  runs.set('rm -f /repo/wt/.herdr-agents/w-late/RESULT.md', [{ exitCode: 0, reject: 'cannot run rm' }])
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-late', profile: 'builder', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(toasts.join('\n')).toMatch(/w-late: its first prompt failed/)
+})
+
 // Spawn with a branch: the mod makes the worktree. Git answers come from `runs`.
 const git = (cmd: string, stdout = '', exitCode = 0, stderr = '') => ['git ' + cmd, [{ exitCode, stdout, stderr }]] as const
 const answerGit = (runs: Map<string, { exitCode: number; stdout?: string; stderr?: string }[]>, ...list: (readonly [string, any])[]) => {
-  for (const b of ['fix-x', 'feat/a']) runs.set(`git check-ref-format --branch ${b}`, [{ exitCode: 0 }])
+  for (const b of ['fix-x', 'feat/a', 'dev', 'main']) runs.set(`git check-ref-format --branch ${b}`, [{ exitCode: 0 }])
   for (const [k, v] of list) runs.set(k, v)
 }
 const spawnBranch = ($: any, extra: Record<string, unknown> = {}, worker = 'w-tree') =>
@@ -1336,6 +1344,29 @@ test("a branch only on origin is checked out from origin's copy", async ($, on) 
   await spawnBranch($)
   await settled()
   expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/fix-x')
+})
+
+test('the branch is fetched too, and a failed fetch of it is ignored', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo fetch origin fix-x', '', 128, "fatal: couldn't find remote ref fix-x"),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main'),
+  )
+  await spawnBranch($)
+  await settled()
+  expect(shell.indexOf('git -C /repo fetch origin fix-x')).toBeGreaterThan(shell.indexOf('git -C /repo fetch origin main'))
+  expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/main')
+})
+
+test('a base that is not a valid branch name is denied before any git call that could take it as an option', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(runs, git('-C /repo rev-parse --show-toplevel', '/repo\n'), git('check-ref-format --branch --upload-pack=x', '', 1))
+  const r = await spawnBranch($, { base: '--upload-pack=x' })
+  expect(r.deny).toMatch(/--upload-pack=x is not a valid base branch name/)
+  expect(shell.some(c => c.includes('fetch'))).toBe(false)
 })
 
 test('an existing worktree on the same branch is reused with no fetch', async ($, on) => {

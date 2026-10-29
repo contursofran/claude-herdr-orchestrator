@@ -681,6 +681,72 @@ class SpawnLead(unittest.TestCase):
         self.assertEqual((row["wt_per_spawn"], row["branch_share"], row["spawn_lead"]["n"]), (None, None, 0))
 
 
+class StateWritesAndBatches(unittest.TestCase):
+    """Items from #71: Bash writes to the state file, git fetch counting, several blocks in one prompt."""
+
+    def scan_commands(self, commands):
+        tmp = tempfile.mkdtemp(prefix="hrd-metrics-bash-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        base = int(time.time()) - 3600
+        c = Transcript(base, tmp)
+        c.herdr(0, "b1", "builder", "done", "ok")
+        for i, cmd in enumerate(commands):
+            c.assistant(1 + i, f"x{i}", OPUS, usage(inp=1), [call(f"c{i}", "Bash", command=cmd)])
+            c.result(1 + i, f"c{i}")
+        path = os.path.join(tmp, "c.jsonl")
+        c.write(path)
+        return hm.scan(path, base - 10)
+
+    def test_bash_writes_to_the_state_file_count_as_edits(self):
+        writes = [
+            "sed -i 's/a/b/' COORDINATOR-STATE.md",
+            "sed -i.bak 's/a/b/' /x/COORDINATOR-STATE.md",
+            "echo hi >> /x/COORDINATOR-STATE.md",
+            "cat > COORDINATOR-STATE.md <<'EOF'\nbody\nEOF",
+            "echo hi | tee -a COORDINATOR-STATE.md",
+            "python3 -c \"open('/x/COORDINATOR-STATE.md', 'w').write('x')\"",
+            "python3 - <<'EOF'\nfrom pathlib import Path\nPath('COORDINATOR-STATE.md').write_text('x')\nEOF",
+        ]
+        self.assertEqual(self.scan_commands(writes).edits, len(writes))
+
+    def test_bash_reads_of_the_state_file_are_not_edits(self):
+        reads = [
+            "cat COORDINATOR-STATE.md",
+            "grep x COORDINATOR-STATE.md > /tmp/out",
+            "sed -n 1,5p COORDINATOR-STATE.md",
+            "python3 -c \"open('COORDINATOR-STATE.md').read()\"",
+            "sed -i 's/a/b/' other.md",
+            "ls",
+        ]
+        self.assertEqual(self.scan_commands(reads).edits, 0)
+
+    def test_a_fetch_counts_only_right_before_a_worktree_add(self):
+        s = self.scan_commands(["git fetch origin", "ls", "git fetch origin main"])
+        self.assertEqual(s.wt_calls, 0)  # no worktree add follows
+        s = self.scan_commands(["git fetch origin", "git worktree add ../wt -b x origin/main"])
+        self.assertEqual(s.wt_calls, 2)
+        s = self.scan_commands(["git fetch origin", "ls", "git worktree add ../wt -b x origin/main"])
+        self.assertEqual(s.wt_calls, 1)  # the ls came between
+        s = self.scan_commands(["git -C /r fetch origin && git -C /r worktree add ../wt"])
+        self.assertEqual(s.wt_calls, 1)
+
+    def test_every_block_in_a_prompt_is_a_report(self):
+        tmp = tempfile.mkdtemp(prefix="hrd-metrics-batch-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        base = int(time.time()) - 3600
+        c = Transcript(base, tmp)
+        c.herdr(0, "b1", "builder", "done", "first")
+        batch = f'{PREAMBLE}<herdr-agent name="b2" profile="builder" status="done">\nsecond\n</herdr-agent>\n\n'
+        batch += '<herdr-agent name="b3" profile="builder" status="failed">\nThe worker did not start: boom.\n</herdr-agent>\n'
+        batch += 'quoted <herdr-agent name="b4" status="done"> inside text'
+        c._rec(5, "user", {"role": "user", "content": batch}, origin={"kind": "plugin", "name": "herdr-agents"})
+        path = os.path.join(tmp, "c.jsonl")
+        c.write(path)
+        s = hm.scan(path, base - 10)
+        self.assertEqual(len(s.reports), 3)  # the quote in the text is not a block
+        self.assertEqual(s.start_failed, 1)
+
+
 class Units(unittest.TestCase):
     def test_the_price_uses_the_one_hour_cache_write_rate(self):
         self.assertAlmostEqual(hm.price(OPUS, hm.usage({"usage": usage(cw1h=1_000_000)})), 8.0)

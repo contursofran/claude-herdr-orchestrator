@@ -23,7 +23,7 @@ import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
 import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
-import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, worktreePath } from './worktrees'
+import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, validBranch, worktreePath } from './worktrees'
 
 // Worker agents that run in herdr tabs. spawn opens a tab, starts the CLI there,
 // hands it the task and returns at once. When the worker ends its turn, its RESULT.md
@@ -664,7 +664,10 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
     cwd = worktreePath(top, branch)
     const checked = await checkWorktree($, top, branch, cwd)
     if ('deny' in checked) return checked
-    if (!checked.reuse) tree = { top, branch, base: e.base || (await defaultBase($, top)) }
+    if (!checked.reuse) {
+      if (e.base && !(await validBranch($, e.base))) return { deny: `${e.base} is not a valid base branch name` }
+      tree = { top, branch, base: e.base || (await defaultBase($, top)) }
+    }
   }
 
   // One writer per worktree. A fix round goes to a fresh builder once the one that
@@ -761,7 +764,14 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
 // and the coordinator gets a failed report.
 async function startFailed($: EngineInterface, job: Job, err: unknown) {
   const current = await latestJob($, job.name)
-  if (!current || current.status !== 'starting') return
+  if (!current) return
+  if (current.status !== 'starting') {
+    // The job went live before the error (a failed first prompt): nothing to fail now, but say so.
+    if (current.status === 'running') {
+      $.ui.toast(`herdr worker ${job.name}: its first prompt failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    return
+  }
   const now = await $.clock.now()
   let reportFile: string | undefined
   if (current.pane && (await $.fs.exists(current.dir))) {
