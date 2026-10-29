@@ -1,5 +1,6 @@
 import type { Job, Pr, Row } from '../types'
 import { ago } from './format'
+import { active } from './state'
 
 // The sidebar's work table: one row per issue or PR, the workers on it grouped by the
 // numbers their briefs and reports name (the planner, the builders and fix rounds, the
@@ -144,7 +145,7 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
     }
     const latest = [0, 1, 2].map(r => list.filter(j => role(j.profile) === r).at(-1))
     const state = pr && repo ? prs[`${repo}#${pr}`] : undefined
-    const running = list.filter(j => j.status === 'running')
+    const running = list.filter(active)
     const waitingOnCi = running.some(j => j.wait && CI.test(j.wait.for))
     const ci: Stage = state
       ? state.state === 'MERGED' || state.ci === 'pass'
