@@ -706,14 +706,26 @@ class StateWritesAndBatches(unittest.TestCase):
             "echo hi | tee -a COORDINATOR-STATE.md",
             "python3 -c \"open('/x/COORDINATOR-STATE.md', 'w').write('x')\"",
             "python3 - <<'EOF'\nfrom pathlib import Path\nPath('COORDINATOR-STATE.md').write_text('x')\nEOF",
+            "perl -pi -e 's/a/b/' COORDINATOR-STATE.md",
+            # Real shapes from a coordinator session:
+            "cd /repo && python3 - <<'EOF'\np='COORDINATOR-STATE.md'\ns=open(p).read()\n"
+            "s=s.replace(\"a\",\"b\")\nopen(p,'w').write(s)\nEOF\nsed -n 1,30p COORDINATOR-STATE.md",
+            "cd /repo && sed -i '' 's/^- S3: x/- S3: y/; s/^- S4: x/- S4: y/' COORDINATOR-STATE.md"
+            " && grep -n \"^- S3:\" COORDINATOR-STATE.md",
         ]
         self.assertEqual(self.scan_commands(writes).edits, len(writes))
+
+    def test_one_bash_call_counts_once(self):
+        cmd = "sed -i 's/a/b/' COORDINATOR-STATE.md; echo x >> COORDINATOR-STATE.md"
+        self.assertEqual(self.scan_commands([cmd]).edits, 1)
 
     def test_bash_reads_of_the_state_file_are_not_edits(self):
         reads = [
             "cat COORDINATOR-STATE.md",
             "grep x COORDINATOR-STATE.md > /tmp/out",
             "sed -n 1,5p COORDINATOR-STATE.md",
+            "sed -n 1,30p COORDINATOR-STATE.md",
+            "grep -n x COORDINATOR-STATE.md",
             "python3 -c \"open('COORDINATOR-STATE.md').read()\"",
             "sed -i 's/a/b/' other.md",
             "ls",

@@ -82,15 +82,15 @@ REPORT_MARK = re.compile(r"^\s*<!-- report \S+ -->\s*")
 MARK = re.compile(r"<!-- report (\S+) -->")  # the token a worker puts on RESULT.md's first line
 WORKTREE_ADD = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?worktree\s+add\b")
 GIT_FETCH = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?fetch\b")
-# A Bash command that writes COORDINATOR-STATE.md, found per segment (split on ; & | and newlines):
-# a redirect to it, tee, or sed -i; or, on the whole command, a python open(..., 'w') or write_text.
+# A Bash command counts as one write when it names COORDINATOR-STATE.md and has a write anywhere in it:
+# a redirect to it, tee, sed -i, perl -i, a python open(<anything>, 'w'/'a'/'x') or write_text.
+# The command is not split: the file name may sit in a variable, and ; may sit inside a quoted script.
 STATE_NAME = "COORDINATOR-STATE.md"
 STATE_REDIRECT = re.compile(r">>?\s*[\"']?\S*COORDINATOR-STATE\.md")
 STATE_TEE = re.compile(r"\btee\b(?:\s+-\w+)*\s+[\"']?\S*COORDINATOR-STATE\.md")
 SED_INPLACE = re.compile(r"\bsed\b(?:\s+-\w+)*?\s+(?:-\w*i\w*|--in-place)\b")
-STATE_PY = re.compile(
-    r"open\([^)]*COORDINATOR-STATE\.md[^)]*,\s*[\"'][wax]\+?b?[\"']|COORDINATOR-STATE\.md[\"']\)\.write_text"
-)
+STATE_PY = re.compile(r"open\([^)]*,\s*(?:mode\s*=\s*)?[\"'][wax]\+?b?[\"']|\.write_text\(")
+PERL_INPLACE = re.compile(r"\bperl\b(?:\s+-\w+)*?\s+-\w*i\w*")
 START_FAILED = "The worker did not start"
 READ_CMDS = ("cat", "head", "tail", "sed", "less")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)^[ \t]*\2[ \t]*$", re.M | re.S)
@@ -207,15 +207,10 @@ def sed_in_place(opts):
 
 
 def bash_state_write(cmd):
-    """True when the Bash command writes COORDINATOR-STATE.md: sed -i, a > or >> redirect, tee, python open(..., 'w')."""
+    """True when the Bash command names COORDINATOR-STATE.md and writes: sed -i, perl -i, > or >>, tee, python open(..., 'w')."""
     if STATE_NAME not in cmd:
         return False
-    if STATE_PY.search(cmd):
-        return True
-    for seg in re.split(r"[;&|\n]", cmd):
-        if STATE_NAME in seg and (STATE_REDIRECT.search(seg) or STATE_TEE.search(seg) or SED_INPLACE.search(seg)):
-            return True
-    return False
+    return any(r.search(cmd) for r in (STATE_PY, STATE_REDIRECT, STATE_TEE, SED_INPLACE, PERL_INPLACE))
 
 
 def bash_reads(cmd):
