@@ -123,7 +123,12 @@ export async function start(
     registered.push(e.name)
     return { value: { command: e.name } }
   })
-  on('ui.toast', () => ({ value: undefined }))
+  // The toasts the mod showed, as JSON.
+  const toasts: string[] = []
+  on('ui.toast', (_, e) => {
+    toasts.push(JSON.stringify(e))
+    return { value: undefined }
+  })
   on('session.id', () => ({ value: 'session-1234' }))
   // The config names one short repo name; /repo and /srv are GitHub checkouts.
   const CONFIG = '/home/t/.claude/herdr-agents.json'
@@ -347,6 +352,7 @@ export async function start(
     runs,
     recorded,
     registered,
+    toasts,
     tools,
     toolCalls,
     status,

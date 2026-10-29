@@ -27,11 +27,13 @@ Per report (one <herdr-agent> prompt from the mod):
             report is long (a pointer); a short report is matched to the worker's RESULT files by its text
   action    prompt to the first spawn/message/stop call
 Reads of RESULT files (Read calls, and Bash cat/head/tail/sed/less on them) are counted per session;
-read% is the share of reports followed by one. COORDINATOR-STATE.md edits are counted per session and
-divided by its reports.
+read% is the share of reports followed by one. COORDINATOR-STATE.md edits (Edit/Write calls, and Bash commands that write it: sed -i, > or >>, tee,
+python open(..., 'w')) are counted per session and divided by its reports. A prompt with several
+<herdr-agent> blocks gives one report per block; the reaction goes to the last.
 Spawn lead is the coordinator's assistant turns before each successful spawn: from the last user or plugin
 prompt, or the previous spawn/message/stop result, up to the spawn call (that turn included).
-wt_calls counts Bash calls that run `git worktree add` or `git fetch`; wt/sp is wt_calls per successful spawn.
+wt_calls counts Bash calls that run `git worktree add`, plus the `git fetch` call right before one (a fetch
+that no worktree add follows is not counted); wt/sp is wt_calls per successful spawn.
 branch% is the share of successful spawns that passed `branch`. start_failed counts <herdr-agent status="failed">
 prompts that start with "The worker did not start".
 Spawn time is the duration of each spawn call that succeeded; a denied one ("Wrapping up") is left out.
@@ -78,7 +80,17 @@ TASK_IN_PROMPT = re.compile(r"(/\S*?)/\.herdr-agents/([^/\s]+)/TASK\.md")
 RESULT_FILE = re.compile(r"RESULT(?:-\w+)?\.md")
 REPORT_MARK = re.compile(r"^\s*<!-- report \S+ -->\s*")
 MARK = re.compile(r"<!-- report (\S+) -->")  # the token a worker puts on RESULT.md's first line
-WORKTREE_CMD = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(?:worktree\s+add|fetch)\b")
+WORKTREE_ADD = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?worktree\s+add\b")
+GIT_FETCH = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?fetch\b")
+# A Bash command counts as one write when it names COORDINATOR-STATE.md and has a write anywhere in it:
+# a redirect to it, tee, sed -i, perl -i, a python open(<anything>, 'w'/'a'/'x') or write_text.
+# The command is not split: the file name may sit in a variable, and ; may sit inside a quoted script.
+STATE_NAME = "COORDINATOR-STATE.md"
+STATE_REDIRECT = re.compile(r">>?\s*[\"']?\S*COORDINATOR-STATE\.md")
+STATE_TEE = re.compile(r"\btee\b(?:\s+-\w+)*\s+[\"']?\S*COORDINATOR-STATE\.md")
+SED_INPLACE = re.compile(r"\bsed\b(?:\s+-\w+)*?\s+(?:-\w*i\w*|--in-place)\b")
+STATE_PY = re.compile(r"open\([^)]*,\s*(?:mode\s*=\s*)?[\"'][wax]\+?b?[\"']|\.write_text\(")
+PERL_INPLACE = re.compile(r"\bperl\b(?:\s+-\w+)*?\s+-\w*i\w*")
 START_FAILED = "The worker did not start"
 READ_CMDS = ("cat", "head", "tail", "sed", "less")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)^[ \t]*\2[ \t]*$", re.M | re.S)
@@ -194,6 +206,13 @@ def sed_in_place(opts):
     return any(o == "--in-place" or o.startswith("--in-place=") or (o[:1] == "-" and o[1:2] != "-" and "i" in o) for o in opts)
 
 
+def bash_state_write(cmd):
+    """True when the Bash command names COORDINATOR-STATE.md and writes: sed -i, perl -i, > or >>, tee, python open(..., 'w')."""
+    if STATE_NAME not in cmd:
+        return False
+    return any(r.search(cmd) for r in (STATE_PY, STATE_REDIRECT, STATE_TEE, SED_INPLACE, PERL_INPLACE))
+
+
 def bash_reads(cmd):
     """Whether a segment of a Bash command reads a RESULT file: cat, head, tail, sed or less on it, not a write."""
     for seg in re.split(r"\|\||&&|[|;&\n]", expand_assignments(HEREDOC.sub("", cmd))):
@@ -278,7 +297,7 @@ class Session:
         self.spawn_secs = []
         self.spawn_lead = []  # assistant turns before each successful spawn, from the previous boundary
         self.spawn_branch = 0  # successful spawns that passed `branch`
-        self.wt_calls = 0  # Bash calls running `git worktree add` or `git fetch`
+        self.wt_calls = 0  # Bash calls running `git worktree add`, and the git fetch call right before one
         self.start_failed = 0
         self.read_calls = 0  # Read calls on a RESULT file
         self.bash_reads = 0  # Bash cat/head/tail/sed/less on a RESULT file
@@ -289,6 +308,15 @@ class Session:
         self.unpriced = set()
         self.worker = None
         self.quiet = 0
+
+    def reports_in(self, ts, tag, text):
+        """Adds a report for every <herdr-agent> block in the prompt; returns the last, which takes the reaction."""
+        while True:
+            r = self.report(ts, tag, text)
+            end = text.find("</herdr-agent>", tag.end())
+            tag = PROMPT_TAG.match(text, end + len("</herdr-agent>")) if end >= 0 else None
+            if tag is None:
+                return r
 
     def report(self, ts, tag, text):
         name = dict(ATTR.findall(tag.group(1))).get("name", "")
@@ -309,6 +337,7 @@ def scan(path, since):
     cur = None  # the report whose reaction is still running
     lead = set()  # assistant turns since the last boundary (prompt, or spawn/message/stop result)
     prompts = 0
+    fetch_before = False  # the previous Bash call was a git fetch
     for d in records(path):
         ts = epoch(d["timestamp"])
         if ts < since:
@@ -334,7 +363,7 @@ def scan(path, since):
             lead = set()
             tag = PROMPT_TAG.match(text)
             if tag:
-                cur = s.report(ts, tag, text)
+                cur = s.reports_in(ts, tag, text)
             else:
                 cur = None
                 if prompts == 0:
@@ -383,8 +412,11 @@ def scan(path, since):
                     cur.read = True
             elif name == "Bash":
                 cmd = str(args.get("command") or "")
-                if WORKTREE_CMD.search(cmd):
-                    s.wt_calls += 1
+                if WORKTREE_ADD.search(cmd):
+                    s.wt_calls += 1 + (fetch_before and not GIT_FETCH.search(cmd))  # the fetch call right before counts too
+                fetch_before = bool(GIT_FETCH.search(cmd)) and not WORKTREE_ADD.search(cmd)
+                if bash_state_write(cmd):
+                    s.edits += 1
                 if bash_reads(cmd):
                     s.bash_reads += 1
                     if cur is not None:

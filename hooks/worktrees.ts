@@ -134,7 +134,7 @@ export async function checkWorktree(
   branch: string,
   path: string,
 ): Promise<{ deny: string } | { reuse: boolean }> {
-  if (!(await git($, ['check-ref-format', '--branch', branch])).ok) return { deny: `${branch} is not a valid branch name` }
+  if (!(await validBranch($, branch))) return { deny: `${branch} is not a valid branch name` }
   if (await $.fs.exists(path)) {
     const mine = await git($, ['-C', top, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
     const there = await git($, ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
@@ -151,11 +151,20 @@ export async function checkWorktree(
   return { reuse: false }
 }
 
-// Fetches the base and adds the worktree: on the local branch if there is one, else on origin's, else a
+// Whether `name` can be a branch name (git check-ref-format --branch; a name that starts with - fails).
+export async function validBranch($: EngineInterface, name: string) {
+  return (await git($, ['check-ref-format', '--branch', name])).ok
+}
+
+// Fetches the base and the branch, and adds the worktree: on the local branch if there is one, else on origin's, else a
 // new branch off origin/<base>. Throws with git's error.
 export async function createWorktree($: EngineInterface, top: string, branch: string, base: string, path: string) {
+  // Both names are checked again here: a name that starts with - would reach git as an option.
+  for (const name of [base, branch]) if (!(await validBranch($, name))) throw new Error(`${name} is not a valid branch name`)
   const fetched = await git($, ['-C', top, 'fetch', 'origin', base], 120_000)
   if (!fetched.ok) throw new Error(`git fetch origin ${base} failed: ${fetched.err || fetched.out}`)
+  // The branch may live only on the remote, or be older here; a failure (no such branch yet) is fine.
+  if (branch !== base) await git($, ['-C', top, 'fetch', 'origin', branch], 120_000)
   const has = async (ref: string) => (await git($, ['-C', top, 'rev-parse', '--verify', '--quiet', ref])).ok
   const args = (await has(`refs/heads/${branch}`))
     ? ['worktree', 'add', path, branch]
