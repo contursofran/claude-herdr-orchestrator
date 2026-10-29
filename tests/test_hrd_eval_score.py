@@ -835,5 +835,184 @@ class Cli(unittest.TestCase):
         self.assertEqual(out.stdout, "")
 
 
+def review_item(tmp, item, seed, audit=None):
+    """reviews/<item>/scenario.json (kind review, no expected.json) and an optional audit.json."""
+    d = os.path.join(tmp, "reviews", item)
+    write_json(os.path.join(d, "scenario.json"), {"title": item, "kind": "review", "base": "../x", "seed": seed})
+    if audit is not None:
+        write_json(os.path.join(d, "audit.json"), audit)
+    return d
+
+
+def seed_(type_="logic", quiet=True, origin="seeded"):
+    return {"type": type_, "quiet": quiet, "check": "none", "match": "discount", "origin": origin}
+
+
+def make_review(tmp, item, scen_dir, arm="RL", repeat=1, verdict="changes", how="header", matched=False, seed_type="logic",
+                quiet=True, text="x", cost=0.2, wall=60.0, status="done"):
+    """A review run folder under <tmp>/results/<item>/<arm>/r<repeat>, as the Contract's run.json additions say."""
+    run_dir = os.path.join(tmp, "results", item, arm, f"r{repeat}")
+    block = {"item": item, "seed_type": seed_type, "quiet": quiet, "verdict": verdict, "how": how,
+             "blockers": None if verdict is None else int(verdict == "changes"), "blockers_text": text,
+             "matched_blockers": matched, "matched_report": matched, "cost": cost, "wall": wall, "turns": 5}
+    run = {"scenario": item, "scenario_dir": scen_dir, "arm": arm, "repeat": repeat, "status": status, "started": 0.0,
+           "ended": wall, "slices": [{"id": "S1", "pr": 13, "head": "abc", "reviews": []}], "grade": {"ran": False},
+           "review": block}
+    write_json(os.path.join(run_dir, "run.json"), run)
+    return run_dir
+
+
+class Wilson(unittest.TestCase):
+    def test_known_values(self):
+        lo, hi = sc.wilson(27, 30)
+        self.assertAlmostEqual(lo, 0.7438, places=3)
+        self.assertAlmostEqual(hi, 0.9654, places=3)
+        lo, hi = sc.wilson(0, 5)
+        self.assertEqual(lo, 0.0)
+        self.assertAlmostEqual(hi, 0.4345, places=3)
+        lo, hi = sc.wilson(5, 5)
+        self.assertAlmostEqual(lo, 0.5655, places=3)
+        self.assertEqual(hi, 1.0)
+
+    def test_no_reviews_has_no_interval(self):
+        self.assertEqual(sc.wilson(0, 0), (None, None))
+
+
+class ReviewRuns(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        t = self.tmp
+        self.logic = review_item(t, "rv-14-logic", seed_())
+        self.edge = review_item(t, "rv-15-edge", seed_("edge"))
+        self.scope = review_item(t, "rv-26-scope-h1", seed_("scope", False, "harvested:r/replay-26/A/r1"))
+        self.clean = review_item(t, "rv-14-clean", None, audit={"results/RL/r1": "valid"})
+        # RL: logic caught, edge blocked without a match, scope noticed (approve, but the report names it)
+        make_review(t, "rv-14-logic", self.logic, matched=True, text="discount is skipped")
+        make_review(t, "rv-15-edge", self.edge, seed_type="edge", text="something else")
+        make_review(t, "rv-26-scope-h1", self.scope, verdict="approve", matched=True, seed_type="scope", quiet=False)
+        # clean: r1 is a false blocker audited valid, r2 an unaudited false blocker, r3 approves
+        make_review(t, "rv-14-clean", self.clean, seed_type=None, quiet=None, text="nit as blocker")
+        make_review(t, "rv-14-clean", self.clean, repeat=2, seed_type=None, quiet=None, text="another")
+        make_review(t, "rv-14-clean", self.clean, repeat=3, verdict="approve", seed_type=None, quiet=None)
+        # RM: an unparsed review of the logic item, edge blocked, scope blocked
+        make_review(t, "rv-14-logic", self.logic, arm="RM", verdict=None, how="none")
+        make_review(t, "rv-15-edge", self.edge, arm="RM", seed_type="edge", matched=True)
+        make_review(t, "rv-26-scope-h1", self.scope, arm="RM", seed_type="scope", quiet=False, matched=True)
+        self.results = os.path.join(t, "results")
+        # audit.json keys are "<results folder>/<arm>/r<k>": the results folder here is the fixture's "results"
+        self.agg = sc.aggregate([sc.score_run(os.path.dirname(p)) for p in sorted(glob_runs(self.results))])
+        self.rv = self.agg["review"]
+
+    def test_builder_sections_are_empty_and_review_is_added(self):
+        self.assertEqual(self.agg["runs"], [])
+        self.assertEqual(self.agg["cells"], [])
+        self.assertIn("review", self.agg)
+
+    def test_score_run_passes_the_review_block_through(self):
+        s = sc.score_run(os.path.join(self.results, "rv-14-logic", "RL", "r1"))
+        self.assertEqual(s["review"]["verdict"], "changes")
+        self.assertTrue(s["review"]["matched_blockers"])
+        self.assertEqual(s["cost"], 0.2)
+
+    def test_caught_blocked_not_matched_and_noticed(self):
+        rl = self.rv["arms"]["RL"]
+        q = rl["quiet"]
+        self.assertEqual((q["n"], q["blocked"], q["caught"]), (2, 2, 1))  # logic caught, edge blocked not matched
+        o = rl["other"]
+        self.assertEqual((o["n"], o["blocked"], o["caught"]), (1, 0, 0))  # scope: noticed, approve = a miss
+        self.assertEqual(rl["by_type"]["scope"]["blocked"], 0)
+        self.assertEqual(rl["by_type"]["edge"]["caught"], 0)
+        self.assertEqual(rl["by_type"]["logic"]["caught"], 1)
+
+    def test_quiet_rate_has_a_wilson_interval(self):
+        q = self.rv["arms"]["RL"]["quiet"]
+        self.assertEqual(q["rate"], 1.0)
+        self.assertEqual((q["lo"], q["hi"]), sc.wilson(2, 2))
+
+    def test_clean_false_blocker_audited_valid_is_not_counted(self):
+        c = self.rv["arms"]["RL"]["clean"]
+        self.assertEqual((c["n"], c["false_blockers"], c["audited_false"]), (3, 2, 1))
+        self.assertAlmostEqual(c["rate"], 1 / 3)
+        listed = self.rv["false_blockers"]
+        self.assertEqual([(f["arm"], f["audit"], f["blockers_text"]) for f in listed],
+                         [("RL", "valid", "nit as blocker"), ("RL", None, "another")])
+
+    def test_unparsed_review_is_counted_apart_and_is_not_blocked(self):
+        rm = self.rv["arms"]["RM"]
+        self.assertEqual(rm["unparsed"], 1)
+        self.assertEqual(rm["quiet"]["n"], 2)
+        self.assertEqual(rm["quiet"]["blocked"], 1)
+        self.assertEqual(self.rv["arms"]["RL"]["unparsed"], 0)
+
+    def test_cost_wall_and_items(self):
+        rl = self.rv["arms"]["RL"]
+        self.assertEqual(rl["reviews"], 6)
+        self.assertAlmostEqual(rl["cost"], 1.2)
+        self.assertAlmostEqual(rl["cost_per_review"], 0.2)
+        self.assertEqual(rl["wall_median"], 60.0)
+        self.assertEqual(self.rv["items"]["rv-14-clean"]["RL"], {"blocked": 2, "n": 3})
+        self.assertEqual(self.rv["items"]["rv-14-logic"]["RM"], {"blocked": 0, "n": 1})
+
+    def test_disagreements_are_items_with_different_blocked_rates(self):
+        self.assertEqual(self.rv["disagreements"], ["rv-14-logic", "rv-26-scope-h1"])
+
+    def test_default_gate_fails_on_a_missed_real_item_and_names_it(self):
+        g = self.rv["arms"]["RL"]["gate"]
+        self.assertFalse(g["pass"])
+        self.assertEqual(g["checks"]["real_misses"]["weak"], ["rv-26-scope-h1"])
+        self.assertTrue(g["checks"]["quiet_rate"]["ok"])
+        self.assertFalse(g["checks"]["quiet_lo"]["ok"])  # 2 reviews: the lower bound is far below 0.75
+        self.assertEqual(self.rv["gate"], sc.GATE)
+
+    def test_gate_thresholds_are_parameters(self):
+        runs = [sc.score_run(os.path.dirname(p)) for p in glob_runs(self.results)]
+        loose = sc.aggregate(runs, gate={"lo": 0.1, "miss": 0.0, "false": 0.5, "unparsed": 0.5})["review"]
+        self.assertTrue(loose["arms"]["RL"]["gate"]["pass"])
+        self.assertEqual(loose["gate"]["rate"], 0.90)  # not overridden: the default stays
+        strict = sc.aggregate(runs, gate={"rate": 1.1})["review"]
+        self.assertFalse(strict["arms"]["RL"]["gate"]["checks"]["quiet_rate"]["ok"])
+
+    def test_a_review_that_did_not_finish_is_left_out_and_counted(self):
+        make_review(self.tmp, "rv-14-logic", self.logic, repeat=2, status="timeout", verdict=None, how="none")
+        rv = sc.aggregate([sc.score_run(os.path.dirname(p)) for p in glob_runs(self.results)])["review"]
+        self.assertEqual(rv["arms"]["RL"]["errors"], 1)
+        self.assertEqual(rv["arms"]["RL"]["reviews"], 6)
+        self.assertEqual(rv["arms"]["RL"]["unparsed"], 0)
+
+    def test_cli_text_and_json(self):
+        out = subprocess.run([sys.executable, SCRIPT, self.results], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        text = out.stdout
+        self.assertTrue(text.startswith("== review eval: 9 reviews, 4 items, 2 arms"), text)
+        self.assertIn("== per seed type", text)
+        self.assertIn("rv-14-clean", text)
+        self.assertIn("RL 2/3", text)
+        self.assertIn("rv-14-logic, rv-26-scope-h1", text)
+        self.assertIn("RL: FAIL (quiet_lo, real_misses", text)
+        self.assertIn("[audit: valid]", text)
+        self.assertNotIn("== hrd-eval", text)
+        js = subprocess.run([sys.executable, SCRIPT, self.results, "--json", "--gate-rate", "0.5"], capture_output=True,
+                            text=True)
+        self.assertEqual(json.loads(js.stdout)["review"]["gate"]["rate"], 0.5)
+
+
+def glob_runs(results):
+    out = []
+    for root, _, files in os.walk(results):
+        if "run.json" in files:
+            out.append(os.path.join(root, "run.json"))
+    return out
+
+
+class BuilderOutputUnchanged(unittest.TestCase):
+    def test_no_review_key_without_review_runs(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        make_run(tmp, scenario(tmp))
+        agg = sc.aggregate([sc.score_run(os.path.join(tmp, "results", "rep", "A", "r1"))])
+        self.assertNotIn("review", agg)
+
+
 if __name__ == "__main__":
     unittest.main()

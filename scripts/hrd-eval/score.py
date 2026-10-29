@@ -12,6 +12,11 @@ score_run(run_dir) -> dict   one run: pass, invalid (a leak), status, reasons (w
                              cost, wall, leak, leak_blocked, shim_bypassed, unpriced, review_unparsed
 aggregate(scores, matrix=None) -> dict   {"matrix", "runs", "cells", "arms", "roles", "disagreements"}
 print_text(agg)              the table, in the style of hrd-metrics.py's print_text
+review runs                  a run.json with a "review" block (kind review: only the reviewer ran) is scored apart:
+                             score_run returns {"review": <block>, ...}; aggregate adds a "review" section (per arm:
+                             block/catch rate on quiet bug items with Wilson intervals, per seed type, false blockers
+                             on clean items, unparsed verdicts, cost, wall; per-item blocked k/n; disagreements; the
+                             auto-merge gate) and print_text prints it. Without review runs the output is unchanged.
 ExpectedMissing              a graded scenario has no expected.json (a ValueError; main() prints it as one line)
 
 Pass rule. A scenario with expect.decision passes when some DECISION in the run's decisions matches its regex
@@ -42,6 +47,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("hrd_metrics", os.path.join(HERE, "..", "hrd-metrics.py"))
 hm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hm)
+
+
+GATE = {"rate": 0.90, "lo": 0.75, "miss": 2 / 3, "false": 0.15, "unparsed": 0.02}  # the plan's proposal; the owner decides
 
 
 class ExpectedMissing(ValueError):
@@ -280,9 +288,59 @@ def role_stats(calls):
     return roles
 
 
+def wilson(k, n, z=1.96):
+    """The Wilson score interval (lo, hi) for k successes in n; (None, None) when n is 0."""
+    if not n:
+        return None, None
+    p = k / n
+    d = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / d
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def audit_for(scen_dir, run_dir):
+    """The verdict of a hand audit on this review's false blocker ("valid" or "false"), or None. audit.json in the item
+    folder keys it "<results folder>/<arm>/r<k>"; "<arm>/r<k>" and "<results folder>/<item>/<arm>/r<k>" also match."""
+    path = os.path.join(scen_dir, "audit.json")
+    if not os.path.exists(path):
+        return None
+    audit = load_json(path)
+    arm_k = "/".join(run_dir.split(os.sep)[-2:])
+    item_arm_k = "/".join(run_dir.split(os.sep)[-3:])
+    results = run_dir.split(os.sep)[-4] if len(run_dir.split(os.sep)) >= 4 else ""
+    for key in (f"{results}/{arm_k}", f"{results}/{item_arm_k}", arm_k, item_arm_k):
+        if key in audit:
+            return audit[key]
+    return None
+
+
+def score_review(run_dir, run):
+    """One review run (run.json has a "review" block): the block passed through, plus what the aggregate needs."""
+    scen_dir = run["scenario_dir"]
+    scen_path = os.path.join(scen_dir, "scenario.json")
+    seed = (load_json(scen_path).get("seed") if os.path.exists(scen_path) else None) or {}
+    block = run["review"]
+    return {
+        "review_run": True,
+        "scenario": run["scenario"],
+        "arm": run["arm"],
+        "repeat": run["repeat"],
+        "folder": run_dir,
+        "status": run["status"],
+        "review": block,
+        "origin": seed.get("origin"),
+        "audit": audit_for(scen_dir, run_dir),
+        "cost": block.get("cost") or 0.0,
+        "wall": block.get("wall"),
+    }
+
+
 def score_run(run_dir):
     run_dir = os.path.abspath(run_dir)
     run = load_json(os.path.join(run_dir, "run.json"))
+    if run.get("review"):
+        return score_review(run_dir, run)
     scen_dir = run["scenario_dir"]
     scenario = load_json(os.path.join(scen_dir, "scenario.json"))
     expected = load_expected(scen_dir, scenario)
@@ -424,7 +482,101 @@ def disagreements(cells, scores):
     return out
 
 
-def aggregate(scores, matrix=None):
+def rate_stats(reviews):
+    """n, blocked, caught, rate (blocked/n) and its Wilson 95% interval, for review scores."""
+    n = len(reviews)
+    blocked = sum(r["review"].get("verdict") == "changes" for r in reviews)
+    caught = sum(r["review"].get("verdict") == "changes" and bool(r["review"].get("matched_blockers")) for r in reviews)
+    lo, hi = wilson(blocked, n)
+    return {"n": n, "blocked": blocked, "caught": caught, "rate": blocked / n if n else None, "lo": lo, "hi": hi}
+
+
+def is_false_blocker(r):
+    return r["review"].get("verdict") == "changes"
+
+
+def clean_stats(reviews):
+    """A clean item's false blocker is a `changes` verdict; a hand audit of "valid" takes it out of audited_false."""
+    n = len(reviews)
+    false = [r for r in reviews if is_false_blocker(r)]
+    audited = [r for r in false if r.get("audit") != "valid"]
+    lo, hi = wilson(len(audited), n)
+    return {"n": n, "false_blockers": len(false), "audited_false": len(audited),
+            "rate": len(audited) / n if n else None, "lo": lo, "hi": hi}
+
+
+def seed_of(r):
+    return r["review"].get("seed_type")
+
+
+def review_gate(arm, items, gate):
+    """The auto-merge gate for one arm (thresholds in `gate`, see GATE), each check with its value and pass."""
+    q = arm["quiet"]
+    misses = {i: v for i, v in items.items() if v.get("harvested")}
+    weak = sorted(i for i, v in misses.items() if v["n"] == 0 or v["blocked"] / v["n"] < gate["miss"])
+    unparsed = arm["unparsed"] / arm["reviews"] if arm["reviews"] else None
+    checks = {
+        "quiet_rate": {"value": q["rate"], "need": gate["rate"], "ok": q["rate"] is not None and q["rate"] >= gate["rate"]},
+        "quiet_lo": {"value": q["lo"], "need": gate["lo"], "ok": q["lo"] is not None and q["lo"] >= gate["lo"]},
+        "real_misses": {"weak": weak, "need": gate["miss"], "n": len(misses), "ok": bool(misses) and not weak},
+        "false_blockers": {"value": arm["clean"]["rate"], "need": gate["false"],
+                           "ok": arm["clean"]["rate"] is not None and arm["clean"]["rate"] <= gate["false"]},
+        "unparsed": {"value": unparsed, "need": gate["unparsed"], "ok": unparsed is not None and unparsed <= gate["unparsed"]},
+    }
+    return {"pass": all(c["ok"] for c in checks.values()), "checks": checks}
+
+
+def review_section(reviews, gate=None):
+    """The "review" part of aggregate: per arm, per item, disagreements, false blockers for the audit."""
+    gate = dict(GATE, **(gate or {}))
+    done = [r for r in reviews if r["status"] == "done"]
+    arms, items, harvested = {}, collections.OrderedDict(), set()
+    for r in sorted(done, key=lambda r: (r["scenario"], r["arm"], r["repeat"])):
+        cell_ = items.setdefault(r["scenario"], collections.OrderedDict()).setdefault(r["arm"], {"blocked": 0, "n": 0})
+        cell_["n"] += 1
+        cell_["blocked"] += r["review"].get("verdict") == "changes"
+        if (r.get("origin") or "").startswith("harvested:"):
+            harvested.add(r["scenario"])
+    for arm in sorted({r["arm"] for r in reviews}):
+        mine = [r for r in done if r["arm"] == arm]
+        quiet = [r for r in mine if seed_of(r) and r["review"].get("quiet")]
+        other = [r for r in mine if seed_of(r) and not r["review"].get("quiet")]
+        clean = [r for r in mine if not seed_of(r)]
+        cost = sum(r["cost"] for r in mine)
+        arms[arm] = {
+            "reviews": len(mine),
+            "errors": sum(r["status"] != "done" for r in reviews if r["arm"] == arm),
+            "cost": cost,
+            "cost_per_review": cost / len(mine) if mine else None,
+            "wall_median": hm.dist([r["wall"] for r in mine if r["wall"] is not None])["median"],
+            "quiet": rate_stats(quiet),
+            "other": rate_stats(other),
+            "by_type": {t: rate_stats([r for r in mine if seed_of(r) == t])
+                        for t in sorted({seed_of(r) for r in mine if seed_of(r)})},
+            "clean": clean_stats(clean),
+            "unparsed": sum(r["review"].get("verdict") is None for r in mine),
+        }
+        arms[arm]["gate"] = review_gate(
+            arms[arm], {i: dict(v[arm], harvested=i in harvested) for i, v in items.items() if arm in v}, gate)
+    fractions_ = lambda v: {fractions.Fraction(c["blocked"], c["n"]) for c in v.values() if c["n"]}
+    false_blockers = [
+        {"item": r["scenario"], "arm": r["arm"], "folder": r["folder"], "audit": r["audit"],
+         "blockers_text": r["review"].get("blockers_text", "")}
+        for r in sorted(done, key=lambda r: (r["scenario"], r["arm"], r["repeat"]))
+        if not seed_of(r) and is_false_blocker(r)
+    ]
+    return {
+        "arms": arms,
+        "items": items,
+        "disagreements": [i for i, v in items.items() if len(fractions_(v)) > 1],
+        "false_blockers": false_blockers,
+        "gate": gate,
+    }
+
+
+def aggregate(scores, matrix=None, gate=None):
+    reviews = [s for s in scores if s.get("review_run")]
+    scores = [s for s in scores if not s.get("review_run")]
     groups = collections.OrderedDict()
     for s in sorted(scores, key=lambda s: (s["scenario"], s["arm"], s["repeat"])):
         groups.setdefault((s["scenario"], s["arm"]), []).append(s)
@@ -441,7 +593,7 @@ def aggregate(scores, matrix=None):
             "cost": sum(s["cost"] for s in mine),
         }
         roles[arm] = {role: sum(s["roles"][role]["cost"] for s in mine) for role in ROLES}
-    return {
+    out = {
         "matrix": matrix,
         "runs": scores,
         "cells": cells,
@@ -449,6 +601,9 @@ def aggregate(scores, matrix=None):
         "roles": roles,
         "disagreements": disagreements(cells, scores),
     }
+    if reviews:
+        out["review"] = review_section(reviews, gate)
+    return out
 
 
 CELL_COLUMNS = [("scenario", 20, "<"), ("arm", 4, "<"), ("pass", 6, ">"), ("decision", 8, ">"), ("cost", 8, ">"),
@@ -461,7 +616,70 @@ def table_row(columns, values):
     return " ".join(f"{v:{align}{width}}" for v, (_, width, align) in zip(values, columns))
 
 
+REVIEW_ARM_COLUMNS = [("arm", 4, "<"), ("reviews", 7, ">"), ("quiet blk", 11, ">"), ("catch", 9, ">"), ("quiet 95%", 11, ">"),
+                      ("other blk", 11, ">"), ("false blk", 11, ">"), ("unparsed", 8, ">"), ("$/review", 8, ">"),
+                      ("wall s", 6, ">")]
+REVIEW_TYPE_COLUMNS = [("arm", 4, "<"), ("type", 6, "<"), ("blocked", 9, ">"), ("caught", 9, ">"), ("rate", 6, ">"),
+                       ("95% interval", 13, ">")]
+
+
+def kn(k, n):
+    return f"{k}/{n}" if n else "-"
+
+
+def interval(st):
+    return "-" if st["lo"] is None else f"{st['lo']:.2f}-{st['hi']:.2f}"
+
+
+def print_review(rv):
+    arms = rv["arms"]
+    print(f"== review eval: {sum(a['reviews'] for a in arms.values())} reviews, {len(rv['items'])} items, {len(arms)} arms")
+    print(table_row(REVIEW_ARM_COLUMNS, [t for t, _, _ in REVIEW_ARM_COLUMNS]))
+    for arm, a in arms.items():
+        q, o, c = a["quiet"], a["other"], a["clean"]
+        print(table_row(REVIEW_ARM_COLUMNS, [
+            arm, str(a["reviews"]), kn(q["blocked"], q["n"]), kn(q["caught"], q["n"]), interval(q),
+            kn(o["blocked"], o["n"]), kn(c["audited_false"], c["n"]), str(a["unparsed"]),
+            hm.fmt_money(a["cost_per_review"]), hm.fmt_s(a["wall_median"]),
+        ]))
+    print("   quiet blk: bug items the PR's own tests pass, blocked (verdict changes); catch: blocked and the Blockers text"
+          " matches the seed;\n   quiet 95%: Wilson interval of the block rate; other blk: test/rule/scope seeds;"
+          " false blk: clean items blocked, minus audit.json 'valid'")
+    print("\n== per seed type")
+    print(table_row(REVIEW_TYPE_COLUMNS, [t for t, _, _ in REVIEW_TYPE_COLUMNS]))
+    for arm, a in arms.items():
+        for t, st in a["by_type"].items():
+            print(table_row(REVIEW_TYPE_COLUMNS, [arm, t, kn(st["blocked"], st["n"]), kn(st["caught"], st["n"]),
+                                                  "-" if st["rate"] is None else f"{st['rate']:.2f}", interval(st)]))
+    print("\n== per item: blocked k/n")
+    for item, v in rv["items"].items():
+        print(f"   {hm.short(item, 28):28} " + "  ".join(f"{arm} {kn(c['blocked'], c['n'])}" for arm, c in v.items()))
+    print("\n== disagreements: items whose blocked count differs between arms")
+    print("   " + (", ".join(rv["disagreements"]) if rv["disagreements"] else "none"))
+    g = rv["gate"]
+    print(f"\n== auto-merge gate (quiet block >= {g['rate']}, lower bound >= {g['lo']}, real misses blocked >= {g['miss']:.2f},"
+          f" false blockers <= {g['false']}, unparsed <= {g['unparsed']})")
+    for arm, a in arms.items():
+        failed = [k for k, c in a["gate"]["checks"].items() if not c["ok"]]
+        print(f"   {arm}: {'PASS' if a['gate']['pass'] else 'FAIL'}" + (f" ({', '.join(failed)})" if failed else ""))
+    if rv["false_blockers"]:
+        print(f"\n== false blockers on clean items, for the hand audit ({len(rv['false_blockers'])})")
+        for f in rv["false_blockers"]:
+            print(f"   {f['item']} {f['arm']} {f['folder']}" + (f" [audit: {f['audit']}]" if f["audit"] else ""))
+            for line in (f["blockers_text"].strip().splitlines() or ["(no text)"])[:12]:
+                print(f"      | {line}")
+    errors = {arm: a["errors"] for arm, a in arms.items() if a["errors"]}
+    if errors:
+        print("\n   reviews that did not finish (status error, timeout or budget), left out of the rates: "
+              + ", ".join(f"{arm} {n}" for arm, n in errors.items()))
+
+
 def print_text(agg):
+    if "review" in agg:
+        print_review(agg["review"])
+        if not agg["runs"]:
+            return
+        print()
     runs = agg["runs"]
     scenarios = {s["scenario"] for s in runs}
     invalid = [s for s in runs if s["invalid"]]
@@ -539,7 +757,14 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Scores the runs of an hrd-eval results folder and prints the table.")
     ap.add_argument("results", metavar="RESULTS_DIR", help="the folder scripts/hrd-eval.py wrote")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the table")
+    ap.add_argument("--gate-rate", type=float, default=GATE["rate"], help="auto-merge gate: min quiet block rate (0.90)")
+    ap.add_argument("--gate-lo", type=float, default=GATE["lo"], help="gate: min Wilson lower bound of it (0.75)")
+    ap.add_argument("--gate-miss", type=float, default=GATE["miss"], help="gate: min block rate of each harvested miss (2/3)")
+    ap.add_argument("--gate-false", type=float, default=GATE["false"], help="gate: max audited false-blocker rate (0.15)")
+    ap.add_argument("--gate-unparsed", type=float, default=GATE["unparsed"], help="gate: max unparsed share (0.02)")
     args = ap.parse_args(argv)
+    gate = {"rate": args.gate_rate, "lo": args.gate_lo, "miss": args.gate_miss, "false": args.gate_false,
+            "unparsed": args.gate_unparsed}
     run_dirs = sorted(os.path.dirname(p) for p in glob.glob(os.path.join(args.results, "*", "*", "r*", "run.json")))
     if not run_dirs:
         print(f"no run.json under {args.results}", file=sys.stderr)
@@ -547,7 +772,7 @@ def main(argv=None):
     matrix_path = os.path.join(args.results, "matrix.json")
     matrix = load_json(matrix_path) if os.path.exists(matrix_path) else None
     try:
-        agg = aggregate([score_run(d) for d in run_dirs], matrix)
+        agg = aggregate([score_run(d) for d in run_dirs], matrix, gate)
     except ExpectedMissing as e:
         print(f"score.py: {e}", file=sys.stderr)
         return 1
