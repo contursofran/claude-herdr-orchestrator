@@ -95,6 +95,14 @@ test('openPins limits the popover to the window, and tells the view that height'
   assert.equal(o.props.height, o.height)
 })
 
+test('openPins limits the popover by the zoom the app draws it at', () => {
+  globalThis.window = { viewport_size: () => ({ width: 900, height: 420 }) }
+  app.settings = { zoom: 1.2 }
+  openPins('s', [pin('K1'), pin('K2'), pin('K3'), pin('K4')], 'all', { bar: { x: 200, y: 42, width: 700, height: 38 } })
+  assert.equal(app.opened[0].height, (420 - 84 - 8) / 1.2)
+  app.settings = null
+})
+
 test('clearStaleOverlays forgets overlay ids and requests of the last run, and writes nothing when there are none', () => {
   const store = { 'hrd.pins': 'o1', 'hrd.popup': 'o2', 'hrd.doneReq': [{ session: 's', key: 'K1' }], 'hrd.read': { a: true } }
   const writes = []

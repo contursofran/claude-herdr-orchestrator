@@ -875,11 +875,12 @@ export function panelHeight(text, width) {
 /** The drop panel's context line: who, age and tag, as far as the pin has them. */
 export const pinContext = (pin, now) => [pin.who, ageText(pin.at, now), pin.tag].filter(Boolean).join(' · ')
 
-/** `height`, limited to what fits below `y` in the window, so the buttons stay reachable and the content scrolls. */
-export function fitHeight(height, y, viewport) {
+/** `height`, limited to what fits below `y` in the window, so the buttons stay reachable and the content scrolls. The app
+ *  scales an overlay's size by the zoom but not its position, so what is left below `y` is divided by it. */
+export function fitHeight(height, y, viewport, zoom = 1) {
   const vh = Number(viewport?.height)
   if (!(vh > 0)) return height
-  return Math.min(height, Math.max(PINS_MIN_H, vh - y - PINS_WINDOW_GAP))
+  return Math.min(height, Math.max(PINS_MIN_H, (vh - y - PINS_WINDOW_GAP) / (zoom > 0 ? zoom : 1)))
 }
 
 /** The all-pins popover's height for `n` pins. */

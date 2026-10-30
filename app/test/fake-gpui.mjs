@@ -54,6 +54,7 @@ globalThis.__fakeGpui = {
     return `o${app.opened.length}`
   },
   props: () => app.props,
+  settings: () => app.settings ?? {},
   setShared: (k, v) => {
     app.store[k] = v
   },
@@ -75,6 +76,7 @@ const names = {
     'readTextFile',
     'run',
     'setShared',
+    'settings',
     'shared',
     'watchFolder',
     'writeTextFile',

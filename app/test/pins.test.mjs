@@ -74,6 +74,8 @@ test('fitHeight limits an overlay to the window, keeps a minimum, and leaves it 
   assert.equal(fitHeight(638, 84, { height: 500 }), 408)
   assert.equal(fitHeight(638, 84, { height: 150 }), 120)
   assert.equal(fitHeight(638, 84, null), 638)
+  assert.equal(fitHeight(638, 84, { height: 420 }, 1.2), 328 / 1.2, 'at zoom 1.2 the overlay draws 1.2x as tall')
+  assert.equal(fitHeight(638, 84, { height: 420 }, undefined), 328)
 })
 
 test('pinContext: who, age and tag, leaving out what the pin does not have', () => {
