@@ -4,9 +4,11 @@ import { beforeEach, test } from 'node:test'
 import { app, findId, textOf } from './fake-gpui.mjs'
 
 // After the fake is registered: these import `gpui-kit` and `herdr`.
-const { sheetBlock, SheetState } = await import('../mods/herdr-agents/sheet.js')
+const { makeSheetState, sheetBlock, SheetState } = await import('../mods/herdr-agents/sheet.js')
 const { openSheet } = await import('../mods/herdr-agents/sheetctl.js')
 const { card } = await import('../mods/herdr-agents/card.js')
+const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
+const { toggleSheet } = await import('../mods/herdr-agents/strip.js')
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url)))
 const cx = { notify() {}, spawn() {} }
@@ -122,4 +124,32 @@ test('the card takes its size from the zoom the app draws it at', () => {
   }
   assert.equal(width(1), 560)
   assert.equal(width(1.2), 493)
+})
+
+test('a sheet left by the last run is cleared once per app run, not by a later copy', () => {
+  delete globalThis.__hrdStarted?.['hrd.sheetStarted']
+  const cx = { focus_handle: () => ({}) }
+  app.store['hrd.sheet'] = { session: 's', key: 'D7' }
+  makeSheetState(cx)
+  assert.equal(app.store['hrd.sheet'], null)
+  app.store['hrd.sheet'] = { session: 's', key: 'D7' }
+  makeSheetState(cx)
+  assert.deepEqual(app.store['hrd.sheet'], { session: 's', key: 'D7' }, 'a layout switch keeps an open sheet')
+})
+
+test('opening the pins closes the sheet and hands the keyboard back', () => {
+  app.ran = []
+  app.store['hrd.sheet'] = { session: 's', key: 'D7', back: 't1', space: null }
+  openPins('s', [], 'all')
+  assert.equal(app.store['hrd.sheet'], null)
+  assert.deepEqual(app.ran.at(-1), ['pane.focus', { terminal: 't1' }])
+})
+
+test('opening the sheet closes the pins and the shared pop-up', () => {
+  app.closed = []
+  app.store['hrd.pins'] = 'p1'
+  app.store['hrd.popup'] = 'p2'
+  toggleSheet(board())
+  assert.deepEqual(app.closed.sort(), ['p1', 'p2'])
+  assert.ok(app.store['hrd.sheet'])
 })

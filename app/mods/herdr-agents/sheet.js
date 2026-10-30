@@ -1,7 +1,7 @@
 import { div, svg } from 'gpui-kit'
 import { exec, notify, readTextFile, run, settings, setShared, shared } from 'herdr'
 import { send } from './board.js'
-import { CardState, clearStaleSheet } from './cardstate.js'
+import { CardState, clearStaleSheet, firstThisRun } from './cardstate.js'
 import { button, faceIcon, ghost, keyButton } from './card.js'
 import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, pageSheet } from './sheetctl.js'
@@ -31,7 +31,7 @@ export class SheetState extends CardState {
 }
 
 export function makeSheetState(cx) {
-  clearStaleSheet(shared, setShared)
+  if (firstThisRun('hrd.sheetStarted')) clearStaleSheet(shared, setShared)
   return new SheetState({ send, notify, handle: cx.focus_handle() })
 }
 
