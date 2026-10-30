@@ -1609,6 +1609,69 @@ test('a repo with an origin but no origin/HEAD keeps main, not the checked-out b
   expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/main')
 })
 
+const LOCKED =
+  "Preparing worktree (new branch 'fix-x')\nerror: could not lock config file .git/config: File exists\nerror: unable to write upstream branch configuration"
+
+test('a worktree add that collides on the config lock retries on the branch it made and sets the upstream', async ($, on) => {
+  const { runs, shell, calls, clock } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main', '', 255, LOCKED),
+    git('-C /repo worktree add /repo-wt/fix-x fix-x'),
+  )
+  runs.set('git -C /repo branch --set-upstream-to=origin/main fix-x', [
+    { exitCode: 255, stdout: '', stderr: 'error: could not lock config file .git/config: File exists' },
+    { exitCode: 0, stdout: '', stderr: '' },
+  ])
+  await spawnBranch($)
+  await settled()
+  await clock.advance(3000)
+  await settled()
+  expect(shell.filter(c => c === 'git -C /repo branch --set-upstream-to=origin/main fix-x').length).toBe(2)
+  expect(shell.indexOf('git -C /repo worktree add /repo-wt/fix-x fix-x')).toBeGreaterThan(-1)
+  expect(calls.some(c => c.join(' ').startsWith('hc run --json --bg --no-parent --name w-tree --cwd /repo-wt/fix-x'))).toBe(true)
+})
+
+test('a config lock that never clears fails the spawn with git error', async ($, on) => {
+  const { runs, shell, clock, submitted } = await start($, on)
+  const stuck = { exitCode: 255, stdout: '', stderr: 'error: could not lock config file .git/config: File exists' }
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main', '', 255, LOCKED),
+  )
+  runs.set('git -C /repo worktree add /repo-wt/fix-x fix-x', [stuck, stuck, stuck, stuck])
+  await spawnBranch($)
+  await settled()
+  await clock.advance(3000)
+  await settled()
+  expect(shell.filter(c => c === 'git -C /repo worktree add /repo-wt/fix-x fix-x').length).toBe(4)
+  expect(shell.some(c => c.includes('--set-upstream-to'))).toBe(false)
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/status="failed">[\s\S]*could not lock config file/)
+})
+
+test('a worktree add that fails for another reason is not retried', async ($, on) => {
+  const { runs, shell, clock } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main', '', 128, 'fatal: invalid reference'),
+  )
+  await spawnBranch($)
+  await settled()
+  await clock.advance(3000)
+  await settled()
+  expect(shell).not.toContain('git -C /repo worktree add /repo-wt/fix-x fix-x')
+})
+
 test('a repo with no origin remote and a detached HEAD falls back to main', async ($, on) => {
   const { runs, shell } = await start($, on)
   answerGit(
