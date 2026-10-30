@@ -18,9 +18,11 @@ import {
   debugLine,
   deriveBar,
   doneAction,
+  emptyLine,
   flashing,
   hiddenKeys,
   isUnseen,
+  keyStep,
   labelOf,
   listOrder,
   markRead,
@@ -33,6 +35,7 @@ import {
   otherCount,
   pickAt,
   pickNumber,
+  pinStepDir,
   pinbarMode,
   pins,
   pruneRead,
@@ -42,6 +45,7 @@ import {
   segments,
   settleSent,
   slimLine,
+  stepPin,
   stripItems,
   takeDue,
 } from '../mods/herdr-agents/model.js'
@@ -820,4 +824,81 @@ test('nextPick: a click on the selected tab deselects, a key never does', () => 
   assert.deepEqual(nextPick(now, 's', 'D7', false), now, 'a key keeps it selected')
   assert.deepEqual(nextPick(now, 's', 'D8', true), { session: 's', key: 'D8' })
   assert.deepEqual(nextPick(now, 'other', 'D7', true), { session: 'other', key: 'D7' }, 'same key on another board is another tab')
+})
+
+test('stepPin moves to the next or previous pin and wraps; with fewer than two there is nowhere to go', () => {
+  const list = pins(pinBoard([know('K1'), know('K2'), know('K3')]))
+  const id = k => readKey('s', k)
+  assert.equal(stepPin(list, list[0], 1), id('K2'))
+  assert.equal(stepPin(list, list[2], 1), id('K1'), 'next wraps to the first')
+  assert.equal(stepPin(list, list[0], -1), id('K3'), 'previous wraps to the last')
+  assert.equal(stepPin(list, null, 1), id('K2'), 'no current counts as the first')
+  assert.equal(stepPin(list.slice(0, 1), list[0], 1), null)
+  assert.equal(stepPin([], null, -1), null)
+})
+
+test('pinStepDir reads the key commands', () => {
+  assert.equal(pinStepDir('herdr-agents.nextpin'), 1)
+  assert.equal(pinStepDir('herdr-agents.prevpin'), -1)
+  assert.equal(pinStepDir('herdr-agents.pick1'), null)
+})
+
+test('emptyLine: No pins, then what is working; zeros and a missing summary leave it out', () => {
+  assert.equal(emptyLine({ summary: { busy: 2 } }), 'No pins · 2 working')
+  assert.equal(emptyLine({ summary: { busy: 0 } }), 'No pins')
+  assert.equal(emptyLine({}), 'No pins')
+})
+
+test('deriveBar tells the bar about several pins and carries the empty line', () => {
+  const two = deriveBar(newBarState(), { ...pinBoard([know('K1'), know('K2')]), summary: { busy: 1 } })
+  assert.equal(two.view.many, true)
+  assert.equal(two.view.segments[0].title.length > 0, true)
+  const one = deriveBar(newBarState(), pinBoard([know('K1')]))
+  assert.equal(one.view.many, false)
+  const none = deriveBar(newBarState(), { ...pinBoard([]), summary: { busy: 2 } })
+  assert.equal(none.view.empty, 'No pins · 2 working')
+})
+
+test('keyStep: moves from the pin shown, marks it read, and a second press before the redraw moves on', () => {
+  const list = pins(pinBoard([know('K1'), know('K2'), know('K3')]))
+  const marked = []
+  const shown = { mode: 'full', list, current: list[0] }
+  const one = keyStep(shown, 1, id => marked.push(id))
+  assert.equal(one.sel, list[1].id)
+  assert.deepEqual(marked, [list[1].id], 'the pin moved to is marked read')
+  const two = keyStep(one.shown, 1, id => marked.push(id))
+  assert.equal(two.sel, list[2].id, 'two presses before a redraw move two pins')
+  assert.deepEqual(marked, [list[1].id, list[2].id])
+})
+
+test('keyStep does nothing, and marks nothing, unless the row shows a full or slim pin bar', () => {
+  const list = pins(pinBoard([know('K1'), know('K2')]))
+  const marked = []
+  for (const mode of ['undo', 'empty'])
+    assert.equal(
+      keyStep({ mode, list, current: list[0] }, 1, id => marked.push(id)),
+      null,
+      mode,
+    )
+  assert.equal(
+    keyStep(null, 1, id => marked.push(id)),
+    null,
+    'no board',
+  )
+  assert.equal(
+    keyStep({ mode: 'full', list: list.slice(0, 1), current: list[0] }, 1, id => marked.push(id)),
+    null,
+    'one pin',
+  )
+  assert.deepEqual(marked, [])
+})
+
+test('keyStep from the slim row (2+ pins, all read) starts at the newest pin, the one a click on the row opens', () => {
+  const read = ['K1', 'K2', 'K3'].reduce((r, k) => markRead(r, readKey('s', k)), {})
+  const list = pins(pinBoard([know('K1', { at: 100 }), know('K2', { at: 300 }), know('K3', { at: 200 })]), read)
+  assert.equal(pinbarMode(list), 'slim')
+  const shown = { mode: 'slim', list, current: null }
+  // The newest is K2 (list index 1): next is K3, previous is K1. From the first pin they would be K2 and K3.
+  assert.equal(keyStep(shown, 1, () => {}).sel, readKey('s', 'K3'))
+  assert.equal(keyStep(shown, -1, () => {}).sel, readKey('s', 'K1'))
 })

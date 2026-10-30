@@ -184,7 +184,7 @@ export function currentPin(list, sel = null) {
   return newestPin(list.filter(p => p.unread))
 }
 
-/** 'empty' (no pins: the row stays, blank), 'full' (a pin to show) or 'slim' (pins, all read). */
+/** 'empty' (no pins: the row stays, with a quiet line), 'full' (a pin to show) or 'slim' (pins, all read). */
 export function pinbarMode(list, sel = null) {
   if (list.length === 0) return 'empty'
   return currentPin(list, sel) ? 'full' : 'slim'
@@ -199,7 +199,44 @@ export function slimLine(list) {
 
 /** The segments: one per pin, in board order, with the kind the bar draws (current, unread, read). */
 export function segments(list, current) {
-  return list.map(p => ({ id: p.id, kind: current && p.id === current.id ? 'current' : p.unread ? 'unread' : 'read' }))
+  return list.map(p => ({ id: p.id, title: p.title, kind: current && p.id === current.id ? 'current' : p.unread ? 'unread' : 'read' }))
+}
+
+/** The id of the pin `dir` (1 next, -1 previous) from `current`, wrapping round; null with fewer than 2 pins. */
+export function stepPin(list, current, dir) {
+  if (list.length < 2) return null
+  const at = Math.max(
+    0,
+    list.findIndex(p => p.id === current?.id),
+  )
+  return list[(at + dir + list.length) % list.length].id
+}
+
+/**
+ * A step by key or button from what the row last showed: `shown` is {mode, list, current}. Does nothing (null) unless the
+ * row shows a full or slim pin bar. From the slim row it starts at the newest pin, the one a click on the row opens.
+ * Otherwise {sel, shown}: the pin moved to (marked read through `mark`), and `shown` as the row will be drawn next,
+ * so a second press before the redraw moves on again.
+ */
+export function keyStep(shown, dir, mark) {
+  if (!shown || (shown.mode !== 'full' && shown.mode !== 'slim')) return null
+  const from = shown.mode === 'slim' ? newestPin(shown.list) : shown.current
+  const sel = stepPin(shown.list, from, dir)
+  if (!sel) return null
+  mark(sel)
+  return { sel, shown: { ...shown, mode: 'full', current: shown.list.find(p => p.id === sel) } }
+}
+
+/** 1 for `herdr-agents.nextpin`, -1 for `herdr-agents.prevpin`, else null. */
+export function pinStepDir(name) {
+  const m = /(?:^|\.)(next|prev)pin$/.exec(String(name))
+  return m ? (m[1] === 'next' ? 1 : -1) : null
+}
+
+/** The empty row's line: `No pins`, then `· 2 working` from the board's summary (zeros and missing left out). */
+export function emptyLine(board) {
+  const busy = board?.summary?.busy
+  return typeof busy === 'number' && busy > 0 ? `No pins · ${busy} working` : 'No pins'
 }
 
 /** Pin ids in `list` that were not in `prev` (a Set, or null on the first call, when nothing is new). */
@@ -323,6 +360,8 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
     view: {
       mode,
       current,
+      many: list.length > 1,
+      empty: emptyLine(board),
       segments: segments(list, current),
       slim: slimLine(list),
       meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',

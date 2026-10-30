@@ -38,6 +38,7 @@ export default class HerdrAgents extends View {
       cx.notify()
     })
     this.part?.listen(cx)
+    if (pinbarCopy) this.pin.listen(cx)
   }
 
   render(cx) {
