@@ -2,29 +2,50 @@ import type { EngineInterface } from 'claude-code'
 
 // The opencode plugin that reports a worker's status to hc. opencode loads every file in its plugins folder;
 // this one is written for workers of kind `opencode` (see ensureOpencodePlugin). It is active only inside an
-// hc terminal (HC_TERMINAL_ID set) and writes hc's status record (OSC 7501) to the controlling terminal.
+// hc terminal (HC_TERMINAL_ID set) and writes hc's status record (OSC 7501) to the terminal.
 // Like Herdr's own opencode plugin it ignores the events of child sessions (subagents), except a question or
 // permission they ask, which blocks the worker. HC_STATUS_TTY replaces /dev/tty (for tests).
 // The plugin's logic is this function; the file written for opencode is its source text (it stands alone, with no
 // types), so tests call it directly. `fs` and `env` are node:fs and process.env; `proc` is {pid, ppid} of this
 // process and `run(cmd, args)` returns a command's stdout (node:child_process execFileSync).
+// opencode 1 loads `server`, in the program itself. opencode 2 loads `setup`, and with --standalone runs it in a
+// child `opencode serve` that has the worker's environment but no controlling terminal, so /dev/tty fails and the
+// report goes to its parent's terminal. Without --standalone it runs in the shared background server, which has no
+// HC_TERMINAL_ID, so the plugin stays off and the worker reports nothing.
 // A nested opencode (started by another program in the same terminal, e.g. a claude worker) inherits
 // HC_TERMINAL_ID, so it reports only when it is the terminal's own program: hc's `pid` for the terminal is this
-// process or its parent (a launcher). If hc can't tell, it reports.
+// process, or the processes from its parent up to that pid all name opencode (a launcher such as npm's node shim,
+// opencode 2's own program above its server). If hc or ps can't tell, it reports.
 export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = null) {
   const STATES = new Map([
     ['permission.asked', 'blocked:kind=permission'],
     ['question.asked', 'blocked:kind=question'],
+    ['form.created', 'blocked:kind=question'],
     ['permission.replied', 'working'],
     ['question.replied', 'working'],
     ['question.rejected', 'working'],
+    ['form.replied', 'working'],
+    ['form.cancelled', 'working'],
     ['session.compacted', 'working'],
+    ['session.execution.started', 'working'],
     ['tool.execute.before', 'working'],
     ['tool.execute.after', 'working'],
     ['session.error', 'error'],
+    ['session.execution.failed', 'error'],
     ['session.idle', 'idle'],
+    ['session.execution.succeeded', 'idle'],
+    ['session.execution.interrupted', 'idle'],
   ])
-  const CHILD_STATES = new Set(['permission.asked', 'question.asked', 'permission.replied', 'question.replied', 'question.rejected'])
+  // form.created has its session inside `form`, so it is never filtered: a subagent's question blocks the worker too.
+  const CHILD_STATES = new Set([
+    'permission.asked',
+    'question.asked',
+    'permission.replied',
+    'question.replied',
+    'question.rejected',
+    'form.replied',
+    'form.cancelled',
+  ])
   const WORKING = new Set(['active', 'busy', 'pending', 'retry', 'running', 'streaming', 'working'])
 
   const stateOf = (type: any, properties: any) => {
@@ -36,17 +57,39 @@ export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = nul
     return STATES.get(type)
   }
 
-  return async () => {
-    if (!env.HC_TERMINAL_ID) return {}
+  const ps = (field: any, pid: any) => run('ps', ['-o', `${field}=`, '-p', String(pid)]).trim()
+  const namesOpencode = (argv: any) => argv.some((a: any) => /^([^=]*\/)?opencode$/.test(a))
+  const isTerminalProgram = () => {
     try {
-      const root = run ? JSON.parse(run('hc', ['get', env.HC_TERMINAL_ID, '--json'])).pid : undefined
-      if (typeof root === 'number' && root !== proc.pid && root !== proc.ppid) return {}
-    } catch (e) {}
-    const tty = env.HC_STATUS_TTY || '/dev/tty'
+      const { pid: root, argv } = JSON.parse(run('hc', ['get', env.HC_TERMINAL_ID, '--json']))
+      if (typeof root !== 'number' || root === proc.pid) return true
+      let pid = proc.ppid
+      for (let i = 0; i < 3 && pid > 1; i++) {
+        if (!namesOpencode(pid === root && Array.isArray(argv) ? argv : ps('command', pid).split(/\s+/))) return false
+        if (pid === root) return true
+        pid = Number(ps('ppid', pid))
+      }
+      return false
+    } catch (e) {
+      return true
+    }
+  }
+
+  // What both versions share, once this process is known to report: `send` and the handling of an event.
+  const start = () => {
+    if (!env.HC_TERMINAL_ID || !isTerminalProgram()) return undefined
+    let tty = env.HC_STATUS_TTY || '/dev/tty'
     const report = (state: any) => {
+      const record = '\x1b]7501;state=' + state + ':app=opencode\x1b\\'
       try {
-        fs.appendFileSync(tty, '\x1b]7501;state=' + state + ':app=opencode\x1b\\')
-      } catch (e) {}
+        fs.appendFileSync(tty, record)
+      } catch (e) {
+        if (tty !== '/dev/tty') return
+        try {
+          tty = '/dev/' + ps('tty', proc.ppid)
+          fs.appendFileSync(tty, record)
+        } catch (e) {}
+      }
     }
     const children = new Set()
     // After an error the worker stays `error` (idle reports are ignored) until the next sign of work.
@@ -56,29 +99,43 @@ export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = nul
       if (state !== 'idle') failed = state === 'error'
       report(state)
     }
-    report('idle')
-    return {
-      'chat.message': async ({ sessionID }: any) => {
-        if (!sessionID || !children.has(sessionID)) send('working')
-      },
-      'tool.execute.before': async ({ sessionID }: any = {}) => {
-        if (!sessionID || !children.has(sessionID)) send('working')
-      },
-      'tool.execute.after': async ({ sessionID }: any = {}) => {
-        if (!sessionID || !children.has(sessionID)) send('working')
-      },
-      event: async ({ event }: any) => {
-        const type = event?.type
-        const properties = event?.properties ?? {}
-        const info = properties.info
-        if (info?.id && info.parentID) children.add(info.id)
-        const state = stateOf(type, properties)
-        if (!state) return
-        const id = typeof properties.sessionID === 'string' ? properties.sessionID : undefined
-        if (id && children.has(id) && !CHILD_STATES.has(type)) return
-        send(state)
-      },
+    const handle = (type: any, properties: any) => {
+      const info = properties.info
+      if (info?.id && info.parentID) children.add(info.id)
+      if (type === 'session.created' && properties.parentID) children.add(properties.sessionID)
+      const state = stateOf(type, properties)
+      if (!state) return
+      const id = typeof properties.sessionID === 'string' ? properties.sessionID : undefined
+      if (id && children.has(id) && !CHILD_STATES.has(type)) return
+      send(state)
     }
+    report('idle')
+    return { send, handle, isChild: (id: any) => children.has(id) }
+  }
+
+  return {
+    server: async () => {
+      const on = start()
+      if (!on) return {}
+      const work = async ({ sessionID }: any = {}) => {
+        if (!sessionID || !on.isChild(sessionID)) on.send('working')
+      }
+      return {
+        'chat.message': work,
+        'tool.execute.before': work,
+        'tool.execute.after': work,
+        event: async ({ event }: any) => on.handle(event?.type, event?.properties ?? {}),
+      }
+    },
+    setup: (ctx: any) => {
+      const on = start()
+      if (!on) return undefined
+      const stop = new AbortController()
+      void (async () => {
+        for await (const event of ctx.event.subscribe({ signal: stop.signal })) on.handle(event?.type, event?.data ?? {})
+      })().catch(() => {})
+      return () => stop.abort()
+    },
   }
 }
 
@@ -88,9 +145,9 @@ import { execFileSync } from "node:child_process";
 
 ${hcStatusPlugin.toString()}
 
-export const HcStatusPlugin = hcStatusPlugin(fs, process.env, { pid: process.pid, ppid: process.ppid }, (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", timeout: 3000 }));
+const plugin = hcStatusPlugin(fs, process.env, { pid: process.pid, ppid: process.ppid }, (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", timeout: 3000 }));
 
-export default { id: "hc.status", server: HcStatusPlugin };
+export default { id: "hc.status", ...plugin };
 `
 
 // Writes the plugin to ${OPENCODE_CONFIG_DIR, or XDG_CONFIG_HOME or ~/.config + /opencode}/plugins/hc-status.js when it is missing or
