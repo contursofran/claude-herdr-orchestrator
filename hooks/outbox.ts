@@ -36,12 +36,26 @@ export function turnRunning() {
 }
 
 // Queues a prompt for the coordinator. A batch with a report ends with the worker count (see flush).
-export async function post($: EngineInterface, text: string, report = false) {
-  const item: OutboxItem = report ? { text, report: true } : { text }
-  await update($, outbox, list => [...list, item])
+// `from` names the worker (and report token) it is about: a report still held for the same worker and
+// token is replaced, so one batch carries only the newest text of a rewritten report.
+export async function post($: EngineInterface, text: string, report = false, from?: { worker: string; token?: string }) {
+  const item: OutboxItem = {
+    text,
+    ...(report ? { report: true as const } : {}),
+    ...(from?.worker ? { worker: from.worker } : {}),
+    ...(from?.token ? { token: from.token } : {}),
+  }
+  const same = (i: OutboxItem) => report && !!i.report && !!from && i.worker === from.worker && i.token === from.token
+  await update($, outbox, list => [...list.filter(i => !same(i)), item])
   lastAt = await $.clock.now()
   await save($)
   void kick($)
+}
+
+// A stopped worker: nothing held for it is sent.
+export async function dropHeld($: EngineInterface, worker: string) {
+  await update($, outbox, list => (list.some(i => i.worker === worker) ? list.filter(i => i.worker !== worker) : list))
+  await save($)
 }
 
 // The sweep's tick (register.tsx): a batch that a refused prompt kept goes out without a new post or turn's end.

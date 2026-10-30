@@ -916,6 +916,7 @@ test('the report rule says to write RESULT.md in one write, as the last step, in
 // prompt is awaited must survive it (#20, S1).
 
 const W = '/repo/wt/.herdr-agents/w-busy'
+const turnEnd = (turnId: string) => ({ turnId, answer: '', durationMs: 1, isAborted: false, reason: 'answer' as const })
 const check = (argv: string[]) => argv[0] === '/bin/bash' && argv[2] === 'ci'
 const codex = { profiles: { x: { kind: 'codex', args: [] } } }
 const spawnBusy = async ($: Parameters<typeof start>[0], profile: string) => {
@@ -1811,7 +1812,7 @@ test('a stop while a report is being delivered sends nothing for the stopped wor
   expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported', reportStatus: 'stopped', closed: true })
 })
 
-test('a report rewritten while it is being delivered reaches the coordinator once, newest text last', async ($, on) => {
+test('a report rewritten while it is being delivered reaches the coordinator with the newest text only', async ($, on) => {
   const s = await start($, on)
   await spawnBusy($, 'builder')
   const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
@@ -1820,17 +1821,91 @@ test('a report rewritten while it is being delivered reaches the coordinator onc
   await s.finish('w-busy')
   await s.clock.settle()
   s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nNewest text.`
+  // The coordinator is busy, so the older text is still held when the newest one arrives.
+  await $.turn.start({ text: 'Reading.', turnId: 't1' })
   release()
   await s.clock.settle()
-  await s.clock.advance(BATCH_MS)
   await s.clock.advance(3 * 60_000)
+  await $.turn.complete(turnEnd('t1'))
   await s.clock.advance(BATCH_MS)
   await s.clock.advance(3 * 60_000)
   await s.clock.advance(BATCH_MS)
   const sent = s.submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))
-  expect(sent.join('\n')).toContain('Newest text.')
-  expect(sent.join('\n').lastIndexOf('Newest text.')).toBeGreaterThan(sent.join('\n').lastIndexOf('Older draft.'))
   expect(sent.filter(t => t.includes('Newest text.'))).toHaveLength(1)
+  expect(sent.filter(t => t.includes('Older draft.'))).toHaveLength(0)
+})
+
+test('rewrites held while the coordinator works are one message with the newest text', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First draft.')
+  await $.turn.start({ text: 'Reading.', turnId: 't1' })
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nSecond draft.`
+  await s.clock.advance(2 * 60_000)
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nThird draft.`
+  await s.clock.advance(2 * 60_000)
+  expect(s.submitted.filter(t => t.includes('draft.'))).toHaveLength(1)
+  await $.turn.complete(turnEnd('t1'))
+  await s.clock.advance(BATCH_MS)
+  const after = s.submitted.slice(1).join('\n')
+  expect(after).toContain('Third draft.')
+  expect(after).not.toContain('Second draft.')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a further report after one that already went out follows it, newest last', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First draft.')
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nSecond draft.`
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nThird draft.`
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  const sent = s.submitted.filter(t => t.includes('<herdr-agent name="w-busy"')).join('\n')
+  expect(sent.indexOf('First draft.')).toBeGreaterThan(-1)
+  expect(sent.indexOf('Second draft.')).toBeGreaterThan(sent.indexOf('First draft.'))
+  expect(sent.indexOf('Third draft.')).toBeGreaterThan(sent.indexOf('Second draft.'))
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a stop drops a rewrite held for the coordinator: nothing arrives when its turn ends', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First draft.')
+  await $.turn.start({ text: 'Reading.', turnId: 't1' })
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nOlder rewrite.`
+  await s.clock.advance(2 * 60_000)
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  await $.turn.complete(turnEnd('t1'))
+  await s.clock.advance(BATCH_MS)
+  await s.clock.advance(5 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => t.includes('Older rewrite.'))).toHaveLength(0)
+})
+
+test('a rewrite without its token line gets one short notice per change, and none after a stop', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s, 'First draft.')
+  const notices = () => s.submitted.filter(t => t.includes('without its token line'))
+  s.files[`${W}/RESULT.md`] = 'Final result, no token.'
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(notices()).toHaveLength(1)
+  expect(notices()[0]).toContain(`${W}/RESULT.md`)
+  expect(notices()[0]).toContain('w-busy')
+  // The same text again sends nothing.
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(notices()).toHaveLength(1)
+  s.files[`${W}/RESULT.md`] = 'Final result, edited.'
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(notices()).toHaveLength(2)
+  expect(s.submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))).toHaveLength(1)
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  s.files[`${W}/RESULT.md`] = 'Changed after the stop.'
+  await s.clock.advance(5 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(notices()).toHaveLength(2)
 })
 
 test('a report rewritten without its token line after delivery is not delivered again', async ($, on) => {
@@ -1863,5 +1938,30 @@ test('a rewritten report with the same DECISION line pins it once', async ($, on
   const sent = s.submitted.filter(t => t.includes('Second.'))
   expect(sent).toHaveLength(1)
   expect(sent[0]).toContain('Pinned for the owner as D1.')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a rewrite whose DECISION line has other options is pinned as a new question', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First.\nDECISION: [Pick] Which one? | A | B')
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nSecond.\nDECISION: [Pick] Which one? | C | D`
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  const sent = s.submitted.filter(t => t.includes('Second.'))
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toContain('Pinned for the owner as D2.')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a rewrite does not pin again a question already settled for that report', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First.\nDECISION: [Pick] Which one? | A | B')
+  await $.tool.call({ tool: 'mcp__herdr-agents__decided', ids: ['D1'], answer: 'A', by: 'owner' })
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nSecond.\nDECISION: [Pick] Which one? | A | B`
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  const sent = s.submitted.filter(t => t.includes('Second.'))
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).not.toContain('Pinned for the owner')
   await stopAll($, s.clock, ['w-busy'])
 })

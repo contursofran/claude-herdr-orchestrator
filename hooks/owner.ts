@@ -50,6 +50,7 @@ export async function ask(
   recommended?: number,
   title?: string,
   quiet = false,
+  token?: string,
 ) {
   const at = await $.clock.now()
   const used = [...(await read($, decisions)), ...(await read($, settled))].map(d => d.id)
@@ -65,6 +66,7 @@ export async function ask(
       ...(title ? { title } : {}),
       ...(options?.length ? { options, recommended } : {}),
       ...(quiet ? { quiet } : {}),
+      ...(token ? { token } : {}),
     },
   ])
   if (!quiet) notify($, `Decision D${id} needed (${from})`, question)
@@ -174,7 +176,16 @@ export async function settle($: EngineInterface, e: DecidedArgs) {
   if (gone.length) {
     await update($, settled, list => [
       ...list.filter(x => at - x.at < SETTLED_MS),
-      ...gone.map(d => ({ id: d.id, from: d.from, question: d.question, ...(d.title ? { title: d.title } : {}), answer, by, at })),
+      ...gone.map(d => ({
+        id: d.id,
+        from: d.from,
+        question: d.question,
+        ...(d.title ? { title: d.title } : {}),
+        ...(d.token ? { token: d.token } : {}),
+        answer,
+        by,
+        at,
+      })),
     ])
     const names = gone.map(d => `D${d.id}${d.title ? ` ${d.title}` : ''}`).join(', ')
     // A question the person was already pinged for gets a toast;

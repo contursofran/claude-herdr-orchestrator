@@ -34,8 +34,8 @@ import {
   watch,
   workerArgv,
 } from './hc'
-import { ask, openQuestions } from './owner'
-import { post } from './outbox'
+import { answered as settledQuestions, ask, openQuestions } from './owner'
+import { dropHeld, post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
@@ -211,6 +211,38 @@ export async function fresh($: EngineInterface, job: Job) {
   return reportBody(await $.fs.read(`${job.dir}/RESULT.md`)) !== (await $.fs.read(archived))
 }
 
+const hashOf = (text: string) => {
+  let h = 5381
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0
+  return `${text.length}:${h}`
+}
+
+// A reported worker whose RESULT.md was rewritten without this prompt's token line: it is not a report,
+// but the text it holds has not been told to the coordinator yet. Returns the hash of that text.
+export async function tokenless($: EngineInterface, job: Job) {
+  if (job.status !== 'reported' || job.closed || !job.token) return undefined
+  const path = `${job.dir}/RESULT.md`
+  if (!(await $.fs.exists(path)) || (await reported($, job))) return undefined
+  const hash = hashOf(await $.fs.read(path))
+  return hash === job.noticed ? undefined : hash
+}
+
+// One short notice to the coordinator per change of such a RESULT.md, never for a stopped worker.
+async function noticeTokenless($: EngineInterface, job: Job) {
+  const hash = await tokenless($, job)
+  if (!hash) return
+  const { after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && !j.closed ? { ...j, noticed: hash } : undefined,
+  )
+  if (!after) return
+  await post(
+    $,
+    `${job.name} changed RESULT.md without its token line, so it is not taken as a report: ${job.dir}/RESULT.md. Read it if it matters.`,
+    false,
+    { worker: job.name },
+  )
+}
+
 // Messages held for a non-Claude worker, sent when its turn ends (deliver, endTail).
 const heldPrompt = (queued: string[]) =>
   `Messages from your coordinator, sent while you worked, are in ${queued.join(', ')}. Read them and do what they ask.`
@@ -365,7 +397,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   const byName = new Map<string, HcListed>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
   for (const job of Object.values(await jobs($))) {
-    if (job.status !== 'running' && !job.tail && !(await carriesOn($, job))) continue
+    if (job.status !== 'running' && !job.tail && !(await carriesOn($, job)) && !(await tokenless($, job))) continue
     await serial(job.name, async () => {
       const current = (await jobs($))[job.name]
       if (!current) return
@@ -376,6 +408,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
         if (current.tail) return await sweepTail($, current, agents, a, early)
         if (current.closed) return
         if (await fresh($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
+        if (await tokenless($, current)) return await noticeTokenless($, current)
         if (agents === undefined) return
         if (!a) {
           // Its tab is gone with a wait still open (or none): nothing will wake it, so the coordinator is told.
@@ -441,7 +474,7 @@ export async function carriesOn($: EngineInterface, job: Job) {
 export async function sweepNeeded($: EngineInterface, closeMinutes: number) {
   const all = Object.values(await jobs($))
   if (all.some(j => active(j) || j.tail)) return true
-  for (const j of all) if (await carriesOn($, j)) return true
+  for (const j of all) if ((await carriesOn($, j)) || (await tokenless($, j))) return true
   if (closeMinutes <= 0) return false
   const now = await $.clock.now()
   const asking = new Set((await openQuestions($)).map(d => d.from))
@@ -607,9 +640,10 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   return true
 }
 
-// Whether a stop (stopWorker) landed on a job since `was` was read: it is no longer running, or its
-// end time moved or its tab closed. A delivery that began before the stop must not report it.
-const stoppedSince = (j: Job, was: Job) => (was.status === 'running' ? j.status !== 'running' : !!j.closed || j.endedAt !== was.endedAt)
+// Whether a stop (stopWorker) or another delivery landed on a job since `was` was read: it is no longer
+// running, or its end time moved. A delivery that began before must not report it. A tab closed by
+// closeIdle meanwhile does not count: it leaves the end time alone, and a fresh report still goes out.
+const stoppedSince = (j: Job, was: Job) => (was.status === 'running' ? j.status !== 'running' : j.endedAt !== was.endedAt)
 async function stopped($: EngineInterface, was: Job) {
   const j = (await jobs($))[was.name]
   return !j || j.token !== was.token || stoppedSince(j, was)
@@ -663,7 +697,8 @@ export async function deliver(
     await $.fs.write(full, body)
     reportFile = full
     await archive($, job.dir, full.slice(job.dir.length + 1), body)
-    // A stop that landed during the awaits above: nothing more is pinned or sent for the stopped worker.
+    // A stop, or another delivery, that landed during the awaits above: nothing more is pinned or sent from this one.
+    // (The archive just written stays: it holds the text on disk, so the report is not taken as new again.)
     if (await stopped($, current)) return
     const lines = body.split('\n').filter(l => l.trim())
     const ids: string[] = []
@@ -677,9 +712,17 @@ export async function deliver(
       const found = parts.findIndex(o => marked.test(o))
       const recommended = found >= 0 ? found : undefined
       const options = parts.map(o => o.replace(marked, ' ').trim()).filter(Boolean)
-      // A rewritten report repeats its DECISION lines: one still open is not pinned again.
-      const open = (await openQuestions($)).find(d => d.from === job.name && d.question === question)
-      const id = open?.id ?? (await ask($, job.name, question, options, recommended, titled?.[1], true))
+      // A rewritten report repeats its DECISION lines: one still open with the same options is not
+      // pinned again, and one already settled for this worker and report is not asked a second time.
+      const same = (o?: string[]) => (o ?? []).join('\u0000') === options.join('\u0000')
+      const open = (await openQuestions($)).find(d => d.from === job.name && d.question === question && same(d.options))
+      if (
+        !open &&
+        current.token &&
+        (await settledQuestions($)).some(d => d.from === job.name && d.question === question && d.token === current.token)
+      )
+        continue
+      const id = open?.id ?? (await ask($, job.name, question, options, recommended, titled?.[1], true, current.token))
       ids.push(`D${id}`)
       const shown = options.map((o, i) => (i === recommended ? `${o} (recommended)` : o))
       pinnedLines.push(`D${id} ${titled ? `[${titled[1]}] ` : ''}${question}${shown.length ? ` | ${shown.join(' | ')}` : ''}`)
@@ -752,6 +795,7 @@ export async function deliver(
     $,
     `<herdr-agent name="${job.name}" profile="${job.profile}" status="${status}"${attrs}>\n${body.trim()}\n</herdr-agent>`,
     true,
+    { worker: job.name, token: current.token },
   )
 }
 
@@ -1105,6 +1149,8 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
   })
   // A stopped worker is never woken: its wait ends here, even if its tab fails to close.
   await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
+  // Nothing held for the coordinator about it is sent after the stop.
+  await dropHeld($, job.name)
   try {
     await closeTerminal($, job.name)
   } catch (err) {
