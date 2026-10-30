@@ -32,9 +32,9 @@ export async function send(session, action, id = actionFile(Date.now(), Math.ran
 
 const heartbeatFile = () => `${home()}/.herdr-agents/app-mod.json`
 
-/** Tells the plugin the app is drawing the boards (its band then steps aside). Written beside the file and moved over it,
- *  so a reader never sees half a file. */
-export async function beat(boards, terminals) {
+/** Tells the plugin the app is drawing the boards (its band then steps aside), or with `drawing` false that it is not.
+ *  Written beside the file and moved over it, so a reader never sees half a file. */
+export async function beat(boards, terminals, drawing = true) {
   const file = heartbeatFile()
   await exec('mkdir', ['-p', `${home()}/.herdr-agents`])
   // The app's own core, as the plugin sees its own; unknown (an old hc, a failed call) is left out of the file.
@@ -42,7 +42,7 @@ export async function beat(boards, terminals) {
     r => (r.code === 0 ? coreIdOf(r.stdout) : ''),
     () => '',
   )
-  await writeTextFile(`${file}.tmp`, heartbeat(boards, terminals, Date.now(), core), null)
+  await writeTextFile(`${file}.tmp`, heartbeat(boards, terminals, Date.now(), core, drawing), null)
   const moved = await exec('mv', [`${file}.tmp`, file])
   if (moved.code !== 0) await exec('rm', ['-f', `${file}.tmp`])
 }

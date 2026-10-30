@@ -4,6 +4,7 @@ import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
+import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
 import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
 import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
@@ -67,7 +68,10 @@ export default class HerdrAgents extends View {
     this.pin = new PinCtl()
     const pinbarCopy = props()?.role === 'pinbar'
     // Once per app run: overlays stay open across a layout switch, and a Done asked for on `main` waits for this copy.
-    if (pinbarCopy && firstThisRun('hrd.pinbarStarted')) clearStaleOverlays(shared, setShared)
+    if (pinbarCopy && firstThisRun('hrd.pinbarStarted')) {
+      clearStaleOverlays(shared, setShared)
+      clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
+    }
     // The card has an Outbox of its own: it settles it here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
     this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
@@ -136,15 +140,36 @@ export default class HerdrAgents extends View {
   beat(cx) {
     cx.spawn(async () => {
       try {
-        await beat(this.boards.list(), terminals())
+        await beat(this.boards.list(), terminals(), !anyDrawFailed(shared))
       } catch {
         // the plugin keeps its band when the file goes stale
       }
     })
   }
 
+  /** Notes how this draw went, after the draw: setShared redraws every mod, which a draw should not start from inside. */
+  noteDrawn(cx, error) {
+    const role = props()?.role
+    if (!guardsDraw(role) || !drawNoteDue(role, error, shared)) return
+    cx.spawn(async cx => {
+      await cx.sleep(0)
+      if (noteDraw(role, error, shared, setShared) && error) console.log(`herdr-agents: ${role} failed to draw: ${error}`)
+    })
+  }
+
+  /** The pin bar copy tells the plugin at once when a part starts or stops failing, not at the next 30 s beat. */
+  beatOnChange(cx) {
+    if (!this.beating) return
+    const failed = anyDrawFailed(shared)
+    if (failed === Boolean(this.beatFailed)) return
+    this.beatFailed = failed
+    this.beat(cx)
+  }
+
   async close() {
     if (this.popup) releasePopup(this.popup)
+    // A part that is gone no longer fails to draw. Its own key only: the other parts are still there.
+    if (guardsDraw(props()?.role)) noteDraw(props().role, null, shared, setShared)
     if (this.beating) await clearBeat()
   }
 
@@ -159,18 +184,27 @@ export default class HerdrAgents extends View {
       )
     const draw = roles[props()?.role]
     if (!draw) return div()
-    // Resolved while drawing, so it follows focus with no polling.
-    const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
-    this.last = found.pick
-    if (this.part) this.part.board = found.board
-    return this.drewAges(
-      draw(found.board, {
-        pin: this.pin,
-        card: this.card,
-        sheet: this.sheet,
-        cx,
-        strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
-      }),
-    )
+    this.beatOnChange(cx)
+    try {
+      // Resolved while drawing, so it follows focus with no polling.
+      const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
+      this.last = found.pick
+      if (this.part) this.part.board = found.board
+      const el = this.drewAges(
+        draw(found.board, {
+          pin: this.pin,
+          card: this.card,
+          sheet: this.sheet,
+          cx,
+          strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
+        }),
+      )
+      this.noteDrawn(cx, null)
+      return el
+    } catch (error) {
+      if (!guardsDraw(props()?.role)) throw error // the sheet stands in for no band: as before
+      this.noteDrawn(cx, error)
+      return div()
+    }
   }
 }
