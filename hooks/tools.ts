@@ -14,7 +14,7 @@ export async function spawnSpec($: EngineInterface): Promise<ToolSpec> {
       'Start a worker agent in a new herdr tab, on any provider, and return at once.',
       `Profiles: ${list}.`,
       'The worker reads the task, works in `cwd` and writes RESULT.md.',
-      'With `branch` (and `repo` when it is not this folder), the mod fetches and creates the worktree at ../<repo>-wt/<branch> off origin/<base>. It returns status starting at once; if the worker cannot start, a failed report arrives instead.',
+      'With `branch` (and `repo` when it is not this folder), the mod creates the worktree at ../<repo>-wt/<branch> off <base> (fetched from origin first; a repo with no origin remote uses the local <base>). It returns status starting at once; if the worker cannot start, a failed report arrives instead.',
       'Its report arrives later as a <herdr-agent> message; do not poll for it.',
       'The task must be self-contained: the worker shares none of this conversation.',
       'Keep it short: point to a plan, issue or earlier report by its path or link instead of copying it in.',
@@ -34,7 +34,11 @@ export async function spawnSpec($: EngineInterface): Promise<ToolSpec> {
         },
         branch: { type: 'string', description: 'A git branch: the mod creates (or reuses) its worktree and the worker runs there.' },
         repo: { type: 'string', description: 'The repo checkout for branch, absolute or relative to this folder; default this folder.' },
-        base: { type: 'string', description: "The branch to start a new branch from; default the repo's origin/HEAD branch, else main." },
+        base: {
+          type: 'string',
+          description:
+            "The branch to start a new branch from; default the repo's origin/HEAD branch; with no origin remote the checked-out branch; else main.",
+        },
         task: { type: 'string', description: 'The brief, in Markdown; files it builds on (a PLAN.md) by absolute path.' },
       },
       required: ['worker', 'profile', 'task'],
