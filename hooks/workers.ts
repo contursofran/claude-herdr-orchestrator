@@ -110,7 +110,6 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
     endedAt: undefined,
     tail: undefined,
     reportStatus: undefined,
-    headerStatus: undefined,
     reportFile: undefined,
   }
   await saveJob($, next)
@@ -990,7 +989,6 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
   await patchJob($, job.name, {
     status: 'reported',
     ...(job.status === 'running' || !job.reportFile ? { reportStatus: 'stopped' } : {}),
-    headerStatus: undefined,
     endedAt: await $.clock.now(),
     tail: undefined,
   })
