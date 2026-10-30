@@ -1,7 +1,25 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { applyFile, boardId, debugLine, labelOf, openNeeds, resolveBoard } from '../mods/herdr-agents/model.js'
+import {
+  FLASH_MS,
+  anyFlashing,
+  applyFile,
+  boardId,
+  counts,
+  debugLine,
+  flashing,
+  isUnseen,
+  labelOf,
+  nextPick,
+  observeArrivals,
+  openNeeds,
+  otherCount,
+  pickAt,
+  pickNumber,
+  resolveBoard,
+  stripItems,
+} from '../mods/herdr-agents/model.js'
 
 const board = (session, terminal, extra = {}) => ({
   session,
@@ -207,4 +225,190 @@ test('the debug line is the folder and the open count, and empty without a board
   assert.equal(debugLine(fixture), '/work/shop · 7 open')
   assert.equal(debugLine(null), '')
   assert.equal(openNeeds({ needs: [{ isOpen: true }, { isOpen: false, end: 'done' }] }).length, 1)
+})
+
+// ---- S3: the strip ----
+
+const full = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
+
+test('stripItems: blocked workers, then open asks, then open dos, in board order; know items stay out', () => {
+  const items = stripItems(full())
+  assert.deepEqual(
+    items.map(i => [i.kind, i.id]),
+    [
+      ['blocked', 'w-stuck'],
+      ['ask', 'D7'],
+      ['ask', 'D8'],
+      ['do', 'T12'],
+      ['do', 'T13'],
+    ],
+  )
+  assert.equal(items[0].label, 'waiting at a permission prompt')
+  assert.equal(items[1].label, 'Pagination style')
+  assert.equal(new Set(items.map(i => i.key)).size, items.length)
+})
+
+test('stripItems: order does not follow the order in the file; closed needs and no board give nothing', () => {
+  const b = {
+    workers: [
+      { name: 'a', state: 'working' },
+      { name: 'b', state: 'blocked' },
+    ],
+    needs: [
+      { key: 'T1', kind: 'do', text: 'second line\nx', isOpen: true },
+      { key: 'D1', kind: 'ask', text: 'first\nmore', isOpen: true },
+      { key: 'D2', kind: 'ask', text: 'closed', isOpen: false },
+      { key: 'K1', kind: 'know', text: 'fyi', isOpen: true },
+    ],
+  }
+  const items = stripItems(b)
+  assert.deepEqual(
+    items.map(i => i.id),
+    ['b', 'D1', 'T1'],
+  )
+  assert.equal(items[0].label, 'stuck', 'a blocked worker with no note')
+  assert.equal(items[1].label, 'first', 'no title: the first line of the text')
+  assert.deepEqual(stripItems(null), [])
+  assert.deepEqual(stripItems({}), [])
+})
+
+test('counts: workers by state', () => {
+  assert.deepEqual(counts(full()), { working: 2, waiting: 1, blocked: 1 })
+  assert.deepEqual(counts(null), { working: 0, waiting: 0, blocked: 0 })
+})
+
+test('pickAt: keys 1 to 6 reach the first six; later tabs are reached by scrolling', () => {
+  const items = Array.from({ length: 8 }, (_, i) => ({ key: `k${i + 1}` }))
+  assert.equal(pickAt(items, 1).key, 'k1')
+  assert.equal(pickAt(items, 6).key, 'k6')
+  assert.equal(pickAt(items, 7), null)
+  assert.equal(pickAt(items, 0), null)
+  assert.equal(pickAt(items.slice(0, 2), 3), null)
+})
+
+test('otherCount: a terminal counts once, by its newest board; the shown terminal is not other', () => {
+  const withItems = (session, terminal, at, n) =>
+    board(session, terminal, { at, needs: Array.from({ length: n }, (_, i) => ({ key: `D${i}`, kind: 'ask', text: 'q', isOpen: true })) })
+  const here = withItems('here', 't1', 5, 1)
+  const terminals = [term('t1'), term('t2'), term('t3'), term('t4', { state: 'exited' }), term('t5', { program: { agent: false } })]
+  const boards = [
+    here,
+    withItems('a', 't2', 10, 2),
+    withItems('b', 't3', 20, 3),
+    withItems('gone', 't4', 30, 9),
+    withItems('shell', 't5', 40, 9),
+    withItems('stray', 't1', 60, 4),
+  ]
+  assert.deepEqual(otherCount(boards, terminals, here), { count: 5, terminal: 't2' })
+  assert.deepEqual(otherCount([here], terminals, here), { count: 0, terminal: null })
+  assert.deepEqual(
+    otherCount(boards, terminals, null),
+    { count: 9, terminal: 't1' },
+    'with no board shown, every live terminal is other, and t1 counts its newest board',
+  )
+  // After a /clear elsewhere two files point at t2: only the newest counts.
+  const cleared = [here, withItems('new', 't2', 20, 1), withItems('old', 't2', 10, 3)]
+  assert.equal(otherCount(cleared, terminals, here).count, 1)
+  // The newest board decides, even when it is empty.
+  assert.deepEqual(otherCount([here, withItems('old', 't3', 10, 3), withItems('new', 't3', 20, 0)], terminals, here), {
+    count: 0,
+    terminal: null,
+  })
+  // Equal times go by session id.
+  assert.equal(otherCount([here, withItems('b', 't2', 10, 5), withItems('a', 't2', 10, 2)], terminals, here).count, 2)
+})
+
+test('otherCount: the terminal cycles through every other board, in address order, wrapping', () => {
+  const one = (session, terminal) => board(session, terminal, { needs: [{ key: 'D1', kind: 'ask', text: 'q', isOpen: true }] })
+  const terminals = ['t1', 't2', 't3', 't4'].map(a => term(a))
+  const boards = ['t1', 't2', 't3', 't4'].map(t => one(`s-${t}`, t))
+  const next = from =>
+    otherCount(
+      boards,
+      terminals,
+      boards.find(b => b.coordinator.terminal === from),
+    ).terminal
+  assert.equal(next('t1'), 't2')
+  assert.equal(next('t2'), 't3')
+  assert.equal(next('t3'), 't4')
+  assert.equal(next('t4'), 't1', 'wraps')
+  // Walking from board to board visits all of them.
+  const seen = []
+  for (let at = 't1', i = 0; i < 4; i++) seen.push(at), (at = next(at))
+  assert.deepEqual(seen, ['t1', 't2', 't3', 't4'])
+  // A shown board with no place in the order still gets the first one after it.
+  const withGap = otherCount(boards, terminals, board('x', 't25'))
+  assert.equal(withGap.terminal, 't3')
+  // Boards with nothing open are skipped.
+  const quiet = [boards[0], board('s-t2', 't2'), boards[2]]
+  assert.equal(otherCount(quiet, terminals, boards[0]).terminal, 't3')
+})
+
+test('flashing: for 0.9 s x 4 after the first sighting, never for what was there at the start', () => {
+  assert.equal(FLASH_MS, 3600)
+  assert.equal(flashing('s:D7', 1000, 1000), true)
+  assert.equal(flashing('s:D7', 1000, 1000 + FLASH_MS - 1), true)
+  assert.equal(flashing('s:D7', 1000, 1000 + FLASH_MS), false)
+  assert.equal(flashing('s:D7', 1000, 999), false, 'a clock that went back')
+  assert.equal(flashing('s:D7', 0, 1790000000000), false, 'stamped 0 = there at the start')
+  assert.equal(flashing('s:D7', undefined, 1000), false)
+  assert.equal(flashing('', 1000, 1000), false)
+})
+
+test('observeArrivals: the first load is silent, later arrivals are stamped, gone items are dropped', () => {
+  const b = full()
+  const first = observeArrivals(null, [b], 5000)
+  assert.ok(Object.keys(first).length === 5 && Object.values(first).every(at => at === 0))
+  const added = { ...b, workers: [...b.workers, { name: 'w-new', state: 'blocked', note: 'stuck' }] }
+  const key = `${b.session}:w:w-new`
+  const second = observeArrivals(first, [added], 9000)
+  assert.equal(second[key], 9000)
+  assert.equal(second[`${b.session}:D7`], 0, 'a known item keeps its stamp')
+  const third = observeArrivals(second, [b], 9500)
+  assert.equal(key in third, false)
+  assert.equal(flashing('x', second[key], 9500), true)
+})
+
+test('isUnseen: a late arrival stays unseen until selected; what was there at the start never is', () => {
+  const known = { a: 9000, b: 0 }
+  assert.equal(isUnseen('a', known, new Set()), true)
+  assert.equal(isUnseen('a', known, new Set(['a'])), false)
+  assert.equal(isUnseen('b', known, new Set()), false)
+  assert.equal(isUnseen('c', known, new Set()), false)
+})
+
+test('observeArrivals: only a new blocked worker flashes; asks and dos arriving later do not', () => {
+  const b = full()
+  const first = observeArrivals(null, [b], 5000)
+  const added = {
+    ...b,
+    workers: [...b.workers, { name: 'w-new', state: 'blocked', note: 'stuck' }],
+    needs: [...b.needs, { key: 'D9', kind: 'ask', text: 'new', isOpen: true }, { key: 'T9', kind: 'do', text: 'new', isOpen: true }],
+  }
+  const next = observeArrivals(first, [added], 9000)
+  assert.equal(next[`${b.session}:w:w-new`], 9000)
+  assert.equal(next[`${b.session}:D9`], 0)
+  assert.equal(next[`${b.session}:T9`], 0)
+  assert.equal(anyFlashing(next, 9500), true)
+  assert.equal(anyFlashing({ a: 0, b: 0 }, 9500), false)
+  assert.equal(isUnseen(`${b.session}:D9`, next, new Set()), false)
+  assert.equal(isUnseen(`${b.session}:w:w-new`, next, new Set()), true)
+})
+
+test('pickNumber: pick1..6 by command name, nothing else', () => {
+  assert.equal(pickNumber('herdr-agents.pick3'), 3)
+  assert.equal(pickNumber('pick6'), 6)
+  assert.equal(pickNumber('herdr-agents.pick7'), null)
+  assert.equal(pickNumber('herdr-agents.pick0'), null)
+  assert.equal(pickNumber('herdr-agents.sheet'), null)
+  assert.equal(pickNumber(undefined), null)
+})
+
+test('nextPick: a click on the selected tab deselects, a key never does', () => {
+  const now = { session: 's', key: 'D7' }
+  assert.deepEqual(nextPick(null, 's', 'D7', true), now)
+  assert.equal(nextPick(now, 's', 'D7', true), null)
+  assert.deepEqual(nextPick(now, 's', 'D7', false), now, 'a key keeps it selected')
+  assert.deepEqual(nextPick(now, 's', 'D8', true), { session: 's', key: 'D8' })
+  assert.deepEqual(nextPick(now, 'other', 'D7', true), { session: 'other', key: 'D7' }, 'same key on another board is another tab')
 })
