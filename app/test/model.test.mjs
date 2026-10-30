@@ -906,32 +906,6 @@ test('keyStep from the slim row (2+ pins, all read) starts at the newest pin, th
   assert.equal(keyStep(shown, -1, () => {}).sel, readKey('s', 'K1'))
 })
 
-test('parkedNote: a worker parked on WAIT.json shows what it waits for; finished, blocked and unknown ones show nothing', async () => {
-  const { parkedNote } = await import('../mods/herdr-agents/model.js')
-  const boards = [
-    {
-      workers: [
-        { name: 'w-park', state: 'waiting', note: '3m · PR checks\nmore' },
-        { name: 'w-done', state: 'reported', note: 'x' },
-        { name: 'w-stuck', state: 'blocked', note: 'x' },
-        { name: 'w-bare', state: 'waiting' },
-      ],
-    },
-  ]
-  const terminals = [
-    { address: 't1', name: 'w-park' },
-    { address: 't2', name: 'w-done' },
-    { address: 't3', name: 'w-stuck' },
-    { address: 't4', name: 'w-bare' },
-  ]
-  assert.equal(parkedNote(boards, terminals, 't1'), '3m · PR checks')
-  assert.equal(parkedNote(boards, terminals, 't2'), null)
-  assert.equal(parkedNote(boards, terminals, 't3'), null)
-  assert.equal(parkedNote(boards, terminals, 't4'), 'waiting')
-  assert.equal(parkedNote(boards, terminals, 't9'), null)
-  assert.equal(parkedNote(undefined, undefined, 't1'), null)
-||||||| 86c0f9d
-
 // ---- S10: sound and notification ----
 
 const needsBoard = (...needs) => ({
@@ -1030,4 +1004,30 @@ test('Arrivals: a board with no session is skipped', () => {
   a.observe([nameless])
   a.observe([{ ...nameless, needs: [...nameless.needs, { key: 'D2', kind: 'ask', isOpen: true, text: 'Hi' }] }])
   assert.deepEqual(calls, [])
+})
+
+test('parkedNote: a worker parked on WAIT.json shows what it waits for; finished, blocked and unknown ones show nothing', async () => {
+  const { parkedNote } = await import('../mods/herdr-agents/model.js')
+  const boards = [
+    {
+      workers: [
+        { name: 'w-park', state: 'waiting', note: '3m · PR checks\nmore' },
+        { name: 'w-done', state: 'reported', note: 'x' },
+        { name: 'w-stuck', state: 'blocked', note: 'x' },
+        { name: 'w-bare', state: 'waiting' },
+      ],
+    },
+  ]
+  const terminals = [
+    { address: 't1', name: 'w-park' },
+    { address: 't2', name: 'w-done' },
+    { address: 't3', name: 'w-stuck' },
+    { address: 't4', name: 'w-bare' },
+  ]
+  assert.equal(parkedNote(boards, terminals, 't1'), '3m · PR checks')
+  assert.equal(parkedNote(boards, terminals, 't2'), null)
+  assert.equal(parkedNote(boards, terminals, 't3'), null)
+  assert.equal(parkedNote(boards, terminals, 't4'), 'waiting')
+  assert.equal(parkedNote(boards, terminals, 't9'), null)
+  assert.equal(parkedNote(undefined, undefined, 't1'), null)
 })
