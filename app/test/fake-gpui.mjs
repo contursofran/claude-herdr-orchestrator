@@ -61,6 +61,14 @@ globalThis.__fakeGpui = {
   div: makeElement,
   svg: makeElement,
   View: class {},
+  TextView: {
+    markdown: (id, markdown) => {
+      const el = makeElement().id(id)
+      el.node.markdown = markdown
+      el.node.kids.push(markdown)
+      return el
+    },
+  },
   closeOverlay: id => {
     if (app.closeThrows) throw new Error('overlay already closed')
     app.closed.push(id)
@@ -92,6 +100,7 @@ globalThis.__fakeGpui = {
 }
 
 const names = {
+  'gpui-base': ['TextView'],
   'gpui-kit': ['div', 'svg', 'View'],
   herdr: [
     'appHome',

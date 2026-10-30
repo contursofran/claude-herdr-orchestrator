@@ -1,4 +1,5 @@
 // What the card keeps between draws. No `herdr` import: everything outside comes in as an argument, so it can be tested.
+import { CopyState } from './copystate.js'
 import { Outbox } from './outbox.js'
 
 /**
@@ -14,6 +15,7 @@ export class CardState {
     this.outbox = new Outbox({ send, notify })
     this.h = handle
     this.token = null
+    this.copy = new CopyState()
   }
 
   /** Called with the boards after each change; true when something was settled (redraw). */

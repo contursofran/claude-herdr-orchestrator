@@ -62,7 +62,7 @@ globalThis.__startFake = {
 }
 const shim = {
   'gpui-kit': ['View', 'div', 'image', 'svg'],
-  'gpui-base': ['h_flex', 'v_flex'],
+  'gpui-base': ['TextView', 'h_flex', 'v_flex'],
   herdr: [
     'agents',
     'appHome',

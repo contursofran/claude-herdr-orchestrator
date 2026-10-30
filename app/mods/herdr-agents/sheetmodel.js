@@ -1,4 +1,5 @@
 // The context sheet's logic (S9), with no gpui-kit or herdr imports so node can test it (app/test).
+import { copyTargets } from './copystate.js'
 import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, stripItems } from './model.js'
 
 const firstLine = text =>
@@ -189,6 +190,7 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
     pos,
     waitingOn: waitingOn(board, key),
     why: whyText(need, fileText),
+    pinText: whySource(need) === 'text' ? whyText(need) : '',
     whyFile: whyFile(board, need),
     source: [need?.from, { excerpt: 'excerpt', file: 'RESULT.md' }[whySource(need)], ageText(need?.at, now)].filter(Boolean).join(' · '),
     refs: sheetRefs(board, need),
@@ -233,12 +235,13 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
  * page, `1`-`3` press that option when there is one (`options`); anything else is left alone, so the sheet takes
  * nothing it has no use for. A held key is ignored. Returns {type: 'close' | 'prev' | 'next' | 'option', index?} or {type: 'ignore'}.
  */
-export function sheetKeyAction(keystroke, { options = 0, held = false } = {}) {
+export function sheetKeyAction(keystroke, { options = 0, held = false, copy = null } = {}) {
   if (held) return { type: 'ignore' }
   const k = String(keystroke ?? '').toLowerCase()
   if (k === 'escape') return { type: 'close' }
   if (k === 'left') return { type: 'prev' }
   if (k === 'right') return { type: 'next' }
+  if (copy) return { type: 'copy', chord: copy }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
   if (n && n <= options) return { type: 'option', index: n - 1 }
   return { type: 'ignore' }
@@ -263,16 +266,23 @@ export function sheetMore(view, size) {
   const width = size.narrow ? size.w - 40 : 420
   const options = view.options.reduce((sum, o) => sum + 44 + (o.impact ? 4 + LINE_H * textRows(o.impact, width) : 0), 0)
   const done = view.face === 'resolved' ? 8 + LINE_H : 0
+  const copies = view.pinText ? 30 * copyTargets(view.pinText).length : 0 // a Copy row: 24 and a gap
   // Above and below the scrolling part: padding, header and gaps, then the waiting line, column label and actions if outside.
-  if (!size.narrow) return options + done > size.h - 176
+  if (!size.narrow) return options + done + copies > size.h - 176
   const why = 24 + LINE_H * textRows(view.why || ' ', width - 28)
-  return LINE_H * 3 + 24 + options + done + why > size.h - 102
+  return LINE_H * 3 + 24 + options + done + why + copies > size.h - 102
 }
 
 /** The line under the sheet: which keys do what, and first of all (it may be cut) that there is more to scroll to. */
-export function sheetHint({ options = 0, paged = false, more = false } = {}) {
+export function sheetHint({ options = 0, paged = false, more = false, copy = false } = {}) {
   const n = Math.min(Math.max(Number(options) || 0, 0), 3)
-  return [more ? 'scroll for more' : '', n ? `${n === 1 ? '1' : `1-${n}`} choose` : '', paged ? '← → page' : '', 'esc closes']
+  return [
+    more ? 'scroll for more' : '',
+    n ? `${n === 1 ? '1' : `1-${n}`} choose` : '',
+    paged ? '← → page' : '',
+    copy ? 'c copies' : '',
+    'esc closes',
+  ]
     .filter(Boolean)
     .join(' · ')
 }
