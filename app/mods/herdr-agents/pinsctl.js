@@ -1,6 +1,6 @@
 // Opens and closes the pin drop panel and the all-pins popover (role `pins`). One overlay at a time, with the board
 // pop-up and the card: overlayPlan() says what to close. Ids are kept in shared so any copy of the mod can close them.
-import { closeOverlay, openOverlay, setShared, settings, shared } from 'herdr'
+import { closeOverlay, focused, openOverlay, setShared, settings, shared } from 'herdr'
 import { closeCard } from './cardctl.js'
 import { PINS_ALL_W, allPinsHeight, fitHeight, overlayPlan, panelHeight, pinsSpot } from './model.js'
 
@@ -49,7 +49,18 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
     height,
     at: { x: spot.x, y: spot.y },
     // The pins go in the props: the overlay is a new copy of the mod and reads no board of its own (it would start late).
-    props: { role: 'pins', view, session, id, list, height, width: view === 'panel' ? spot.width : PINS_ALL_W, bar },
+    props: {
+      role: 'pins',
+      view,
+      session,
+      id,
+      list,
+      height,
+      width: view === 'panel' ? spot.width : PINS_ALL_W,
+      bar,
+      back: focused()?.terminal,
+      space: focused()?.space,
+    },
   })
   setShared('hrd.pins', overlay)
 }

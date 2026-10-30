@@ -42,13 +42,15 @@ function makeElement() {
 }
 
 /** What the fake `herdr` module reads and records; a test sets these before it renders. */
-export const app = { props: null, store: {}, opened: [], closed: [], viewport: null }
+export const app = { props: null, store: {}, opened: [], closed: [], viewport: null, focused: null, ran: [] }
 
 globalThis.__fakeGpui = {
   div: makeElement,
   svg: makeElement,
   View: class {},
   closeOverlay: id => app.closed.push(id),
+  focused: () => app.focused ?? null,
+  run: (name, args) => app.ran.push([name, args]),
   openOverlay: o => {
     app.opened.push(o)
     return `o${app.opened.length}`

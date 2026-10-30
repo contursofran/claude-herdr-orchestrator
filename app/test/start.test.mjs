@@ -125,3 +125,18 @@ test('a new strip copy replaces the board pop-up the last copy opened, by its sh
   assert.deepEqual(state.closed, ['o3'])
   assert.equal(state.store['hrd.popup'], 'o4')
 })
+
+test('an overlay copy takes the keyboard after its first draw', async () => {
+  const handle = {
+    focused: 0,
+    focus() {
+      this.focused++
+    },
+  }
+  const tasks = []
+  state.props = { role: 'pins' }
+  new HerdrAgents().init(state.props, { ...cx, focus_handle: () => handle, spawn: f => tasks.push(f) })
+  assert.equal(handle.focused, 0)
+  await tasks[0]({ sleep: async () => {}, notify() {} })
+  assert.equal(handle.focused, 1)
+})

@@ -1,6 +1,6 @@
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, props, setShared, shared } from 'herdr'
-import { ageText, markAllRead, markRead, orderPins, pinContext } from './model.js'
+import { closeOverlay, focused, props, run, setShared, shared } from 'herdr'
+import { ageText, canRefocus, markAllRead, markRead, orderPins, pinContext } from './model.js'
 import { openPins } from './pinsctl.js'
 import { color, font, icon, pinsLook, row } from './tokens.js'
 
@@ -194,15 +194,32 @@ function requestDone(pin, session) {
 /**
  * The overlay's view. Its root has a fixed size (props() from pinsctl.js): a `size_full` root in a popup draws nothing.
  * The pins come in props().list, as they were when it opened; only the read marks are read live (shared "hrd.read").
- *   gone  a Set of pin ids Done here, hidden at once (an undo shows them again on reopening)
+ *   gone    a Set of pin ids Done here, hidden at once (an undo shows them again on reopening)
+ *   handle  the focus handle that takes the keyboard (main.js), so Esc reaches this overlay and not the terminal
  */
-export function pinsView(gone) {
+export function pinsView(gone, handle) {
   const p = props() ?? {}
   const read = shared('hrd.read') ?? {}
   const list = (p.list ?? []).filter(x => !gone.has(x.id)).map(x => ({ ...x, unread: read[x.id] !== true }))
-  const root = div().id('pins-overlay').w(Number(p.width)).h(Number(p.height)).flex_none().flex().flex_col().text_size(font.size)
+  // This overlay took the keyboard: closing it gives it back to the terminal that had it, unless the owner changed space.
+  const close = () => {
+    setShared('hrd.pins', null)
+    closeOverlay(p.overlay)
+    if (canRefocus(p, focused()?.space)) run('pane.focus', { terminal: p.back })
+  }
+  const root = div()
+    .id('pins-overlay')
+    .track_focus(handle)
+    .on_key_down(e => {
+      if (String(e.keystroke ?? e.key).toLowerCase() === 'escape') close()
+    })
+    .w(Number(p.width))
+    .h(Number(p.height))
+    .flex_none()
+    .flex()
+    .flex_col()
+    .text_size(font.size)
   const session = p.session
-  const close = () => closeOverlay(p.overlay)
   const bar = () => p.bar
   const done = (pin, cx) => {
     requestDone(pin, session)

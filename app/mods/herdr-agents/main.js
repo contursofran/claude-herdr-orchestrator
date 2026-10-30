@@ -35,6 +35,13 @@ export default class HerdrAgents extends View {
       // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
       // `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
+      // Takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal.
+      this.keys = cx.focus_handle()
+      cx.spawn(async cx => {
+        await cx.sleep(60)
+        this.keys.focus()
+        cx.notify()
+      })
       return
     }
     if (props()?.role === 'board') {
@@ -82,7 +89,7 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
-    if (props()?.role === 'pins') return pinsView(this.gone)
+    if (props()?.role === 'pins') return pinsView(this.gone, this.keys)
     if (props()?.role === 'board') return popupView(this.boards.list().find(b => b.session === props().session))
     const draw = roles[props()?.role]
     if (!draw) return div()
