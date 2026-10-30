@@ -4,6 +4,9 @@ import { test } from 'node:test'
 import { Arrivals } from '../mods/herdr-agents/arrivals.js'
 import {
   FLASH_MS,
+  coreIdOf,
+  heartbeat,
+  localCoordinators,
   SENT_HIDE_MS,
   UNDO_MS,
   actionFile,
@@ -641,6 +644,19 @@ test('S12: a terminal labelled as a worker is never a coordinator, even with a l
   assert.deepEqual(aliveBoards(boards, terminals), [])
   assert.deepEqual(orchestratorSection([agent('t1')], boards, terminals).orchestrators, [])
   assert.equal(resolveBoard(boards, terminals, focus('t1')).board, null)
+})
+
+test("S6: the heartbeat lists live local coordinators only: another machine's t4 is not this machine's t4", () => {
+  const boards = [board('a', 't1'), board('b', 'vps/t4'), board('c', 't1'), board('d', 't9'), board('e', 't3')]
+  const terminals = [term('t1'), term('vps/t4'), term('t3', { program: { agent: false } })]
+  assert.deepEqual(localCoordinators(boards, terminals), ['t1'])
+  assert.deepEqual(JSON.parse(heartbeat(boards, terminals, 5000)), { at: 5000, terminals: ['t1'] })
+  assert.deepEqual(JSON.parse(heartbeat([], [], 7)), { at: 7, terminals: [] })
+  // The core's id rides along when known; a missing one is left out.
+  assert.deepEqual(JSON.parse(heartbeat(boards, terminals, 5, 'c1')), { at: 5, terminals: ['t1'], core: 'c1' })
+  assert.equal(coreIdOf('{"core":{"id":"c1","name":"x"}}'), 'c1')
+  assert.equal(coreIdOf('{"core":{}}'), '')
+  assert.equal(coreIdOf('nope'), '')
 })
 
 // ---- S3: the strip ----
