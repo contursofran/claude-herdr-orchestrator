@@ -17,6 +17,32 @@ const block = (id, px, role) => ({
   content: { mod: 'herdr-agents', props: { role } },
 })
 
+/** The answer card: a panel row between the work area and the strip, hidden until the owner opens it (it then resizes the
+ *  terminal by its height, and only then). The height is set by `layout.resize` on each open. */
+const cardBlock = () => ({ ...block('hrd-card', 120, 'card'), hidden: true })
+
+const findNode = (node, id) => {
+  if (node?.id === id) return node
+  for (const child of node?.children ?? []) {
+    const found = findNode(child, id)
+    if (found) return found
+  }
+  return null
+}
+
+/** Adds the card block to the `work` column of `layout`, right before the strip (else after `work-body`), in place.
+ *  true if it added it; false when it is there already or the column has no place for it. Nothing else is touched. */
+export function addCard(layout) {
+  if (findNode(layout, 'hrd-card')) return false
+  const kids = findNode(layout, 'work')?.children
+  if (!kids) return false
+  let at = kids.findIndex(c => c.id === 'hrd-strip')
+  if (at < 0) at = kids.findIndex(c => c.id === 'work-body') + 1
+  if (at <= 0) return false
+  kids.splice(at, 0, cardBlock())
+  return true
+}
+
 const agentsList = { mod: 'herdr-agents', props: { role: 'agents' } }
 
 /** Points the `agents` block (Herdr's agents list) at this mod's copy, which has the Orchestrators section.
@@ -56,6 +82,7 @@ export function coordinatorLayout(main, version) {
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
+  addCard(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
@@ -71,7 +98,9 @@ export function writeCoordinatorLayout(home) {
     } catch {
       return 'exists'
     }
-    if (!repointAgents(layout)) return 'exists'
+    // Both edits run: `||` would skip the second one.
+    const changed = [repointAgents(layout), addCard(layout)].some(Boolean)
+    if (!changed) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
     return 'updated'
@@ -97,7 +126,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents list now uses the Orchestrators copy.'
+          ? 'Layout "coordinator" exists; only its agents list and answer card were brought up to date.'
           : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {

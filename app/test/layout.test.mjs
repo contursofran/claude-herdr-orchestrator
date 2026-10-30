@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
+import { addCard, coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
 
 // The shape of Herdr's main layout where it matters: work is tabs / work-body / status.
 const main = () => ({
@@ -27,8 +27,16 @@ const ids = layout => layout.children[1].children.map(c => c.id)
 
 test("the pin bar goes after tabs and the strip after work-body, with the plan's sizes and roles", () => {
   const layout = coordinatorLayout(main())
-  assert.deepEqual(ids(layout), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'status'])
-  const [, pins, , strip] = layout.children[1].children
+  assert.deepEqual(ids(layout), ['tabs', 'hrd-pins', 'work-body', 'hrd-card', 'hrd-strip', 'status'])
+  const [, pins, , card, strip] = layout.children[1].children
+  assert.deepEqual(card, {
+    id: 'hrd-card',
+    type: 'block',
+    size: { px: 120 },
+    resizable: false,
+    hidden: true,
+    content: { mod: 'herdr-agents', props: { role: 'card' } },
+  })
   assert.deepEqual(pins, {
     id: 'hrd-pins',
     type: 'block',
@@ -77,7 +85,7 @@ test('writeCoordinatorLayout writes the file once and never overwrites it', () =
     writeFileSync(join(home, 'layouts', 'main.json'), JSON.stringify(main()))
     assert.equal(writeCoordinatorLayout(home), 'written')
     const target = join(home, 'layouts', 'coordinator.json')
-    assert.deepEqual(ids(JSON.parse(readFileSync(target, 'utf8'))), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'status'])
+    assert.deepEqual(ids(JSON.parse(readFileSync(target, 'utf8'))), ['tabs', 'hrd-pins', 'work-body', 'hrd-card', 'hrd-strip', 'status'])
     writeFileSync(target, '{"mine":true}')
     assert.equal(writeCoordinatorLayout(home), 'exists')
     assert.equal(readFileSync(target, 'utf8'), '{"mine":true}')
@@ -143,6 +151,12 @@ test('a coordinator layout that exists gets its agents block repointed and nothi
     const got = JSON.parse(readFileSync(target, 'utf8'))
     assert.deepEqual(got.children[0].children[0].content, { mod: 'herdr-agents', props: { role: 'agents' } })
     got.children[0].children[0].content = { mod: 'agents' }
+    // The card block is the only other addition, after work-body; the owner's own block stays where it was.
+    assert.deepEqual(
+      got.children[1].children.map(c => c.id),
+      ['tabs', 'mine', 'work-body', 'hrd-card', 'status'],
+    )
+    got.children[1].children.splice(3, 1)
     assert.deepEqual(got, old)
     assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
     writeFileSync(target, 'not json')
@@ -151,4 +165,32 @@ test('a coordinator layout that exists gets its agents block repointed and nothi
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
+})
+
+test('an existing coordinator layout that is up to date apart from the card gets the card before its strip', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hrd-layout-'))
+  try {
+    mkdirSync(join(home, 'layouts'))
+    writeFileSync(join(home, 'layouts', 'main.json'), JSON.stringify(main()))
+    const target = join(home, 'layouts', 'coordinator.json')
+    const old = coordinatorLayout(main())
+    old.children[1].children = old.children[1].children.filter(c => c.id !== 'hrd-card')
+    old.children[1].children[1].size = { px: 50 } // the owner's own edit
+    writeFileSync(target, JSON.stringify(old))
+    assert.equal(writeCoordinatorLayout(home), 'updated')
+    const got = JSON.parse(readFileSync(target, 'utf8'))
+    assert.deepEqual(ids(got), ['tabs', 'hrd-pins', 'work-body', 'hrd-card', 'hrd-strip', 'status'])
+    assert.deepEqual(got.children[1].children[1].size, { px: 50 })
+    assert.equal(writeCoordinatorLayout(home), 'exists')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('addCard adds the block once, and not to a layout without a work column', () => {
+  const layout = main()
+  assert.equal(addCard(layout), true)
+  assert.deepEqual(ids(layout), ['tabs', 'work-body', 'hrd-card', 'status'])
+  assert.equal(addCard(layout), false)
+  assert.equal(addCard({ id: 'root', children: [] }), false)
 })

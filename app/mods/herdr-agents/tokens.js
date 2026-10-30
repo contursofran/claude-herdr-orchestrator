@@ -33,3 +33,15 @@ export const strip = {
   muted: '#8A8A8A',
   spin: 1400,
 }
+
+// The answer card (S5), a panel row below the terminal.
+export const card = {
+  bg: '#1A1A1A',
+  border: '#3A3A3A',
+  meta: '#7A7A7A',
+  impact: '#8A8A8A',
+  keyBorder: '#333333',
+  kbd: '#2A2A2A',
+  kbdRec: '#BDBDBD',
+  hover: '#1E1E1E',
+}

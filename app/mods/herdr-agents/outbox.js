@@ -43,7 +43,7 @@ export class Outbox {
     if (!due.length) return
     cx.spawn(async cx => {
       for (const q of due) {
-        const entry = { id: q.id, session: q.session, key: q.key, at: this.now() }
+        const entry = { id: q.id, session: q.session, key: q.key, action: q.action, at: this.now() }
         this.sent.push(entry)
         try {
           await this.send(q.session, q.action, q.id)

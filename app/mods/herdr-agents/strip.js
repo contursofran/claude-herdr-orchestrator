@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { nextCommand, run, setShared, shared, terminals } from 'herdr'
+import { nextCommand, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -13,6 +13,7 @@ import {
   pickNumber,
   stripItems,
 } from './model.js'
+import { closeCard, openCard } from './cardctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
 const white = color.text
@@ -83,12 +84,16 @@ export class StripState {
     })
   }
 
-  /** Select a tab. A click on the selected one deselects it (`toggle`); a key never does, so a command that
-   *  reaches the mod twice leaves it selected. */
+  /** Select a tab and open the card for it (the owner's click or key: the only thing that resizes the terminal). A click
+   *  on the selected one deselects it and closes the card (`toggle`); a key never does, so a command that reaches the
+   *  mod twice leaves it open. */
   pick(board, item, toggle = true) {
     const id = `${board.session}:${item.key}`
     this.seen.add(id)
-    setShared('hrd.pick', nextPick(shared('hrd.pick'), board.session, item.key, toggle))
+    const current = shared('hrd.pick')
+    const next = nextPick(current, board.session, item.key, toggle)
+    if (!next) closeCard()
+    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) openCard(board, item, null, terminals())
   }
 }
 

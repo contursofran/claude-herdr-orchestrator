@@ -496,3 +496,106 @@ export function nextPick(current, session, key, toggle) {
   if (toggle && current?.session === session && current?.key === key) return null
   return { session, key }
 }
+
+// --- S5: the answer card, a hidden panel row below the terminal ---
+
+/** The card block's id in the layout. */
+export const CARD_ID = 'hrd-card'
+
+/** The `answer` action file body for one decision. */
+export const answerAction = (key, answer) => ({ action: 'answer', key, answer })
+
+/** Panel height in px for a face (`ask`, `do`, `resolved`, `blocked`) and an option count: border 2 + padding 28, the
+ *  header 20, a gap of 12 before each row, a question or note 40 (two lines), a row of buttons 28 with 6 between. */
+export function cardHeight(face, options = 0) {
+  const base = 30 + 20
+  const rows = Math.min(Math.max(Number(options) || 0, 1), 6)
+  if (face === 'ask') return base + 12 + 40 + 12 + rows * 28 + (rows - 1) * 6
+  if (face === 'do') return base + 12 + 40 + 12 + 28
+  if (face === 'blocked') return base + 12 + 20 + 12 + 28
+  return base + 12 + 28 // resolved
+}
+
+/**
+ * What the card draws for item `key` of `board`, pure. `queue` are actions waiting out their undo time, `sent` the ones
+ * sent and not yet settled (both with {id, session, key, action}); `terminals` is terminals(), for a blocked worker's tab.
+ * face: `resolved` when an action for it waits or went out, or when it is no longer open on the board;
+ * `blocked` for a worker (key `w:<name>`); `ask` and `do` for open needs.
+ */
+export function cardView(board, key, { queue = [], sent = [], terminals = [], now = 0 } = {}) {
+  if (!board || !key) return null
+  const mine = q => q.session === board.session && q.key === key
+  const waiting = queue.filter(mine).pop()
+  const out = waiting ?? sent.filter(mine).pop()
+  const need = openNeeds(board).find(n => n.key === key && (n.kind === 'ask' || n.kind === 'do'))
+  const named = (board.needs ?? []).find(n => n.key === key)
+  const worker = key.startsWith('w:') ? (board.workers ?? []).find(w => w.name === key.slice(2)) : null
+  const title = firstLine(need?.title ?? named?.title) || firstLine(need?.text ?? named?.text) || (worker ? firstLine(worker.note) : '')
+  if (out) {
+    const answered = out.action?.action === 'answer'
+    return {
+      face: 'resolved',
+      key,
+      id: worker ? worker.name : key,
+      title,
+      verb: answered ? 'answer' : 'done',
+      detail: answered ? out.action.answer : '',
+      sent: !waiting,
+      undoId: waiting ? waiting.id : null,
+    }
+  }
+  if (worker && worker.state === 'blocked') {
+    return {
+      face: 'blocked',
+      key,
+      id: worker.name,
+      title: firstLine(worker.note) || 'stuck',
+      terminal: (terminals ?? []).find(t => t.name === worker.name)?.address ?? null,
+    }
+  }
+  if (!need) return { face: 'resolved', key, id: worker ? worker.name : key, title, verb: 'closed', detail: '', sent: true, undoId: null }
+  const options = (Array.isArray(need.options) ? need.options : []).filter(o => typeof o === 'string')
+  const impacts = Array.isArray(need.impacts) ? need.impacts.map(i => (typeof i === 'string' ? i : '')) : []
+  return {
+    face: need.kind,
+    key,
+    id: key,
+    title,
+    text: String(need.text ?? ''),
+    options,
+    recommended: Number.isInteger(need.recommended) ? need.recommended : -1,
+    impacts,
+    url: typeof need.url === 'string' && need.url ? need.url : null,
+    meta: [need.from, ageText(need.at, now)].filter(Boolean).join(' · '),
+  }
+}
+
+/** The open item after `key` on the strip's list, wrapping, leaving out items whose action waits or went out
+ *  (`hidden`, a Set of read keys). null when no other is left. */
+export function nextItem(board, key, hidden = new Set()) {
+  const items = stripItems(board).filter(i => i.key === key || !hidden.has(readKey(board.session, i.key)))
+  const at = items.findIndex(i => i.key === key)
+  const rest = at < 0 ? items : [...items.slice(at + 1), ...items.slice(0, at)]
+  return rest.find(i => i.key !== key) ?? null
+}
+
+const MODIFIER_KEYS = new Set(['shift', 'control', 'ctrl', 'alt', 'option', 'cmd', 'meta', 'super', 'fn', 'capslock'])
+
+/**
+ * What a key does while the card has the keyboard. `1`-`3` answer (a decision) or press Done / Open link (a to-do),
+ * Esc closes, a modifier alone is ignored, and any other key closes the card and is lost.
+ * Returns {type: 'answer', index} | {type: 'done'} | {type: 'link'} | {type: 'close'} | {type: 'ignore'}.
+ */
+export function cardKeyAction(face, key, { options = 0, url = false } = {}) {
+  const k = String(key ?? '').toLowerCase()
+  if (MODIFIER_KEYS.has(k)) return { type: 'ignore' }
+  if (k === 'escape') return { type: 'close' }
+  const n = /^[1-3]$/.test(k) ? Number(k) : 0
+  if (face === 'ask' && n && n <= options) return { type: 'answer', index: n - 1 }
+  if (face === 'do' && n === 1) return { type: 'done' }
+  if (face === 'do' && n === 2 && url) return { type: 'link' }
+  return { type: 'close' }
+}
+
+/** The shared("hrd.open") value after opening `key` on `session`: keeps the terminal to give back, else takes `back`. */
+export const openState = (current, session, key, back) => ({ session, key, back: current?.back ?? back ?? null })
