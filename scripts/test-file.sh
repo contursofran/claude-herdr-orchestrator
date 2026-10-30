@@ -28,4 +28,5 @@ for file in "$@"; do
   mkdir -p "$tmp/$(dirname "$file")"
   cp "$here/$file" "$tmp/$file"
 done
-claude plugin test "$tmp"
+# Low priority, so the run does not slow the window beside it.
+nice -n 10 claude plugin test "$tmp"
