@@ -97,13 +97,25 @@ async function prune($: EngineInterface) {
   return { text: done.length ? `Removed ${done.length} merged worktree(s):\n${done.join('\n')}` : 'No merged, clean worktrees to remove.' }
 }
 
-// `/hrd-update`: pulls the clone install.sh ran from (recorded in the mod's `clone` file) and runs its
-// install.sh again. Running sessions reload the mod by themselves, so the answer says only what changed.
+// `/hrd-update`: switches the clone install.sh ran from (recorded in the mod's `clone` file) to main,
+// pulls it and runs its install.sh again. Releases land on main, so a clone left on a feature branch
+// still updates. Running sessions reload the mod by themselves, so the answer says only what changed.
 async function update($: EngineInterface) {
   const clone = (await $.fs.read(`${$.plugin.root}/clone`).catch(() => '')).trim()
   if (!clone) return { text: 'Nothing updated: no clone is recorded for herdr-agents. Run ./install.sh from your clone once.' }
   const before = (await run($, ['git', '-C', clone, 'rev-parse', '--short', 'HEAD'])).stdout.trim()
-  const pull = await run($, ['git', '-C', clone, 'pull', '--ff-only'], 120_000)
+  const branch = (await run($, ['git', '-C', clone, 'branch', '--show-current'])).stdout.trim()
+  if (branch !== 'main') {
+    const dirty = (await run($, ['git', '-C', clone, 'status', '--porcelain'])).stdout.trim()
+    if (dirty)
+      return {
+        text: `Update stopped: ${clone} is on ${branch || 'a detached HEAD'} with uncommitted changes; commit them or switch it to main.`,
+      }
+    const checkout = await run($, ['git', '-C', clone, 'checkout', 'main'])
+    if (checkout.exitCode !== 0)
+      return { text: `Update stopped: git checkout main failed in ${clone}, install.sh did not run: ${lastLines(checkout.stderr)}` }
+  }
+  const pull = await run($, ['git', '-C', clone, 'pull', '--ff-only', 'origin', 'main'], 120_000)
   if (pull.exitCode !== 0)
     return { text: `Update stopped: git pull --ff-only failed in ${clone}, install.sh did not run: ${lastLines(pull.stderr)}` }
   const after = (await run($, ['git', '-C', clone, 'rev-parse', '--short', 'HEAD'])).stdout.trim()
@@ -111,8 +123,10 @@ async function update($: EngineInterface) {
   if (install.exitCode !== 0) return { text: `Update stopped: install.sh failed in ${clone}: ${lastLines(install.stderr)}` }
   const version = JSON.parse(await $.fs.read(`${clone}/.claude-plugin/plugin.json`)).version
   const reload = 'running sessions reload it by themselves.'
-  if (before === after) return { text: `herdr-agents is up to date at ${after}, version ${version}. install.sh ran again; ${reload}` }
-  return { text: `herdr-agents updated from ${before} to ${after}, version ${version}. Installed; ${reload}` }
+  const switched = branch === 'main' ? '' : ` (switched from ${branch || 'a detached HEAD'} to main)`
+  if (before === after)
+    return { text: `herdr-agents is up to date at ${after}${switched}, version ${version}. install.sh ran again; ${reload}` }
+  return { text: `herdr-agents updated from ${before} to ${after}${switched}, version ${version}. Installed; ${reload}` }
 }
 
 // Runs a command. One that cannot start, or runs past its timeout, reads as failed, its error as stderr.
