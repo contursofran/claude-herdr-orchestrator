@@ -1,6 +1,6 @@
 import { mock, test as kitTest } from 'claude-code/testing'
 import type { CommandRunInput, On } from 'claude-code'
-import type { Engine, MockClock, Mounted } from 'claude-code/testing'
+import type { Engine, MockClock, Mounted, Plugin } from 'claude-code/testing'
 import type { Settings } from '../types'
 
 // What the tests share: the band's render props, and start(), which stands in for the
@@ -12,10 +12,40 @@ import type { Settings } from '../types'
 const TIMEOUT_MS = 60_000
 export const test: typeof kitTest = ((name: string, ...rest: unknown[]) => {
   const [first] = rest
-  const opts = typeof first === 'function' ? undefined : (first as { timeoutMs?: number })
+  const opts = typeof first === 'function' ? undefined : (first as { timeoutMs?: number; plugins?: readonly Plugin[] })
   const tail = typeof first === 'function' ? rest : rest.slice(1)
-  return (kitTest as (...a: unknown[]) => unknown)(name, { ...opts, timeoutMs: Math.max(opts?.timeoutMs ?? 0, TIMEOUT_MS) }, ...tail)
+  const plugins = [CLOCK_HOLD, ...(opts?.plugins ?? [])]
+  return (kitTest as (...a: unknown[]) => unknown)(
+    name,
+    { ...opts, plugins, timeoutMs: Math.max(opts?.timeoutMs ?? 0, TIMEOUT_MS) },
+    ...tail,
+  )
 }) as typeof kitTest
+
+// The kit's clock lets go of a wait held past a hook's budget, ten seconds of real time, and that ends the mod's timer
+// for the rest of the test: a machine busy enough to slow a test past ten seconds loses its sweeps and PR polls. The time
+// a hook spends in next(e) is free, so this plugin, loaded beside the mod, asks again for a wait that start() hands back
+// not yet due (see resting). A test without start() keeps the kit's clock as it is.
+const CLOCK_HOLD: Plugin = {
+  name: 'clock-hold',
+  register(on) {
+    let holds = 0
+    on('clock.sleep', async (_, e, next) => {
+      const held = { ...e, hold: ++holds }
+      for (;;) {
+        const answer = (await next(held)) as { value?: unknown } | undefined
+        if (answer?.value !== 'not due' || next.signal.aborted) return answer as never
+      }
+    })
+    on('clock.every', async (_, e, next) => {
+      const held = { ...e, hold: ++holds }
+      for (;;) {
+        const answer = (await next(held)) as { value?: unknown } | undefined
+        if (answer?.value !== 'not due' || next.signal.aborted) return answer as never
+      }
+    })
+  },
+}
 
 export const BAND = {
   plugin: 'herdr-agents',
@@ -70,6 +100,23 @@ function parseArgs(args: string[]) {
   }
   return { pos, flags, rest: dash >= 0 ? args.slice(dash + 1) : [] }
 }
+
+// These tests have real timers, which the mod's types leave out.
+declare const setTimeout: (fn: () => void, ms: number) => number
+declare const clearTimeout: (timer: number) => void
+export const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+// How long a hook here waits on something of its own (see rest), well inside the ten seconds of a hook's budget.
+export const resting = { ms: 5000 }
+const rest = (held: Promise<unknown>) =>
+  new Promise<void>(resolve => {
+    const timer = setTimeout(resolve, resting.ms)
+    const end = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    void held.then(end, end)
+  })
 
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
 // to this session, the ones it typed into workers' terminals and the terminals it killed, and each
@@ -166,7 +213,32 @@ export async function start(
     const t = find(ref)
     return t && !t.removed && !gone.has(t.name) ? t : undefined
   }
-  const clock = mock.clock(on, { now: 1_000_000 })
+  // Each wait the kit's clock holds, by CLOCK_HOLD's number: handed back not yet due after a rest, and asked for again.
+  const held = new Map<number, { answer?: unknown; done: Promise<void> }>()
+  const clock = mock.clock(
+    ((name: string, hook: (...args: unknown[]) => Promise<unknown>) => {
+      const waits = name === 'clock.sleep' || name === 'clock.every'
+      const hold = async (hook$: unknown, e: { ms: number; hold?: number }, next: unknown) => {
+        if (e.hold === undefined) return hook(hook$, e, next)
+        let wait = held.get(e.hold)
+        if (!wait) {
+          const made: { answer?: unknown; done: Promise<void> } = { done: Promise.resolve() }
+          made.done = hook(hook$, { ms: e.ms }, next).then(
+            answer => void (made.answer = answer ?? { value: undefined }),
+            () => void (made.answer = { value: undefined }),
+          )
+          wait = made
+          held.set(e.hold, wait)
+        }
+        await rest(wait.done)
+        if (!wait.answer) return { value: 'not due' }
+        held.delete(e.hold)
+        return wait.answer
+      }
+      ;(on as (...a: unknown[]) => unknown)(name, waits ? hold : hook)
+    }) as unknown as On,
+    { now: 1_000_000 },
+  )
   latest = clock
   // The workers the stored jobs name are hc's already, listed at their status.
   for (const [key, value] of Object.entries(stored))
@@ -502,7 +574,11 @@ export async function start(
     streams.push(stream)
     try {
       for (;;) {
-        while (stream.queue.length === 0) await new Promise<void>(resolve => (stream.wake = resolve))
+        // A stream's budget starts anew with each piece, so a piece on stderr, which the mod does not read, keeps a quiet stream past it.
+        while (stream.queue.length === 0) {
+          await rest(new Promise<void>(resolve => (stream.wake = resolve)))
+          if (stream.queue.length === 0) yield { stream: 'stderr', text: ' ' }
+        }
         const line = stream.queue.shift()!
         if (pieces.split) {
           yield { stream: 'stdout', text: line.slice(0, 10) }
@@ -608,11 +684,15 @@ export async function spawn($: Engine, names: string[], cwd?: string, clock: Moc
     await clock.settle()
   }
 }
-// Settles until `done` holds, up to 200 times. Work the mod leaves running unawaited (a refresh
-// learning a repo's remote, the sidebar's PR poll) waits on a process.run answer that can land
-// after clock.settle() returns on a busy machine; the test's expect then checks it.
+// Settles until `done` holds, for up to UNTIL_MS of real time. Work the mod leaves running unawaited (a refresh
+// learning a repo's remote, the sidebar's PR poll) runs in the hooks worker, which a busy machine can hold up past
+// clock.settle(); the test's expect then checks it. This counts time, as settles can pass in microseconds.
+const UNTIL_MS = 30_000
 export async function until(clock: MockClock, done: () => boolean | Promise<boolean>) {
-  for (let i = 0; i < 200 && !(await done()); i++) await clock.settle()
+  for (const end = Date.now() + UNTIL_MS; !(await done()) && Date.now() < end; ) {
+    await clock.settle()
+    await pause(1)
+  }
 }
 
 // Their watch loops end before the test does.
