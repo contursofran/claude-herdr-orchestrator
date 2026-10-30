@@ -1,5 +1,6 @@
 // What the card keeps between draws. No `herdr` import: everything outside comes in as an argument, so it can be tested.
 import { CopyState } from './copystate.js'
+import { dropHeld, heldKeys, noteHeld } from './heldmodel.js'
 import { rowsSteady } from './model.js'
 import { Outbox } from './outbox.js'
 
@@ -23,12 +24,14 @@ export class CardState {
   /**
    * An answer or Done from the card or sheet: queue it, then move to the item `next(hidden)` finds ({key}, or null) with
    * go(item), or with none close with close(). A press right after a move is ignored, silently (it was aimed at the old
-   * item). Returns 'ignored', 'moved' or 'closed'.
+   * item). `held` = {get, set, surface} is the shared record of waiting actions (heldmodel.js): the action goes in, and items
+   * waiting in any copy are skipped. Returns 'ignored', 'moved' or 'closed'.
    */
-  step(cx, session, action, { now, next, go, close }) {
+  step(cx, session, action, { now, next, go, close, held }) {
     if (!rowsSteady(this, now)) return 'ignored'
     if (!this.schedule(cx, session, action)) return 'ignored'
-    const item = next(this.outbox.hidden())
+    if (held && action.key) held.set(noteHeld(held.get(), held.surface, session, action.key, now))
+    const item = next(this.hiddenAll(held, now))
     if (!item) {
       close()
       return 'closed'
@@ -38,9 +41,15 @@ export class CardState {
     return 'moved'
   }
 
-  /** Undo the action of the quiet line (`line` from quietLine) and go back to its item. */
-  undoTo(line, go) {
-    if (line.undoId) this.outbox.undo(line.undoId)
+  /** Read keys to skip: waiting or sent here, or held by any copy (`held` as for step). */
+  hiddenAll(held, now) {
+    return new Set([...this.outbox.hidden(), ...(held ? heldKeys(held.get(), now) : [])])
+  }
+
+  /** Undo the action of the quiet line (`line` from quietLine) and go back to its item. `held` as for step. */
+  undoTo(line, go, { held = null, session = null, now = Date.now() } = {}) {
+    if (line.undoId) this.undo(line.undoId, held, session, line.key)
+    this.movedAt = now // a move like any other: presses aimed at the old item are held off
     go({ key: line.key })
   }
 
@@ -56,8 +65,9 @@ export class CardState {
     return id
   }
 
-  undo(id) {
+  undo(id, held = null, session = null, key = null) {
     this.outbox.undo(id)
+    if (held && session && key) held.set(dropHeld(held.get(), session, key))
   }
 }
 
@@ -92,7 +102,7 @@ export function clearStaleSheet(get, set) {
 /** At app start: forget what the last run left in shared. Overlay ids restart with each run, so an old one could name another
  *  overlay; a Done request left behind was never undoable and is not sent now. */
 export function clearStaleOverlays(get, set) {
-  for (const key of ['hrd.pins', 'hrd.popup', 'hrd.doneReq', 'hrd.dismissed']) if (get(key)) set(key, null)
+  for (const key of ['hrd.pins', 'hrd.popup', 'hrd.doneReq', 'hrd.dismissed', 'hrd.held']) if (get(key)) set(key, null)
 }
 
 /**

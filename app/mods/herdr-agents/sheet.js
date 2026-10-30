@@ -6,9 +6,9 @@ import { copyKey } from './copystate.js'
 import { CardState, clearStaleSheet, firstThisRun } from './cardstate.js'
 import { button, faceIcon, ghost, keyButton, quietRow } from './card.js'
 import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetNext, sheetSize, sheetView, whyLines } from './sheetmodel.js'
-import { closeSheet, pageSheet } from './sheetctl.js'
+import { closeSheet, closeSheetHeld, pageSheet } from './sheetctl.js'
 import { noteDismissed } from './outside.js'
-import { pastFrame, quietLine } from './model.js'
+import { pastFrame, quietLines } from './model.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
 /** The sheet's state for this copy (main.js, role `sheet`): the card's (an Outbox for the undo window, the focus handle),
@@ -135,6 +135,7 @@ export function sheetBlock(boards, ctl, cx) {
   if (ctl.token !== token) {
     ctl.token = token
     ctl.copy.selected = false
+    ctl.copy.at = null
     cx.spawn(async cx => {
       await cx.sleep(60)
       ctl.h.focus()
@@ -142,25 +143,28 @@ export function sheetBlock(boards, ctl, cx) {
     })
   }
 
+  ctl.copy.moveTo(`${open.session}:${open.key}`) // paged or moved on: a selection made on the last item is not on this text
   const close = (_e, cx) => {
     closeSheet()
     cx.notify()
   }
   // An answer or Done queues the action and pages to the next open item, or closes with none.
+  const held = { get: () => shared('hrd.held'), set: v => setShared('hrd.held', v), surface: 'sheet' }
   const choose = (opt, cx) => {
     if (opt.action && board) {
       ctl.step(cx, board.session, opt.action, {
         now: Date.now(),
         next: hidden => sheetNext(board, open.key, hidden),
         go: item => pageSheet(item.key),
-        close: () => closeSheet(),
+        close: () => closeSheetHeld(cx), // the keyboard goes back to the terminal after the hold
+        held,
       })
       cx.notify()
     } else if (opt.url) exec('open', [opt.url]).catch(() => {})
   }
-  const line = quietLine(board, open.key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
-  const back = (_e, cx) => {
-    ctl.undoTo(line, item => pageSheet(item.key))
+  const lines = quietLines(board, open.key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
+  const back = line => (_e, cx) => {
+    ctl.undoTo(line, item => pageSheet(item.key), { held, session: board.session, now: Date.now() })
     cx.notify()
   }
   const askPrincipal = (_e, cx) => {
@@ -282,7 +286,7 @@ export function sheetBlock(boards, ctl, cx) {
     .when(view.undoId, el =>
       el.child(
         button('sheet-undo', 'undo', (_e, cx) => {
-          ctl.undo(view.undoId)
+          ctl.undo(view.undoId, held, board.session, open.key)
           cx.notify()
         }),
       ),
@@ -356,7 +360,7 @@ export function sheetBlock(boards, ctl, cx) {
         .px(20)
         .py(14)
         .child(header(view, board, close, cx, size.meta))
-        .when(line, el => el.child(quietRow(line, back)))
+        .children(lines.map(line => quietRow(line, back(line))))
         .when(!narrow && !gone, el => el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)))
         .when(gone, el => el.child(waiting).child(div().flex_1()))
         .when(narrow && !gone, el =>

@@ -1,12 +1,24 @@
 import { div, svg } from 'gpui-kit'
 import { exec, notify, run, settings, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
-import { closeCard, openCard } from './cardctl.js'
+import { closeCard, closeCardHeld, openCard } from './cardctl.js'
 import { copyableText } from './copy.js'
 import { copyKey, copyTargets } from './copystate.js'
 import { noteDismissed } from './outside.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem, pastFrame, quietLine, showNext } from './model.js'
+import {
+  answerAction,
+  cardFor,
+  cardHint,
+  cardKeyAction,
+  cardSize,
+  doneAction,
+  nextItem,
+  pastFrame,
+  quietLines,
+  rowsSteady,
+  showNext,
+} from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
 /** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
@@ -160,6 +172,7 @@ export function card(boards, ctl, cx) {
   if (ctl.token !== token) {
     ctl.token = token
     ctl.copy.selected = false
+    ctl.copy.at = null
     cx.spawn(async cx => {
       await cx.sleep(60)
       ctl.h.focus()
@@ -173,33 +186,35 @@ export function card(boards, ctl, cx) {
     cx.notify()
   }
   // An answer or Done queues the action and moves to the next open item, or closes with none (Esc's way back to the terminal).
+  const held = { get: () => shared('hrd.held'), set: v => setShared('hrd.held', v), surface: 'card' }
   const act = (action, cx) => {
     ctl.step(cx, board.session, action, {
       now: Date.now(),
       next: hidden => nextItem(board, key, hidden),
       go: item => openCard(board, item),
-      close: () => closeCard(),
+      close: () => closeCardHeld(cx), // the keyboard goes back to the terminal after the hold
+      held,
     })
     cx.notify()
   }
   const answer = (i, cx) => act(answerAction(key, view.options[i]), cx)
   const done = (_e, cx) => act(doneAction(key), cx)
-  const line = quietLine(board, key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
-  const back = (_e, cx) => {
-    ctl.undoTo(line, item => openCard(board, item))
+  const lines = quietLines(board, key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
+  const back = line => (_e, cx) => {
+    ctl.undoTo(line, item => openCard(board, item), { held, session: board.session, now: Date.now() })
     cx.notify()
   }
   const link = () => {
     if (view.url) exec('open', [view.url]).catch(() => {})
   }
   const next = (_e, cx) => {
-    const item = nextItem(board, key, ctl.outbox.hidden())
+    const item = nextItem(board, key, ctl.hiddenAll(held, Date.now()))
     if (item) openCard(board, item)
     cx.notify()
   }
 
   const body = div().id('card-scroll').flex().flex_col().gap(12).flex_1().min_h_0().overflow_y_scroll()
-  if (line) body.child(quietRow(line, back))
+  for (const line of lines) body.child(quietRow(line, back(line)))
   if (view.face === 'ask') {
     body.child(copyableText(`card-copy-${key}`, view.text, ctl.copy))
     body.child(
@@ -257,7 +272,7 @@ export function card(boards, ctl, cx) {
   } else if (view.face === 'gone') {
     body.child(div().text_color(color.soft).child('Its board is gone: the session ended or the app restarted.'))
   } else {
-    const more = nextItem(board, key, ctl.outbox.hidden())
+    const more = nextItem(board, key, ctl.hiddenAll(held, Date.now()))
     const text = view.detail
       ? `${view.verb} · ${view.detail} · ${view.sent ? 'sent' : 'sending'}`
       : `${view.verb} · ${view.sent ? 'sent' : 'sending'}`
@@ -270,7 +285,7 @@ export function card(boards, ctl, cx) {
         .when(view.undoId, el =>
           el.child(
             button('card-undo', 'undo', (_e, cx) => {
-              ctl.undo(view.undoId)
+              ctl.undo(view.undoId, held, board.session, key)
               cx.notify()
             }),
           ),
@@ -298,6 +313,7 @@ export function card(boards, ctl, cx) {
           options: view.options?.length ?? 0,
           url: Boolean(view.url),
           held: e.is_held,
+          settling: !rowsSteady(ctl, Date.now()),
           copy: canCopy ? copyKey(keystroke) : null,
         })
         if (act.type === 'ignore') return
