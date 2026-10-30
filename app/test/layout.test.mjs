@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { addCard, addSheet, coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
+import { addCard, addSheet, addVersion, coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
 
 // The shape of Herdr's main layout where it matters: work is tabs / work-body / status.
 const main = () => ({
@@ -27,7 +27,7 @@ const ids = layout => layout.children[1].children.map(c => c.id)
 
 test("the pin bar goes after tabs and the strip after work-body, with the plan's sizes and roles", () => {
   const layout = coordinatorLayout(main())
-  assert.deepEqual(ids(layout), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'status'])
+  assert.deepEqual(ids(layout), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
   const [, pins, body, strip] = layout.children[1].children
   assert.deepEqual(body.children[0].floating, [
     { id: 'hrd-card', content: { mod: 'herdr-agents', props: { role: 'card' } }, edge: 'bottom', align: 'center' },
@@ -59,6 +59,9 @@ test('everything else is main as it was, and main is not changed', () => {
   const layout = coordinatorLayout(input)
   assert.deepEqual(input, main())
   delete layout.cloned_from
+  // The status block's row goes back to the block it holds, at the row's height.
+  const row = layout.children[1].children.at(-1)
+  layout.children[1].children.push({ ...row.children[0], size: row.size })
   layout.children[1].children = layout.children[1].children.filter(c => !c.id.startsWith('hrd-'))
   layout.children[0].children[0].content = { mod: 'agents' }
   assert.equal(layout.children[1].children[1].children[0].floating.length, 2, 'only the floating card and sheet are added to main')
@@ -83,7 +86,7 @@ test('writeCoordinatorLayout writes the file once and never overwrites it', () =
     writeFileSync(join(home, 'layouts', 'main.json'), JSON.stringify(main()))
     assert.equal(writeCoordinatorLayout(home), 'written')
     const target = join(home, 'layouts', 'coordinator.json')
-    assert.deepEqual(ids(JSON.parse(readFileSync(target, 'utf8'))), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'status'])
+    assert.deepEqual(ids(JSON.parse(readFileSync(target, 'utf8'))), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
     writeFileSync(target, '{"mine":true}')
     assert.equal(writeCoordinatorLayout(home), 'exists')
     assert.equal(readFileSync(target, 'utf8'), '{"mine":true}')
@@ -149,13 +152,15 @@ test('a coordinator layout that exists gets its agents block repointed and nothi
     const got = JSON.parse(readFileSync(target, 'utf8'))
     assert.deepEqual(got.children[0].children[0].content, { mod: 'herdr-agents', props: { role: 'agents' } })
     got.children[0].children[0].content = { mod: 'agents' }
-    // The floating card on `main` is the only other addition; the owner's own block stays where it was.
+    // The floating card on `main` is another addition; the owner's own block stays where it was.
     assert.deepEqual(
       got.children[1].children.map(c => c.id),
-      ['tabs', 'mine', 'work-body', 'status'],
+      ['tabs', 'mine', 'work-body', 'hrd-status-row'],
     )
     assert.equal(got.children[1].children[2].children[0].floating[0].id, 'hrd-card')
     delete got.children[1].children[2].children[0].floating
+    // ...and the status block's row, which has a test of its own.
+    got.children[1].children[3] = old.children[1].children[3]
     assert.deepEqual(got, old)
     assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
     writeFileSync(target, 'not json')
@@ -191,7 +196,7 @@ test("the old hidden card row is removed and the floating card added, and the ow
   const { home, target } = layoutHome(t, old)
   assert.equal(writeCoordinatorLayout(home), 'updated')
   const got = JSON.parse(readFileSync(target, 'utf8'))
-  assert.deepEqual(ids(got), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'status'])
+  assert.deepEqual(ids(got), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
   assert.deepEqual(got.children[1].children[1].size, { px: 50 })
   assert.deepEqual(
     got.children[1].children[2].children[0].floating.map(f => f.id),
@@ -214,7 +219,7 @@ test('a floating card the owner dragged is left alone, and a leftover hidden row
   assert.equal(writeCoordinatorLayout(home), 'updated')
   const got = JSON.parse(readFileSync(target, 'utf8'))
   assert.deepEqual(got.children[1].children[2].children[0].floating, [dragged, sheet])
-  assert.deepEqual(ids(got), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'status'])
+  assert.deepEqual(ids(got), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
   assert.equal(before.includes('"edge":"right"'), true)
 })
 
@@ -244,6 +249,77 @@ test('with no main block the old card row goes, no card is added, and the result
   const { home, target } = layoutHome(t, old)
   assert.equal(writeCoordinatorLayout(home), 'updated-no-card')
   assert.equal(JSON.stringify(JSON.parse(readFileSync(target, 'utf8'))).includes('hrd-card'), false)
+})
+
+const versionRow = layout => layout.children[1].children.at(-1)
+
+test("the status block shares a fixed row with the version block, in the status block's place and height", () => {
+  assert.deepEqual(versionRow(coordinatorLayout(main())), {
+    id: 'hrd-status-row',
+    type: 'row',
+    size: { px: 28 },
+    resizable: false,
+    children: [
+      { id: 'status', type: 'block', size: { weight: 1 }, content: { mod: 'workspace-status' } },
+      {
+        id: 'hrd-version',
+        type: 'block',
+        size: { px: 190 },
+        resizable: false,
+        content: { mod: 'herdr-agents', props: { role: 'version' } },
+      },
+    ],
+  })
+})
+
+test('addVersion is repeatable and leaves alone a status block on another mod, or no status block', () => {
+  const layout = coordinatorLayout(main())
+  const once = structuredClone(layout)
+  assert.equal(addVersion(layout), false)
+  assert.deepEqual(layout, once)
+  const other = main()
+  other.children[1].children[2].content.mod = 'my-status'
+  const before = structuredClone(other)
+  assert.equal(addVersion(other), false)
+  assert.deepEqual(other, before)
+  assert.equal(addVersion({ id: 'root', children: [] }), false)
+})
+
+test('an existing coordinator layout gets the version block once and keeps its status settings', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hrd-layout-'))
+  try {
+    mkdirSync(join(home, 'layouts'))
+    const old = coordinatorLayout(main())
+    // As an install from before this change wrote it.
+    old.children[1].children[4] = { id: 'status', type: 'block', size: { px: 28 }, min: 20, content: { mod: 'workspace-status' } }
+    const target = join(home, 'layouts', 'coordinator.json')
+    writeFileSync(target, JSON.stringify(old))
+    assert.equal(writeCoordinatorLayout(home), 'updated')
+    const row = versionRow(JSON.parse(readFileSync(target, 'utf8')))
+    assert.deepEqual(
+      row.children.map(c => c.id),
+      ['status', 'hrd-version'],
+    )
+    assert.equal(row.children[0].min, 20)
+    assert.deepEqual(row.size, { px: 28 })
+    const first = readFileSync(target, 'utf8')
+    assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
+    assert.equal(readFileSync(target, 'utf8'), first)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a layout with no main block that only gains the version block reports updated, not a missing card', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hrd-layout-'))
+  try {
+    mkdirSync(join(home, 'layouts'))
+    const layout = { id: 'root', children: [{ id: 'status', type: 'block', size: { px: 28 }, content: { mod: 'workspace-status' } }] }
+    writeFileSync(join(home, 'layouts', 'coordinator.json'), JSON.stringify(layout))
+    assert.equal(writeCoordinatorLayout(home), 'updated')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('a layout with the card but no sheet gets the floating sheet added, and a sheet the owner moved is left alone', t => {

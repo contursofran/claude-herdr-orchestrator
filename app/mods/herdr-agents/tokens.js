@@ -32,6 +32,9 @@ export const strip = {
   pillOpen: '#262626',
   muted: '#8A8A8A',
   spin: 1400,
+  // The only hues in the strip: the context line near its limit.
+  ctxWarning: '#E5C07B',
+  ctxError: '#E06C75',
 }
 
 // The answer card (S5), floating over the terminal.

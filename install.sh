@@ -71,7 +71,22 @@ if [[ -d $app_home ]]; then
   # The app writes jsconfig.json and gpui-kit.d.ts into mod folders.
   # By content, keeping no times or modes: `-a` rewrites every file a checkout dated differently and `-p` chmods them all.
   # Either wakes the app's watcher, each hot reload leaves the window slower until it restarts (#158), so an unchanged file must see no event.
-  rsync -rlc --delete --exclude jsconfig.json --exclude gpui-kit.d.ts "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
+  # version.json stays through the rsync: rewriting it each time would reload every copy of the mod.
+  rsync -rlc --delete --exclude jsconfig.json --exclude gpui-kit.d.ts --exclude version.json "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
+  # What the status bar shows: the plugin's version, and the short commit if git can give it (the app mod is sometimes
+  # delivered between releases). Written beside it and renamed, and only when it changed.
+  commit=$(git -C "$here" rev-parse --short HEAD 2>/dev/null || true)
+  node - "$here/.claude-plugin/plugin.json" "$app_home/mods/herdr-agents" "$commit" <<'EOF' || echo "Version step failed; carrying on."
+const fs = require('fs')
+const [manifest, dir, commit] = process.argv.slice(2)
+const { version } = JSON.parse(fs.readFileSync(manifest, 'utf8'))
+const text = `${JSON.stringify(commit ? { version, commit } : { version })}\n`
+const target = `${dir}/version.json`
+if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== text) {
+  fs.writeFileSync(`${dir}/.version.json.tmp`, text)
+  fs.renameSync(`${dir}/.version.json.tmp`, target)
+}
+EOF
   # A layout or key problem is printed and does not stop the install.
   node "$here/app/layout.mjs" "$app_home" || echo "Layout step failed; carrying on."
   node "$here/app/keys.mjs" "$app_home" || echo "Keys step failed; carrying on."

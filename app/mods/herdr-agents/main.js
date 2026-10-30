@@ -10,6 +10,7 @@ import { makePopupState, popupView, releasePopup, takeKeyboard } from './popup.j
 import { PinCtl } from './pinctl.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
+import { readVersion, versionView } from './version.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
 // Role `agents` is the agents list (agents.js), which keeps state of its own. Roles still to come (board,
@@ -23,6 +24,14 @@ const roles = {
 
 export default class HerdrAgents extends View {
   init(_props, cx) {
+    if (props()?.role === 'version') {
+      // Read once: nothing here starts the boards or redraws other copies.
+      cx.spawn(async cx => {
+        this.version = await readVersion()
+        if (this.version) cx.notify()
+      })
+      return
+    }
     if (props()?.role === 'agents') {
       // The sort menu is a popup of this same mod: it needs neither the boards nor the list's state.
       this.agentsList = new AgentsList()
@@ -87,6 +96,7 @@ export default class HerdrAgents extends View {
   }
 
   render(cx) {
+    if (props()?.role === 'version') return versionView(this.version)
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
     if (props()?.role === 'pins') return pinsView(this.gone, this.keys)
     if (props()?.role === 'board')
