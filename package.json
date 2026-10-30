@@ -8,6 +8,7 @@
     "typecheck": "tsc -p . && tsc -p view",
     "validate": "claude plugin validate . && claude plugin validate view",
     "test": "claude plugin test .",
+    "test:app": "node --test app/test/",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run typecheck && npm run validate && npm test"

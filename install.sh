@@ -63,4 +63,15 @@ edit('keybindings.json', k => {
 })
 EOF
 
+# The Herdr app mod (app/): only when the app is there. It copies the mod, makes a "coordinator" layout beside "main"
+# (never switching to it) and adds the mod's keys without replacing any bound key.
+app_home=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
+if [[ -d $app_home ]]; then
+  mkdir -p "$app_home/mods/herdr-agents"
+  # The app writes jsconfig.json and gpui-kit.d.ts into mod folders.
+  rsync -a --delete --exclude jsconfig.json --exclude gpui-kit.d.ts "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
+  node "$here/app/layout.mjs" "$app_home"
+  node "$here/app/keys.mjs" "$app_home"
+fi
+
 echo "Installed herdr-agents into $claude. A first install loads in sessions started from now on; running sessions reload updates by themselves."

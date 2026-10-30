@@ -3,6 +3,7 @@
 Run: python3 -m unittest discover -s tests -p 'test_*.py'
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -18,9 +19,11 @@ class Install(unittest.TestCase):
     def setUp(self):
         self.config = tempfile.mkdtemp(prefix="hrd-install-test-")
         self.addCleanup(shutil.rmtree, self.config, True)
+        self.app = os.path.join(self.config, "no-app")
 
     def install(self):
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config)
+        # No app home unless a test makes one: install.sh must not touch the real Herdr app.
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app)
         return subprocess.run([INSTALL], capture_output=True, text=True, env=env, check=True)
 
     def recorded(self):
@@ -44,6 +47,24 @@ class Install(unittest.TestCase):
             f"Installed herdr-agents into {self.config}. A first install loads in sessions started from now on;"
             " running sessions reload updates by themselves.",
         )
+
+    def test_without_the_app_nothing_of_it_is_made(self):
+        self.install()
+        self.assertFalse(os.path.exists(self.app))
+
+    def test_with_the_app_the_mod_and_a_coordinator_layout_land_and_main_stays(self):
+        os.makedirs(os.path.join(self.app, "layouts"))
+        main = {"id": "root", "children": [{"id": "work", "children": [{"id": "tabs"}, {"id": "work-body"}]}]}
+        with open(os.path.join(self.app, "layouts", "main.json"), "w") as f:
+            json.dump(main, f)
+        self.install()
+        self.install()  # a second run leaves the layout and the keys as they are
+        with open(os.path.join(self.app, "layouts", "main.json")) as f:
+            self.assertEqual(json.load(f), main)
+        with open(os.path.join(self.app, "layouts", "coordinator.json")) as f:
+            work = json.load(f)["children"][0]["children"]
+        self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-strip"])
+        self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
 
 
 if __name__ == "__main__":

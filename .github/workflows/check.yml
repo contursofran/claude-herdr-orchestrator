@@ -23,5 +23,7 @@ jobs:
       - run: npm run format:check
       - run: npm run validate
       - run: npm test
+      - name: Herdr app mod tests
+        run: npm run test:app
       - name: Python script tests (hrd-metrics, hrd-eval)
         run: python3 -m unittest discover -s tests -p 'test_*.py'

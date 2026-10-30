@@ -3,3 +3,5 @@ node_modules/
 __pycache__/
 hooks/*.js
 tests/*.js
+app/mods/*/jsconfig.json
+app/mods/*/gpui-kit.d.ts
