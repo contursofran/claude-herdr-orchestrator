@@ -102,9 +102,34 @@ test('boardSpace: the space label of the coordinator terminal; projectName: its 
   assert.equal(projectName(null), '')
 })
 
-test('overlayPlan: one overlay at a time; the card hands the keyboard back when the pop-up replaces it', () => {
-  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+test('overlayPlan: one overlay at a time; the card or sheet hands the keyboard back when another replaces it', () => {
+  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), {
+    closePopup: true,
+    closeCard: false,
+    closeSheet: false,
+    refocus: false,
+  })
   assert.deepEqual(overlayPlan('card', { popup: false, card: false }).closePopup, false)
-  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), { closePopup: false, closeCard: true, refocus: true })
-  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), {
+    closePopup: false,
+    closeCard: true,
+    closeSheet: false,
+    refocus: true,
+  })
+  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), {
+    closePopup: true,
+    closeCard: false,
+    closeSheet: false,
+    refocus: false,
+  })
+  // The sheet (S9): opening it closes the pop-up and the card; opening either of those closes the sheet.
+  assert.deepEqual(overlayPlan('sheet', { popup: true, card: true }), {
+    closePopup: true,
+    closeCard: true,
+    closeSheet: false,
+    refocus: true,
+  })
+  assert.deepEqual(overlayPlan('sheet', {}), { closePopup: false, closeCard: false, closeSheet: false, refocus: false })
+  assert.deepEqual(overlayPlan('card', { sheet: true }), { closePopup: false, closeCard: false, closeSheet: true, refocus: true })
+  assert.deepEqual(overlayPlan('popup', { sheet: true }), { closePopup: false, closeCard: false, closeSheet: true, refocus: true })
 })

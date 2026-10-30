@@ -13,7 +13,7 @@ export function makeCardState(cx) {
   return new CardState({ send, notify, handle: cx.focus_handle() })
 }
 
-const ghost = (id, label, onClick) =>
+export const ghost = (id, label, onClick) =>
   div()
     .id(id)
     .flex_none()
@@ -27,7 +27,7 @@ const ghost = (id, label, onClick) =>
     .child(label)
 
 /** A button with a key hint: `[1] Cursor` (no hint: just the label). `rec` is the recommended one. */
-function keyButton(id, hint, label, rec, onClick) {
+export function keyButton(id, hint, label, rec, onClick) {
   return div()
     .id(id)
     .min_w_0()
@@ -66,7 +66,7 @@ function keyButton(id, hint, label, rec, onClick) {
 }
 
 /** A plain button without a key hint. */
-const button = (id, label, onClick, primary = false) =>
+export const button = (id, label, onClick, primary = false) =>
   div()
     .id(id)
     .flex_none()
@@ -83,7 +83,7 @@ const button = (id, label, onClick, primary = false) =>
     .on_mouse_down('left', onClick)
     .child(label)
 
-function faceIcon(face) {
+export function faceIcon(face) {
   if (face === 'ask') {
     return div()
       .size(14)

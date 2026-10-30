@@ -184,17 +184,21 @@ export function currentPin(list, sel = null) {
   return newestPin(list.filter(p => p.unread))
 }
 
-/** 'empty' (no pins: the row stays, with a quiet line), 'full' (a pin to show) or 'slim' (pins, all read). */
-export function pinbarMode(list, sel = null) {
+/** 'empty' (no pins: the row stays, with a quiet line), 'full' (a pin to show) or 'slim' (pins, all read, or `slim`
+ *  asked for while the sheet is open: the row keeps its height). */
+export function pinbarMode(list, sel = null, slim = false) {
   if (list.length === 0) return 'empty'
+  if (slim) return 'slim'
   return currentPin(list, sel) ? 'full' : 'slim'
 }
 
-/** The slim line: `N pins · nothing new · last: <title>`. */
-export function slimLine(list) {
+/** The slim line: `N pins · nothing new · last: <title>`; with `showNew` (the sheet forced the row slim) unread pins are
+ *  counted instead: `N pins · M new · last: <title>`. */
+export function slimLine(list, showNew = false) {
   const last = newestPin(list)
   if (!last) return ''
-  return `${list.length} ${list.length === 1 ? 'pin' : 'pins'} · nothing new · last: ${last.title}`
+  const unread = showNew ? list.filter(p => p.unread).length : 0
+  return `${list.length} ${list.length === 1 ? 'pin' : 'pins'} · ${unread ? `${unread} new` : 'nothing new'} · last: ${last.title}`
 }
 
 /** The segments: one per pin, in board order, with the kind the bar draws (current, unread, read). */
@@ -336,7 +340,7 @@ export const newBarState = () => ({ session: null, sel: null, seen: null, flashe
  * Returns {state, view, list, flashStart}: the next state, the data pinbar() draws (without handlers), and the pin id
  * whose flash starts now (once per pin), else null.
  */
-export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0 } = {}) {
+export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0, slim = false } = {}) {
   if (!board) return { state: prev, view: { mode: 'empty', waiting: [] }, list: [], flashStart: null }
   const list = pins(board, read, hidden)
   let { session, sel, seen, flashed } = prev
@@ -348,7 +352,7 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
   if (newPinIds(seen, list).length) sel = null // a new pin takes the bar back from a picked one
   seen = new Set(list.map(p => p.id))
 
-  const mode = pinbarMode(list, sel)
+  const mode = pinbarMode(list, sel, slim)
   const current = currentPin(list, sel)
   let flashStart = null
   if (mode === 'full' && current.unread && !flashed.has(current.id)) {
@@ -366,7 +370,7 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
       many: list.length > 1,
       empty: emptyLine(board),
       segments: segments(list, current),
-      slim: slimLine(list),
+      slim: slimLine(list, slim),
       meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
       waiting: waiting
         .filter(q => q.session === board.session)
@@ -739,15 +743,16 @@ export function rowAction(row, terminals, space = null) {
 }
 
 /**
- * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card}: booleans).
- * Opening the card closes the pop-up; opening the pop-up closes the card and hands the keyboard back (`refocus`),
- * because the card took it.
+ * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card, sheet}: booleans).
+ * The card and the sheet take the keyboard, so whichever of them is closed for another overlay hands it back (`refocus`).
  */
 export function overlayPlan(kind, open) {
   const popup = Boolean(open?.popup)
   const card = Boolean(open?.card)
-  if (kind === 'card') return { closePopup: popup, closeCard: false, refocus: false }
-  return { closePopup: popup, closeCard: card, refocus: card }
+  const sheet = Boolean(open?.sheet)
+  if (kind === 'card') return { closePopup: popup, closeCard: false, closeSheet: sheet, refocus: sheet }
+  if (kind === 'sheet') return { closePopup: popup, closeCard: card, closeSheet: false, refocus: card }
+  return { closePopup: popup, closeCard: card, closeSheet: sheet, refocus: card || sheet }
 }
 
 /** The action file for the header's wrap up / keep going: `on` is the state to set. */

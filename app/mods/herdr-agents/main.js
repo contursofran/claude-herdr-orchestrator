@@ -8,6 +8,7 @@ import { resolveBoard } from './model.js'
 import { pinbar } from './pinbar.js'
 import { popupView } from './popup.js'
 import { PinCtl } from './pinctl.js'
+import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
@@ -17,6 +18,7 @@ const roles = {
   pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
   strip: (board, x) => strip(board, x.strip),
   card: (_board, x) => card(x.strip.boards, x.card, x.cx),
+  sheet: (_board, x) => sheetBlock(x.strip.boards, x.sheet, x.cx),
 }
 
 export default class HerdrAgents extends View {
@@ -41,10 +43,11 @@ export default class HerdrAgents extends View {
     const pinbarCopy = props()?.role === 'pinbar'
     // The card has an Outbox of its own: it settles it here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
+    this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
     this.boards.start(cx, cx =>
-      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx),
+      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx),
     )
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
@@ -62,6 +65,7 @@ export default class HerdrAgents extends View {
     return draw(found.board, {
       pin: this.pin,
       card: this.card,
+      sheet: this.sheet,
       cx,
       strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
     })

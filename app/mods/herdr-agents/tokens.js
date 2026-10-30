@@ -46,3 +46,6 @@ export const card = {
 
 // The board pop-up (S7).
 export const popup = { bg: '#181818', border: '#3A3A3A', head: '#7A7A7A', rowHover: '#1C1C1C', cell: 44 }
+
+// The context sheet (S9), floating over the top of the terminal.
+export const sheet = { well: '#111111', wellBorder: '#262626', rule: '#222222', label: '#7A7A7A', waiting: '#8A8A8A', impact: '#BDBDBD' }

@@ -42,6 +42,13 @@ export function clearStaleOpen(get, set) {
   return true
 }
 
+/** The same for a sheet left open by the last run ("hrd.sheet"). true if there was one. */
+export function clearStaleSheet(get, set) {
+  if (!get('hrd.sheet')) return false
+  set('hrd.sheet', null)
+  return true
+}
+
 /**
  * What the boards' change callback does for the parts that care. `parts` = {pinbar: bool, pin, card, strip}; each of
  * the last three may be null. Redraws last.
