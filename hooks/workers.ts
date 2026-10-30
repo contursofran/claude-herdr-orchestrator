@@ -1160,14 +1160,9 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // for that task resent, did not open it and asked its DECISION lines again.
   // In the job's own step, so it cannot land between a report and the prompt that follows it.
   let result: { result: string } | { deny: string } | undefined
-  const step = serial(job.name, async () => {
+  await serial(job.name, async () => {
     const latest = await latestJob($, job.name)
     if (!latest) return
-    // It may have waited here for a while, and a stopped or closed worker must not start again.
-    if (latest.closed || latest.stopped) {
-      result = { deny: `${e.worker}'s tab was closed before the message went in` }
-      return
-    }
     if (latest.status === 'running') {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
@@ -1208,20 +1203,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     )
     result = { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
   })
-  const failed = () => (result && 'result' in result ? undefined : (result?.deny ?? `could not send to ${e.worker}`))
-  const ended = await Promise.race([step.then(() => true), $.clock.sleep(STEP_WAIT_MS).then(() => false)])
-  if (ended) return result ?? { deny: `could not send to ${e.worker}; try again` }
-  // The step goes on by itself. The tool call has returned, so a failure from here on reaches the coordinator
-  // as a notice. A prompt that is typed but never starts work is reported blocked by prompt itself.
-  void step
-    .then(async () => {
-      const why = failed()
-      if (why) await post($, `Your message to ${e.worker} did not go in: ${why}. It is saved in ${path}.`, false, { worker: e.worker })
-    })
-    .catch(() => {})
-  return {
-    result: `Queued for ${e.worker}, not delivered yet: its send has not gone through, as it may still be busy with an earlier step, so this call does not wait for it. The text is saved in ${path}. If it does not go in, you get a message saying so.`,
-  }
+  return result ?? { deny: `could not send to ${e.worker}; try again` }
 }
 
 export async function stopWorker($: EngineInterface, e: { worker: string }) {
