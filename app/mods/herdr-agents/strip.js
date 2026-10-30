@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, nextCommand, notify, openOverlay, playSound, run, shared, terminals } from 'herdr'
+import { closeOverlay, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -21,6 +21,7 @@ import {
 } from './model.js'
 import { Arrivals } from './arrivals.js'
 import { closeCard, openCard } from './cardctl.js'
+import { closePins } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
 const white = color.text
@@ -108,7 +109,9 @@ export class StripState {
     if (!next) closeCard()
     else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) {
       // One overlay at a time: the pop-up goes before the card opens.
-      if (overlayPlan('card', { popup: Boolean(popupId), card: false }).closePopup) closeBoardPopup()
+      const plan = overlayPlan('card', { popup: Boolean(popupId), card: false, pins: Boolean(shared('hrd.pins')) })
+      if (plan.closePopup) closeBoardPopup()
+      if (plan.closePins) closePins()
       openCard(board, item)
     }
   }
@@ -126,17 +129,19 @@ function closeBoardPopup() {
     closeOverlay(popupId)
   } catch {}
   popupId = null
+  setShared('hrd.popup', null)
 }
 
 export function openBoardPopup(board) {
   if (!board) return
   const height = popupHeight(workRows(board).length)
   const view = window.viewport_size()
-  const plan = overlayPlan('popup', { popup: Boolean(popupId), card: Boolean(shared('hrd.open')) })
+  const plan = overlayPlan('popup', { popup: Boolean(popupId), card: Boolean(shared('hrd.open')), pins: Boolean(shared('hrd.pins')) })
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
   if (plan.closePopup) closeBoardPopup()
+  if (plan.closePins) closePins()
   popupId = openOverlay({
     mod: 'herdr-agents',
     kind: 'popup',
@@ -146,6 +151,7 @@ export function openBoardPopup(board) {
     at: popupSpot(view.width, view.height, height),
     props: { role: 'board', session: board.session, height },
   })
+  setShared('hrd.popup', popupId)
 }
 
 function tab(item, board, state, now) {

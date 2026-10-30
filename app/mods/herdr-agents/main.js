@@ -5,7 +5,7 @@ import { Boards } from './board.js'
 import { card, makeCardState } from './card.js'
 import { onBoardsChanged } from './cardstate.js'
 import { resolveBoard } from './model.js'
-import { pinbar } from './pinbar.js'
+import { pinbar, pinsView } from './pinbar.js'
 import { popupView } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { StripState, strip } from './strip.js'
@@ -31,6 +31,12 @@ export default class HerdrAgents extends View {
       return
     }
     this.boards = new Boards()
+    if (props()?.role === 'pins') {
+      // The drop panel and the popover: a pop-up of this mod, over the boards; `gone` are the pins Done here, hidden at once.
+      this.gone = new Set()
+      this.boards.start(cx, cx => cx.notify())
+      return
+    }
     if (props()?.role === 'board') {
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
       this.boards.start(cx, cx => cx.notify())
@@ -52,6 +58,11 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
+    if (props()?.role === 'pins')
+      return pinsView(
+        this.boards.list().find(b => b.session === props().session),
+        this.gone,
+      )
     if (props()?.role === 'board') return popupView(this.boards.list().find(b => b.session === props().session))
     const draw = roles[props()?.role]
     if (!draw) return div()

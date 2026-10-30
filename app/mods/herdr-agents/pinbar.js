@@ -1,5 +1,8 @@
 import { div, svg } from 'gpui-kit'
-import { color, font, icon, row } from './tokens.js'
+import { closeOverlay, props, setShared, shared } from 'herdr'
+import { ageText, markAllRead, markRead, orderPins, pins } from './model.js'
+import { openPins } from './pinsctl.js'
+import { color, font, icon, pinsLook, row } from './tokens.js'
 
 const base = () =>
   div()
@@ -60,7 +63,7 @@ function segmentsRow(segments, ui) {
  *   board  the resolved board, or null (the row draws empty)
  *   ui     what main.js worked out: {mode, current, many, empty, segments, slim, meta, waiting, flash} and the handlers
  *          onPick(id, cx), onStep(dir, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
- * The caret and `all pins` belong to S8 (the drop panel and popover) and are not drawn here.
+ * The caret and `all pins` open the drop panel and the popover (S8, pinsView below); onBounds(b) keeps the bar's place.
  */
 export function pinbar(board, ui) {
   if (!board) return base()
@@ -94,6 +97,8 @@ export function pinbar(board, ui) {
   const pin = ui.current
   return (
     base()
+      // Where the drop panel and the popover go: the bar's own bounds, from the press that opens them.
+      .on_mouse_down('left', e => ui.onBounds(e?.bounds))
       // The unread flash: a layer behind the content fades in and out, 1.1 s a time; main.js removes it after two.
       .when(ui.flash, el =>
         el.child(div().absolute().top(0).left(0).size_full().bg(color.flash).loop('opacity', { from: 0, to: 1, period: 1100 })),
@@ -127,9 +132,11 @@ export function pinbar(board, ui) {
           .when(pin.summary, el => el.child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(pin.summary))),
       )
       .child(div().flex_none().text_color(color.dim).child(ui.meta))
+      .child(ghost('pin-caret', '▾', (_e, cx) => ui.onRead(pin.id, cx)).tooltip('Open this pin'))
       .when(ui.many, el => el.child(ghost('pin-prev', '‹', (_e, cx) => ui.onStep(-1, cx)).tooltip('Previous pin')))
       .child(segmentsRow(ui.segments, ui))
       .when(ui.many, el => el.child(ghost('pin-next', '›', (_e, cx) => ui.onStep(1, cx)).tooltip('Next pin')))
+      .child(ghost('pin-all', 'all pins', (_e, cx) => ui.onAll(cx)))
       .child(
         div()
           .id('pin-done')
@@ -146,4 +153,220 @@ export function pinbar(board, ui) {
           .child(svg(icon('close')).size(12).text_color(color.dim)),
       )
   )
+}
+
+// ---- The overlay (role `pins`): the drop panel for one pin, or the popover with all of them ----
+
+const button = (id, label, onClick) =>
+  div()
+    .id(id)
+    .flex_none()
+    .cursor_pointer()
+    .px(11)
+    .py(4)
+    .rounded(6)
+    .border(1)
+    .border_color('#333333')
+    .text_color(color.text)
+    .hover(s => s.bg('#1E1E1E'))
+    .on_mouse_down('left', onClick)
+    .child(label)
+
+const ghostDown = (id, label, onClick) =>
+  div()
+    .id(id)
+    .flex_none()
+    .cursor_pointer()
+    .px(8)
+    .py(3)
+    .rounded(6)
+    .text_color(color.dim)
+    .hover(s => s.text_color(color.text))
+    .on_mouse_down('left', onClick)
+    .child(label)
+
+/** Done from here: a request the pin bar's copy turns into its own queued action (so the same 5 s undo applies). */
+function requestDone(pin, session) {
+  setShared('hrd.doneReq', { session, key: pin.key, n: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
+}
+
+/**
+ * The overlay's view. Its root has a fixed size (props() from pinsctl.js): a `size_full` root in a popup draws nothing.
+ *   board  the board of props().session, or undefined while it loads
+ *   gone   a Set of pin ids Done here, hidden until the board drops them (an undo shows them again on reopening)
+ */
+export function pinsView(board, gone) {
+  const p = props() ?? {}
+  const read = shared('hrd.read') ?? {}
+  const list = board ? pins(board, read).filter(x => !gone.has(x.id)) : []
+  const root = div().id('pins-overlay').w(Number(p.width)).h(Number(p.height)).flex_none().flex().flex_col().text_size(font.size)
+  if (!board) return root
+  const close = () => closeOverlay(p.overlay)
+  const bar = () => p.bar
+  const done = (pin, cx) => {
+    requestDone(pin, board.session)
+    gone.add(pin.id)
+    cx.notify()
+  }
+  if (p.view === 'panel') {
+    const pin = list.find(x => x.id === p.id)
+    return root
+      .bg(pinsLook.bg)
+      .border_b(1)
+      .border_color(pinsLook.line)
+      .pt(14)
+      .pb(14)
+      .pr(16)
+      .pl(39)
+      .gap(12)
+      .child(
+        div()
+          .id('pin-full')
+          .flex_1()
+          .min_h_0()
+          .overflow_y_scroll()
+          .text_size(font.terminalSize)
+          .line_height(font.terminalLine)
+          .text_color(color.text)
+          .child(pin?.text ?? ''),
+      )
+      .child(
+        div()
+          .flex_none()
+          .flex()
+          .items_center()
+          .gap(8)
+          .child(
+            button('pin-panel-done', 'done', (_e, cx) => {
+              if (pin) done(pin, cx)
+              close()
+            }),
+          )
+          .child(
+            ghostDown('pin-panel-all', 'all pins', () => {
+              openPins(board, 'all', { bar: bar(), read: shared('hrd.read') ?? {} })
+            }),
+          ),
+      )
+  }
+
+  const ordered = orderPins(list)
+  const now = Date.now()
+  return root
+    .bg(pinsLook.bg)
+    .border(1)
+    .border_color(pinsLook.border)
+    .rounded(10)
+    .p(10)
+    .gap(4)
+    .child(
+      div()
+        .h(24)
+        .flex_none()
+        .px(10)
+        .flex()
+        .items_center()
+        .gap(10)
+        .child(div().flex_1().min_w_0().truncate().text_color(color.dim).child(`Pinned by your agents · ${list.length}`))
+        .child(
+          ghostDown('pins-mark-all', 'mark all read', (_e, cx) => {
+            const next = markAllRead(read, list)
+            if (next !== read) setShared('hrd.read', next)
+            cx.notify()
+          }),
+        )
+        .child(div().flex_none().text_size(11).text_color(color.dim).child('esc')),
+    )
+    .child(
+      div()
+        .id('pins-rows')
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .gap(4)
+        .overflow_y_scroll()
+        .children(
+          ordered.map(pin =>
+            div()
+              .id(`pin-${pin.key}`)
+              .flex_none()
+              .h(122)
+              .pt(10)
+              .px(10)
+              .pb(8)
+              .rounded(8)
+              .flex()
+              .flex_col()
+              .gap(4)
+              .hover(s => s.bg(pinsLook.rowHover))
+              .child(
+                div()
+                  .id(`pin-open-${pin.key}`)
+                  .flex()
+                  .items_center()
+                  .gap(8)
+                  .cursor_pointer()
+                  // A click on the title opens it as the drop panel, and marks it read.
+                  .on_mouse_down('left', () => {
+                    const next = markRead(shared('hrd.read') ?? {}, pin.id)
+                    setShared('hrd.read', next)
+                    openPins(board, 'panel', { id: pin.id, bar: bar(), read: next })
+                  })
+                  .child(
+                    div()
+                      .size(6)
+                      .flex_none()
+                      .rounded_full()
+                      .bg(pin.unread ? pinsLook.dot : 'transparent'),
+                  )
+                  .child(
+                    div()
+                      .flex_1()
+                      .min_w_0()
+                      .truncate()
+                      .text_color(pin.unread ? color.text : color.soft)
+                      .when(pin.unread, el => el.font_bold())
+                      .when(!pin.unread, el => el.font_semibold())
+                      .child(pin.title),
+                  )
+                  .child(
+                    div()
+                      .flex_none()
+                      .text_color(color.dim)
+                      .child([pin.who, ageText(pin.at, now)].filter(Boolean).join(' · ')),
+                  ),
+              )
+              .child(
+                div()
+                  .flex_1()
+                  .min_h_0()
+                  .overflow_hidden()
+                  .text_color(color.soft)
+                  .child(pin.summary || pin.text),
+              )
+              .child(
+                div()
+                  .flex_none()
+                  .flex()
+                  .items_center()
+                  .gap(4)
+                  .when(pin.unread, el =>
+                    el.child(
+                      ghostDown(`pin-read-${pin.key}`, 'mark read', (_e, cx) => {
+                        setShared('hrd.read', markRead(read, pin.id))
+                        cx.notify()
+                      }),
+                    ),
+                  )
+                  .child(
+                    ghostDown(`pin-done-${pin.key}`, 'done', (_e, cx) => {
+                      done(pin, cx)
+                      if (list.length <= 1) close()
+                    }),
+                  ),
+              ),
+          ),
+        ),
+    )
 }

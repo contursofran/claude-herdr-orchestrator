@@ -102,9 +102,16 @@ test('boardSpace: the space label of the coordinator terminal; projectName: its 
   assert.equal(projectName(null), '')
 })
 
-test('overlayPlan: one overlay at a time; the card hands the keyboard back when the pop-up replaces it', () => {
-  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+test('overlayPlan: one overlay at a time; the card hands the keyboard back when the pop-up or the pins replace it', () => {
+  const none = { closePopup: false, closeCard: false, closePins: false, refocus: false }
+  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), { ...none, closePopup: true })
   assert.deepEqual(overlayPlan('card', { popup: false, card: false }).closePopup, false)
-  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), { closePopup: false, closeCard: true, refocus: true })
-  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+  assert.deepEqual(overlayPlan('card', { pins: true }), { ...none, closePins: true })
+  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), { ...none, closeCard: true, refocus: true })
+  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), { ...none, closePopup: true })
+  assert.deepEqual(overlayPlan('popup', { pins: true }), { ...none, closePins: true })
+  assert.deepEqual(overlayPlan('pins', { popup: true }), { ...none, closePopup: true })
+  assert.deepEqual(overlayPlan('pins', { card: true }), { ...none, closeCard: true, refocus: true })
+  assert.deepEqual(overlayPlan('pins', { pins: true }), { ...none, closePins: true }, 'a second open replaces the first')
+  assert.deepEqual(overlayPlan('pins', {}), none)
 })
