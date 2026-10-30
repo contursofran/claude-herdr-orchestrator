@@ -1,12 +1,12 @@
 import { View, div } from 'gpui-kit'
-import { focused, props, terminals } from 'herdr'
+import { focused, props, setShared, shared, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
-import { onBoardsChanged } from './cardstate.js'
+import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
 import { HEARTBEAT_MS, resolveBoard } from './model.js'
-import { pinbar } from './pinbar.js'
-import { makePopupState, popupView, releasePopup } from './popup.js'
+import { pinbar, pinsView } from './pinbar.js'
+import { makePopupState, popupView, releasePopup, takeKeyboard } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { StripState, strip } from './strip.js'
 
@@ -31,6 +31,13 @@ export default class HerdrAgents extends View {
       return
     }
     this.boards = new Boards()
+    if (props()?.role === 'pins') {
+      // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
+      // `gone` are the pins Done here, hidden at once.
+      this.gone = new Set()
+      this.keys = takeKeyboard(cx)
+      return
+    }
     if (props()?.role === 'board') {
       this.popup = makePopupState(cx)
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
@@ -40,6 +47,8 @@ export default class HerdrAgents extends View {
     this.last = null
     this.pin = new PinCtl()
     const pinbarCopy = props()?.role === 'pinbar'
+    // Once per app run: overlays stay open across a layout switch, and a Done asked for on `main` waits for this copy.
+    if (pinbarCopy && firstThisRun('hrd.pinbarStarted')) clearStaleOverlays(shared, setShared)
     // The card has an Outbox of its own: it settles it here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
@@ -76,6 +85,7 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
+    if (props()?.role === 'pins') return pinsView(this.gone, this.keys)
     if (props()?.role === 'board')
       return popupView(
         this.boards.list().find(b => b.session === props().session),

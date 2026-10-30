@@ -6,16 +6,19 @@ import { openCard } from './cardctl.js'
 import { POPUP_ROW, POPUP_W, boardSpace, popupKeyAction, popupRefocus, projectName, rowAction, workRows, wrapUpButton } from './model.js'
 import { color, font, icon, popup as look } from './tokens.js'
 
-/** This copy's keyboard: the pop-up takes it once it has drawn, as the card does. */
-export function makePopupState(cx) {
-  const ctl = { h: cx.focus_handle(), leaving: false }
+/** A handle that takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal. */
+export function takeKeyboard(cx) {
+  const h = cx.focus_handle()
   cx.spawn(async cx => {
     await cx.sleep(60)
-    ctl.h.focus()
+    h.focus()
     cx.notify()
   })
-  return ctl
+  return h
 }
+
+/** This pop-up's keyboard, and whether a row already chose where it goes next. */
+export const makePopupState = cx => ({ h: takeKeyboard(cx), leaving: false })
 
 /** The overlay is going, however it was closed (Esc, a click outside, a new pop-up): give the keyboard back. */
 export function releasePopup(ctl) {

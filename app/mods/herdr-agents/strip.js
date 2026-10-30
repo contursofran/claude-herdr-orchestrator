@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, focused, nextCommand, notify, openOverlay, playSound, run, shared, terminals } from 'herdr'
+import { focused, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -21,6 +21,7 @@ import {
 } from './model.js'
 import { Arrivals } from './arrivals.js'
 import { closeCard, openCard } from './cardctl.js'
+import { closePins, closePopupOverlay } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
 const white = color.text
@@ -108,7 +109,9 @@ export class StripState {
     if (!next) closeCard()
     else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) {
       // One overlay at a time: the pop-up goes before the card opens.
-      if (overlayPlan('card', { popup: Boolean(popupId), card: false }).closePopup) closeBoardPopup()
+      const plan = overlayPlan('card', { popup: Boolean(shared('hrd.popup')), card: false, pins: Boolean(shared('hrd.pins')) })
+      if (plan.closePopup) closePopupOverlay()
+      if (plan.closePins) closePins()
       openCard(board, item)
     }
   }
@@ -117,30 +120,24 @@ export class StripState {
 /** Open the work table above the strip, right aligned. Only the owner's click or key calls this. One overlay at a
  *  time: an open card goes first. The popup's root has a fixed size, so its height is
  *  worked out here from the rows and handed over as a prop. */
-let popupId = null
-
-/** Close the pop-up if one is up (its id may be stale when the pop-up closed itself). */
-function closeBoardPopup() {
-  if (!popupId) return
-  try {
-    closeOverlay(popupId)
-  } catch {}
-  popupId = null
-}
-
 export function openBoardPopup(board) {
   if (!board) return
   const height = popupHeight(workRows(board).length)
   const view = window.viewport_size()
-  const plan = overlayPlan('popup', { popup: Boolean(popupId), card: Boolean(shared('hrd.open')) })
+  const plan = overlayPlan('popup', {
+    popup: Boolean(shared('hrd.popup')),
+    card: Boolean(shared('hrd.open')),
+    pins: Boolean(shared('hrd.pins')),
+  })
   // The terminal to hand back; if the card holds the keyboard, the one the card will hand back. Read before anything closes.
   const back = shared('hrd.open')?.back ?? focused()?.terminal ?? null
   const space = focused()?.space ?? null
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
-  if (plan.closePopup) closeBoardPopup()
-  popupId = openOverlay({
+  if (plan.closePopup) closePopupOverlay()
+  if (plan.closePins) closePins()
+  const overlay = openOverlay({
     mod: 'herdr-agents',
     kind: 'popup',
     frame: 'none',
@@ -149,6 +146,7 @@ export function openBoardPopup(board) {
     at: popupSpot(view.width, view.height, height),
     props: { role: 'board', session: board.session, height, board, back, space },
   })
+  setShared('hrd.popup', overlay)
 }
 
 function tab(item, board, state, now) {

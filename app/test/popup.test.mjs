@@ -105,11 +105,18 @@ test('boardSpace: the space label of the coordinator terminal; projectName: its 
   assert.equal(projectName(null), '')
 })
 
-test('overlayPlan: one overlay at a time; the card hands the keyboard back when the pop-up replaces it', () => {
-  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+test('overlayPlan: one overlay at a time; the card hands the keyboard back when the pop-up or the pins replace it', () => {
+  const none = { closePopup: false, closeCard: false, closePins: false, refocus: false }
+  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), { ...none, closePopup: true })
   assert.deepEqual(overlayPlan('card', { popup: false, card: false }).closePopup, false)
-  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), { closePopup: false, closeCard: true, refocus: true })
-  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+  assert.deepEqual(overlayPlan('card', { pins: true }), { ...none, closePins: true })
+  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), { ...none, closeCard: true, refocus: true })
+  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), { ...none, closePopup: true })
+  assert.deepEqual(overlayPlan('popup', { pins: true }), { ...none, closePins: true })
+  assert.deepEqual(overlayPlan('pins', { popup: true }), { ...none, closePopup: true })
+  assert.deepEqual(overlayPlan('pins', { card: true }), { ...none, closeCard: true, refocus: true })
+  assert.deepEqual(overlayPlan('pins', { pins: true }), { ...none, closePins: true }, 'a second open replaces the first')
+  assert.deepEqual(overlayPlan('pins', {}), none)
 })
 
 test("touchesBoard: only the pop-up's own board file counts, under either spelling of the folder", () => {
@@ -134,8 +141,9 @@ test('popupKeyAction: Esc closes; a held key and every other key do nothing', ()
 
 test('the pop-up takes the keyboard when it opens and closes on Esc', () => {
   const src = source('popup.js')
-  assert.match(src, /cx\.focus_handle\(\)/)
-  assert.match(src, /ctl\.h\.focus\(\)/)
+  assert.match(src, /const h = cx\.focus_handle\(\)/)
+  assert.match(src, /makePopupState = cx => \(\{ h: takeKeyboard\(cx\)/)
+  assert.match(src, /await cx\.sleep\(60\)\s*h\.focus\(\)/)
   assert.match(src, /\.track_focus\(ctl\.h\)/)
   assert.match(
     src,
