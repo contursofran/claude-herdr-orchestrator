@@ -2,14 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/contursofran/claude-herdr-orchestrator/docs/board-schema.json",
   "title": "herdr-agents board, version 1",
-  "description": "~/.herdr-agents/board/<session id>.json: what the sidebar (/hrd-side) shows for one coordinator session, rewritten when it changes and removed when the session ends. An app presses the sidebar's buttons by writing one action file (see $defs/action) into ~/.herdr-agents/board/<session id>.actions/; the mod does it within about 3 seconds, removes the file and reports the outcome in `actions`. Files there are taken in name order.",
+  "description": "~/.herdr-agents/board/<session id>.json: what the sidebar (/hrd-side) shows for one coordinator session, rewritten when it changes and at least once a minute, and removed when the session ends. An app presses the sidebar's buttons by writing one action file (see $defs/action) into ~/.herdr-agents/board/<session id>.actions/; the mod does it within about 3 seconds, removes the file and reports the outcome in `actions`. Files there are taken in name order.",
   "type": "object",
   "required": ["version", "session", "cwd", "at", "stageNames", "summary", "workers", "tasks", "needs", "status", "actions"],
   "properties": {
     "version": { "const": 1, "description": "Bumped when a field changes meaning or goes away; new fields may appear without a bump." },
     "session": { "type": "string" },
     "cwd": { "type": "string", "description": "The coordinator's folder." },
-    "at": { "type": "number", "description": "When it was written, ms since the epoch." },
+    "at": {
+      "type": "number",
+      "description": "When it was last written, ms since the epoch. Written when something else changed, and at least once a minute while the session lives, so a live board is newer than a leftover. The file also comes back within about one minute if deleted."
+    },
     "coordinator": {
       "type": "object",
       "description": "Optional, so older boards stay valid.",
@@ -49,7 +52,14 @@
           },
           "startedAt": { "type": "number" },
           "endedAt": { "type": ["number", "null"] },
-          "note": { "type": ["string", "null"] },
+          "note": {
+            "type": ["string", "null"],
+            "description": "Why it stopped: what a waiting worker waits for, or what a blocked one is stuck on. Boards from before `since` start a waiting worker's note with its clock (`02:13 · PR checks`)."
+          },
+          "since": {
+            "type": ["number", "null"],
+            "description": "Optional, so older boards stay valid. When a waiting worker started waiting, ms since the epoch; a reader works the clock out from it, so the time passing never rewrites the file."
+          },
           "repo": { "type": ["string", "null"], "description": "owner/name on GitHub." }
         }
       }

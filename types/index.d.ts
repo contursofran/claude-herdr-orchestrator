@@ -91,7 +91,16 @@ export type View = { tab: 'workers' | 'decisions'; selected: number | null; work
 // One line of the band above the prompt; `state` is the status its CLI reported to hc, or
 // 'reported' once the report reached the session, 'waiting' while it waits on WAIT.json.
 // `repo` is the GitHub repo (owner/name) of the worker's folder, for links.
-export type Row = { name: string; profile: string; state: string; startedAt: number; endedAt?: number; note?: string; repo?: string }
+export type Row = {
+  name: string
+  profile: string
+  state: string
+  startedAt: number
+  endedAt?: number
+  note?: string
+  since?: number
+  repo?: string
+}
 
 // The GitHub repo (owner/name) of each folder this session and its workers used, from its git
 // remotes, and `repos` from the config (short name -> owner/name): what a #123 links to.

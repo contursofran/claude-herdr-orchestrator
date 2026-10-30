@@ -1,73 +1,15 @@
 // Reads the boards the plugin writes (~/.herdr-agents/board/<session>.json) and keeps them current.
 import { exec, hc, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
-import { actionFile, applyFile, boardIdIn, coreIdOf, heartbeat, touchesBoard } from './model.js'
+import { BoardReader } from './boardreader.js'
+import { actionFile, coreIdOf, heartbeat } from './model.js'
 
 export const boardDir = () => `${home()}/.herdr-agents/board`
 export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
 
-export class Boards {
+/** The boards, read through the app's own calls. */
+export class Boards extends BoardReader {
   constructor() {
-    this.files = {}
-  }
-
-  list() {
-    return Object.values(this.files)
-  }
-
-  /** One full read, then only the files the watcher reports. No timers: the plugin writes on its own 3 s tick. */
-  start(cx, onChange) {
-    cx.spawn(async cx => {
-      const dir = boardDir()
-      await exec('mkdir', ['-p', dir])
-      // The watcher may report the resolved path (/tmp is /private/tmp on macOS): accept both.
-      const real = (await exec('realpath', [dir]).catch(() => null))?.stdout.trim()
-      const dirs = real && real !== dir ? [dir, real] : [dir]
-      // Ask to be told before the first read, so a write between the two is not missed.
-      let changed = watchFolder(dir)
-      const listed = await exec('ls', ['-1', dir])
-      for (const name of listed.stdout.split('\n')) {
-        const id = boardIdIn(dirs, `${dir}/${name}`)
-        if (id) await this.load(dir, id)
-      }
-      onChange(cx)
-      for (;;) {
-        const paths = await changed
-        changed = watchFolder(dir)
-        const ids = new Set(paths.map(p => boardIdIn(dirs, p)).filter(Boolean))
-        for (const id of ids) await this.load(dir, id)
-        if (ids.size) onChange(cx)
-      }
-    })
-  }
-
-  /** The pop-up's reader: it starts from the board the strip passed (`first`, already parsed) and keeps only that one file
-   *  current. No mkdir, realpath or ls and no other board is read: the strip made the folder and chose the board. */
-  startOne(cx, session, first, onChange) {
-    if (first && typeof first === 'object') this.files = { [session]: first }
-    cx.spawn(async cx => {
-      const dir = boardDir()
-      // Watch before the re-read, so a write between the two is not missed; the copy the strip passed may be seconds old.
-      let changed = watchFolder(dir)
-      await this.load(dir, session)
-      onChange(cx)
-      for (;;) {
-        const paths = await changed
-        changed = watchFolder(dir)
-        if (!touchesBoard(session, paths)) continue
-        await this.load(dir, session)
-        onChange(cx)
-      }
-    })
-  }
-
-  async load(dir, id) {
-    let text = null
-    try {
-      text = await readTextFile(`${dir}/${id}.json`)
-    } catch {
-      return // unreadable right now: keep what we have
-    }
-    this.files = applyFile(this.files, id, text)
+    super({ dir: boardDir, exec, readTextFile, watchFolder })
   }
 }
 
