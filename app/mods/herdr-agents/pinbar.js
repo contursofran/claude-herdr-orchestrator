@@ -1,6 +1,6 @@
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, focused, props, run, setShared, shared } from 'herdr'
-import { ageText, canRefocus, markAllRead, markRead, orderPins, pinContext } from './model.js'
+import { closeOverlay, props, setShared, shared } from 'herdr'
+import { ageText, markAllRead, markRead, orderPins, pinContext, popupKeyAction } from './model.js'
 import { openPins } from './pinsctl.js'
 import { color, font, icon, pinsLook, row } from './tokens.js'
 
@@ -195,23 +195,29 @@ function requestDone(pin, session) {
  * The overlay's view. Its root has a fixed size (props() from pinsctl.js): a `size_full` root in a popup draws nothing.
  * The pins come in props().list, as they were when it opened; only the read marks are read live (shared "hrd.read").
  *   gone    a Set of pin ids Done here, hidden at once (an undo shows them again on reopening)
- *   handle  the focus handle that takes the keyboard (main.js), so Esc reaches this overlay and not the terminal
+ *   ctl     makePopupState (popup.js): the handle that takes the keyboard, so Esc reaches this overlay and not the terminal,
+ *           and `leaving`, set when a row chooses where the keyboard goes; main.js's close() hands it back otherwise
  */
-export function pinsView(gone, handle) {
+export function pinsView(gone, ctl) {
   const p = props() ?? {}
   const read = shared('hrd.read') ?? {}
   const list = (p.list ?? []).filter(x => !gone.has(x.id)).map(x => ({ ...x, unread: read[x.id] !== true }))
-  // This overlay took the keyboard: closing it gives it back to the terminal that had it, unless the owner changed space.
   const close = () => {
     setShared('hrd.pins', null)
-    closeOverlay(p.overlay)
-    if (canRefocus(p, focused()?.space)) run('pane.focus', { terminal: p.back })
+    try {
+      closeOverlay(p.overlay)
+    } catch {} // the app's own Esc may have closed it first
+  }
+  // The next overlay takes the keyboard, and hands it back to the terminal this one would have.
+  const openNext = (view, opts) => {
+    ctl.leaving = true
+    openPins(session, list, view, { ...opts, bar: bar(), back: p.back })
   }
   const root = div()
     .id('pins-overlay')
-    .track_focus(handle)
+    .track_focus(ctl.h)
     .on_key_down(e => {
-      if (String(e.keystroke ?? e.key).toLowerCase() === 'escape') close()
+      if (popupKeyAction(e.keystroke ?? e.key, e.is_held) === 'close') close()
     })
     .w(Number(p.width))
     .h(Number(p.height))
@@ -271,7 +277,7 @@ export function pinsView(gone, handle) {
           )
           .child(
             ghostDown('pin-panel-all', 'all pins', () => {
-              openPins(session, list, 'all', { bar: bar() })
+              openNext('all')
             }),
           ),
       )
@@ -338,7 +344,7 @@ export function pinsView(gone, handle) {
                   .on_mouse_down('left', () => {
                     const next = markRead(shared('hrd.read') ?? {}, pin.id)
                     setShared('hrd.read', next)
-                    openPins(session, list, 'panel', { id: pin.id, bar: bar() })
+                    openNext('panel', { id: pin.id })
                   })
                   .child(
                     div()
