@@ -8,8 +8,6 @@ const state = { props: null, store: {}, closed: [], reads: [], file: null }
 globalThis.__startFake = {
   View: class {},
   appHome: () => '/home',
-  home: () => '/h',
-  watchFolder: () => new Promise(wake => (state.wake = wake)),
   // Chains anything; records the text it is given.
   div: () => {
     const el = new Proxy(
@@ -38,7 +36,7 @@ globalThis.__startFake = {
     await state.boardsGate
     return { code: 0, stdout: args[0] === '-1' ? state.listing : '', stderr: '' }
   },
-  watchFolder: () => new Promise(() => {}),
+  watchFolder: () => new Promise(wake => (state.wake = wake)),
   nextCommand: () => state.commands.shift() ?? new Promise(() => {}),
   terminals: () => state.terminals ?? [],
   openOverlay: o => {
@@ -344,7 +342,7 @@ async function startPinsWatch(props) {
   const openKeys = keys => JSON.stringify({ session: 's', needs: keys.map(key => ({ key, kind: 'know', isOpen: true, text: key })) })
   const write = async keys => {
     state.file = openKeys(keys)
-    state.wake(['/h/.herdr-agents/board/s.json'])
+    state.wake(['/home/.herdr-agents/board/s.json'])
     await settle()
   }
   state.file = openKeys(props.list.map(p => p.key))
