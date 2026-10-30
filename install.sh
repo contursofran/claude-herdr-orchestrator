@@ -69,7 +69,9 @@ app_home=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
 if [[ -d $app_home ]]; then
   mkdir -p "$app_home/mods/herdr-agents"
   # The app writes jsconfig.json and gpui-kit.d.ts into mod folders.
-  rsync -a --delete --exclude jsconfig.json --exclude gpui-kit.d.ts "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
+  # By content, keeping no times or modes: `-a` rewrites every file a checkout dated differently and `-p` chmods them all.
+  # Either wakes the app's watcher, each hot reload leaves the window slower until it restarts (#158), so an unchanged file must see no event.
+  rsync -rlc --delete --exclude jsconfig.json --exclude gpui-kit.d.ts "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
   # A layout or key problem is printed and does not stop the install.
   node "$here/app/layout.mjs" "$app_home" || echo "Layout step failed; carrying on."
   node "$here/app/keys.mjs" "$app_home" || echo "Keys step failed; carrying on."
