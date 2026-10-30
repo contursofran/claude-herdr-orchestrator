@@ -34,7 +34,11 @@ export async function spawnSpec($: EngineInterface): Promise<ToolSpec> {
         },
         branch: { type: 'string', description: 'A git branch: the mod creates (or reuses) its worktree and the worker runs there.' },
         repo: { type: 'string', description: 'The repo checkout for branch, absolute or relative to this folder; default this folder.' },
-        base: { type: 'string', description: "The branch to start a new branch from; default the repo's origin/HEAD branch; with no origin remote the checked-out branch; else main." },
+        base: {
+          type: 'string',
+          description:
+            "The branch to start a new branch from; default the repo's origin/HEAD branch; with no origin remote the checked-out branch; else main.",
+        },
         task: { type: 'string', description: 'The brief, in Markdown; files it builds on (a PLAN.md) by absolute path.' },
       },
       required: ['worker', 'profile', 'task'],
