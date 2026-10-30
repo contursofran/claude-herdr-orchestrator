@@ -8,6 +8,7 @@ import { session } from './session'
 // boards. The band steps aside when that is fresh and lists this session's terminal; anything else (no file, an old one,
 // one that does not parse, another machine's session, a plain hc terminal, another hc core) leaves the band as it is.
 // `core` is the hc core's id (`hc server status`); a file or a session without one is matched on the terminal alone.
+// While a part of the mod fails to draw, the file lists no terminals, so the band comes back.
 
 // Whether the app mod's text says it draws this terminal's board now.
 export function appModDraws(text: string, terminal: string, now: number, core = ''): boolean {

@@ -643,6 +643,7 @@ export async function boardSnapshot($: EngineInterface) {
       startedAt: r.startedAt,
       endedAt: r.endedAt ?? null,
       note: r.note ?? null,
+      since: r.since ?? null,
       repo: r.repo ?? null,
     })),
     tasks: rows.map(r =>

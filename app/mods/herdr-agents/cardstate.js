@@ -69,11 +69,12 @@ export function clearStaleOverlays(get, set) {
 
 /**
  * What the boards' change callback does for the parts that care. `parts` = {pinbar: bool, pin, card, strip}; each of
- * the last three may be null. Redraws last.
+ * the last three may be null. Redraws last, and only when a sent action settled or `drawn()` says the copy's picture changed.
  */
-export function onBoardsChanged(parts, boards, cx) {
-  if (parts.pinbar) parts.pin.onBoards(boards)
-  parts.card?.onBoards(boards)
+export function onBoardsChanged(parts, boards, cx, drawn = () => true) {
+  const pinSettled = parts.pinbar ? parts.pin.onBoards(boards) : false
+  const cardSettled = parts.card?.onBoards(boards)
   parts.strip?.observe(cx, boards)
-  cx.notify()
+  // `drawn` runs first: it remembers what was drawn, whatever else asks for the redraw.
+  if (drawn() || pinSettled || cardSettled) cx.notify()
 }

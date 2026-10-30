@@ -122,6 +122,20 @@ async function git($: EngineInterface, args: string[], timeoutMs = 10_000) {
   }
 }
 
+const CONFIG_LOCKED = 'could not lock config file'
+const LOCK_WAITS_MS = [250, 500, 750, 1000]
+
+// Runs git after a first wait, and again after each later wait while another git process holds the config lock.
+async function gitWhileLocked($: EngineInterface, args: string[], timeoutMs?: number) {
+  let r = { ok: false, out: '', err: '' }
+  for (const wait of LOCK_WAITS_MS) {
+    await $.clock.sleep(wait)
+    r = await git($, args, timeoutMs)
+    if (r.ok || !r.err.includes(CONFIG_LOCKED)) break
+  }
+  return r
+}
+
 // The checkout `repo` names (default: the coordinator's folder), or undefined when it is not one.
 export async function repoTop($: EngineInterface, repo?: string) {
   const dir = !repo ? session.cwd : repo.startsWith('/') ? repo : `${session.cwd}/${repo}`
@@ -183,11 +197,24 @@ export async function createWorktree($: EngineInterface, top: string, branch: st
     if (branch !== base) await git($, ['-C', top, 'fetch', 'origin', branch], 120_000)
   }
   const has = async (ref: string) => (await git($, ['-C', top, 'rev-parse', '--verify', '--quiet', ref])).ok
-  const args = (await has(`refs/heads/${branch}`))
-    ? ['worktree', 'add', path, branch]
+  const onBranch = ['worktree', 'add', path, branch]
+  const start = (await has(`refs/heads/${branch}`))
+    ? undefined
     : remote && (await has(`refs/remotes/origin/${branch}`))
-      ? ['worktree', 'add', '-b', branch, path, `origin/${branch}`]
-      : ['worktree', 'add', '-b', branch, path, remote ? `origin/${base}` : `refs/heads/${base}`]
-  const added = await git($, ['-C', top, ...args], 120_000)
+      ? `origin/${branch}`
+      : remote
+        ? `origin/${base}`
+        : `refs/heads/${base}`
+  let args = start ? ['worktree', 'add', '-b', branch, path, start] : onBranch
+  let added = await git($, ['-C', top, ...args], 120_000)
+  // Adds that start together collide on .git/config.lock while writing the upstream. By then -b has made the branch but
+  // no worktree, so the next try must use that branch, and the upstream the failed add did not write is set afterwards.
+  const collided = start && !added.ok && added.err.includes(CONFIG_LOCKED)
+  if (collided) {
+    args = onBranch
+    added = await gitWhileLocked($, ['-C', top, ...args], 120_000)
+  }
   if (!added.ok) throw new Error(`git ${args.join(' ')} failed: ${added.err || added.out}`)
+  // A failure here is not fatal: the worktree works without an upstream.
+  if (collided && remote) await gitWhileLocked($, ['-C', top, 'branch', `--set-upstream-to=${start}`, branch])
 }

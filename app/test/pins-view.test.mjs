@@ -7,6 +7,8 @@ const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
 const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
+const { releasePopup } = await import('../mods/herdr-agents/popup.js')
+const { allPinsHeight } = await import('../mods/herdr-agents/model.js')
 
 const pin = (key, extra = {}) => ({
   id: `s:${key}`,
@@ -30,6 +32,7 @@ beforeEach(() => {
   app.closed = []
   app.ran = []
   app.focused = null
+  app.closeThrows = false
   globalThis.window = undefined
 })
 
@@ -128,40 +131,80 @@ const opened = extra => {
 
 test('the overlay tracks the handle it is given', () => {
   opened()
-  const handle = {}
-  assert.equal(pinsView(new Set(), handle).node.calls.track_focus[0], handle)
+  const ctl = { h: {} }
+  assert.equal(pinsView(new Set(), ctl).node.calls.track_focus[0], ctl.h)
 })
 
 for (const view of ['all', 'panel']) {
-  test(`Esc closes the ${view} overlay and gives the keyboard back to the terminal that had it`, () => {
+  test(`Esc closes the ${view} overlay and its close call gives the keyboard back`, () => {
     opened({ view, id: 's:K1' })
-    pressKey(pinsView(new Set(), {}), 'escape')
+    const ctl = {}
+    pressKey(pinsView(new Set(), ctl), 'escape')
     assert.deepEqual(app.closed, ['o1'])
     assert.equal(app.store['hrd.pins'], null)
+    assert.deepEqual(app.ran, [], 'only the close call hands it back, so it runs once')
+    releasePopup(ctl)
     assert.deepEqual(app.ran, [['pane.focus', { terminal: 't7' }]])
   })
 }
 
-test('another key does nothing', () => {
+test('another key and a held Esc do nothing', () => {
   opened()
-  pressKey(pinsView(new Set(), {}), 'a')
+  const root = pinsView(new Set(), {})
+  pressKey(root, 'a')
+  root.node.calls.on_key_down[0]({ keystroke: 'escape', is_held: true }, cx)
   assert.deepEqual(app.closed, [])
   assert.deepEqual(app.ran, [])
 })
 
-test('Esc leaves the keyboard alone when the owner has moved to another space', () => {
+test('Esc survives the app having closed the overlay first', () => {
   opened()
-  app.focused = { space: 'b', terminal: 't9' }
+  app.closeThrows = true
   pressKey(pinsView(new Set(), {}), 'escape')
+  assert.equal(app.store['hrd.pins'], null)
+})
+
+test('closing leaves the keyboard alone when the owner has moved to another space', () => {
+  opened()
+  const ctl = {}
+  app.focused = { space: 'b', terminal: 't9' }
+  pressKey(pinsView(new Set(), ctl), 'escape')
   assert.deepEqual(app.closed, ['o1'])
+  releasePopup(ctl)
+  assert.deepEqual(app.ran, [])
+})
+
+test('a click on another terminal keeps the keyboard there', () => {
+  opened()
+  app.focused = { space: 'a', terminal: 't9' }
+  releasePopup({})
   assert.deepEqual(app.ran, [])
 })
 
 test('Done in the panel also gives the keyboard back', () => {
   opened({ view: 'panel', id: 's:K1' })
-  down(pinsView(new Set(), {}), 'pin-panel-done')
+  const ctl = {}
+  down(pinsView(new Set(), ctl), 'pin-panel-done')
+  assert.deepEqual(app.closed, ['o1'])
+  releasePopup(ctl)
   assert.deepEqual(app.ran, [['pane.focus', { terminal: 't7' }]])
 })
+
+for (const [view, id, next] of [
+  ['panel', 'pin-panel-all', 'all'],
+  ['all', 'pin-open-K1', 'panel'],
+]) {
+  test(`${id} opens the next overlay, which keeps the terminal to hand back; closing this one does not take the keyboard`, () => {
+    opened({ view, id: 's:K1' })
+    app.focused = { space: 'a', terminal: null }
+    const ctl = {}
+    down(pinsView(new Set(), ctl), id)
+    assert.equal(app.opened[0].props.view, next)
+    assert.equal(app.opened[0].props.back, 't7')
+    releasePopup(ctl)
+    assert.deepEqual(app.ran, [])
+  })
+}
 
 test('openPins remembers the terminal and space that have the keyboard', () => {
   app.focused = { space: 'a', terminal: 't7' }
@@ -169,3 +212,99 @@ test('openPins remembers the terminal and space that have the keyboard', () => {
   assert.equal(app.opened[0].props.back, 't7')
   assert.equal(app.opened[0].props.space, 'a')
 })
+
+const liveBoard = keys => ({ session: 's', needs: keys.map(key => ({ key, kind: 'know', isOpen: true, text: key })) })
+
+test('a pin resolved while the popover is open leaves the list and the count, so it cannot be Done', () => {
+  app.props = { view: 'all', session: 's', list, width: 470, height: 300, overlay: 'o1' }
+  const root = pinsView(new Set(), {}, liveBoard(['K2']))
+  assert.equal(findId(root, 'pin-done-K1'), null)
+  assert.ok(findId(root, 'pin-done-K2'))
+  assert.ok(textOf(root).includes('Pinned by your agents · 1'))
+})
+
+test('the drop panel with its pin resolved offers no Done action', () => {
+  app.props = { view: 'panel', session: 's', id: 's:K1', list, width: 900, height: 200, overlay: 'o1' }
+  const root = pinsView(new Set(), {}, liveBoard(['K2']))
+  down(root, 'pin-panel-done')
+  assert.equal(app.store['hrd.doneReq'], undefined)
+})
+
+test('all pins from a panel opens with only what is still open', () => {
+  app.props = { view: 'panel', session: 's', id: 's:K2', list, width: 900, height: 200, overlay: 'o1' }
+  down(pinsView(new Set(), {}, liveBoard(['K2'])), 'pin-panel-all')
+  assert.deepEqual(
+    app.opened[0].props.list.map(p => p.key),
+    ['K2'],
+  )
+})
+
+test('the popover shrinks to the pins left after a Done, and never grows past what fits the window', () => {
+  const three = [pin('K1'), pin('K2'), pin('K3')]
+  app.props = { view: 'all', session: 's', list: three, width: 470, height: allPinsHeight(3), overlay: 'o1' }
+  const h = gone => pinsView(new Set(gone), {}).node.calls.h[0]
+  assert.equal(h([]), allPinsHeight(3))
+  assert.equal(h(['s:K1', 's:K2']), allPinsHeight(1))
+  app.props = { ...app.props, height: 150 }
+  assert.equal(h(['s:K1', 's:K2']), 150)
+})
+
+test('the drop panel keeps the height it opened with', () => {
+  app.props = { view: 'panel', session: 's', id: 's:K1', list, width: 900, height: 444, overlay: 'o1' }
+  assert.equal(pinsView(new Set(), {}).node.calls.h[0], 444)
+})
+
+test('a popover row holds whole lines: fixed line height, and a summary box of exactly three', () => {
+  app.props = { view: 'all', session: 's', list, width: 470, height: 300, overlay: 'o1' }
+  const root = pinsView(new Set(), {})
+  assert.deepEqual(findId(root, 'pin-K1').node.calls.line_height, ['18px'])
+  const summary = findId(root, 'pin-summary-K1').node.calls
+  assert.deepEqual(summary.h, [54])
+  assert.ok(summary.flex_none && !summary.flex_1)
+})
+
+test('openPins with no bar bounds places the panel from the layout', () => {
+  globalThis.window = { viewport_size: () => ({ width: 1280, height: 800 }) }
+  app.layout = {
+    type: 'row',
+    children: [
+      { id: 'sidebar', type: 'column', size: { px: 269 }, children: [] },
+      {
+        type: 'column',
+        children: [
+          { type: 'block', size: { px: 42 } },
+          { type: 'block', size: { px: 38 }, content: { props: { role: 'pinbar' } } },
+          { type: 'block', size: { weight: 1 } },
+        ],
+      },
+    ],
+  }
+  openPins('s', list, 'panel', { id: 's:K1' })
+  app.layout = null
+  assert.deepEqual(app.opened[0].at, { x: 269, y: 80 })
+  assert.equal(app.opened[0].width, 1280 - 269)
+})
+
+for (const [view, x, width] of [
+  ['panel', 538, (1280 - 538) / 2],
+  ['all', 1280 - 470 * 2 - 8, 470],
+]) {
+  test(`openPins at zoom 2 with no bar bounds keeps the ${view} inside the window`, () => {
+    globalThis.window = { viewport_size: () => ({ width: 1280, height: 800 }) }
+    app.settings = { zoom: 2 }
+    app.layout = {
+      type: 'row',
+      children: [
+        { id: 'sidebar', type: 'column', size: { px: 269 }, children: [] },
+        { type: 'column', children: [{ type: 'block', size: { px: 38 }, content: { props: { role: 'pinbar' } } }] },
+      ],
+    }
+    openPins('s', list, view, { id: 's:K1' })
+    app.layout = null
+    app.settings = { zoom: 1 }
+    const o = app.opened.at(-1)
+    assert.deepEqual(o.at, { x, y: view === 'panel' ? 76 : 80 })
+    assert.equal(o.width, width)
+    assert.ok(o.at.x + o.width * 2 <= 1280)
+  })
+}

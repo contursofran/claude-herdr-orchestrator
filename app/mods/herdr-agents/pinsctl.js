@@ -1,9 +1,9 @@
 // Opens and closes the pin drop panel and the all-pins popover (role `pins`). One overlay at a time, with the board
 // pop-up, the card and the sheet: overlayPlan() says what to close. Ids are kept in shared so any copy of the mod can close them.
-import { closeOverlay, focused, openOverlay, setShared, settings, shared } from 'herdr'
+import { closeOverlay, focused, layout, openOverlay, setShared, settings, shared } from 'herdr'
 import { closeCard } from './cardctl.js'
 import { closeSheet } from './sheetctl.js'
-import { PINS_ALL_W, allPinsHeight, fitHeight, overlayPlan, panelHeight, pinsSpot } from './model.js'
+import { PINS_ALL_W, allPinsHeight, barArea, fitHeight, overlayPlan, panelHeight, pinsSpot } from './model.js'
 
 function closeById(key) {
   const id = shared(key)
@@ -19,9 +19,10 @@ export const closePopupOverlay = () => closeById('hrd.popup')
 
 /**
  * Open the drop panel (`view` 'panel', for pin `id`) or the all-pins popover ('all') under the pin bar. `list` is what it
- * shows (pins() of the board of `session`); `bar` is the bar's bounds when a click reported them. Only the owner's click calls this.
+ * shows (pins() of the board of `session`); `bar` is the bar's bounds when a click reported them; `back` is
+ * the terminal to hand the keyboard to, when the overlay being replaced holds it. Only the owner's click calls this.
  */
-export function openPins(session, list, view, { id = null, bar = null } = {}) {
+export function openPins(session, list, view, { id = null, bar = null, back = null } = {}) {
   if (!session) return
   const plan = overlayPlan('pins', {
     popup: Boolean(shared('hrd.popup')),
@@ -35,7 +36,7 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
   if (plan.closePins) closePins()
   if (plan.closeSheet) closeSheet(plan.refocus)
   const viewport = typeof window !== 'undefined' ? window.viewport_size?.() : null
-  const spot = pinsSpot(view, bar, viewport)
+  const spot = pinsSpot(view, bar, viewport, barArea(layout(), settings()?.zoom), settings()?.zoom)
   const pin = list.find(p => p.id === id)
   if (view === 'panel' && !pin) return
   const height = fitHeight(
@@ -51,7 +52,7 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
     width: view === 'panel' ? spot.width : PINS_ALL_W,
     height,
     at: { x: spot.x, y: spot.y },
-    // The pins go in the props: the overlay is a new copy of the mod and reads no board of its own (it would start late).
+    // The pins go in the props: the overlay is a new copy of the mod, and its own board read would start late.
     props: {
       role: 'pins',
       view,
@@ -61,7 +62,7 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
       height,
       width: view === 'panel' ? spot.width : PINS_ALL_W,
       bar,
-      back: focused()?.terminal,
+      back: back ?? focused()?.terminal,
       space: focused()?.space,
     },
   })

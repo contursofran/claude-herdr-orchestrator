@@ -31,6 +31,9 @@ export const QUIET_MS = 5 * 60_000
 // The same for a worker whose status lines show background work of its own (a shell,
 // a monitor, a subagent): a dev server it left running must not hide it for good.
 export const QUIET_BUSY_MS = 60 * 60_000
+// How long a worker blocked with no report keeps counting as working: most prompts pass within this, so the
+// report and nudge sent as it blocks don't ask for a replacement. One stuck for longer frees its slot.
+export const BLOCKED_COUNTS_MS = 3 * 60_000
 // How often a prompt is sent or submitted again when hc sees no work start after it.
 export const PROMPT_TRIES = 3
 // How long a prompt gets to start work before it is submitted or typed again. Longer than the 56 s a
@@ -40,6 +43,8 @@ export const PROMPT_WAIT_MS = 90_000
 export const SEND_DEADLINE_MS = 6 * 60_000
 // How often hc is asked whether that work started.
 export const PROMPT_CHECK_MS = 5000
+// How long the sweep's close step waits for the workers' queued steps before going on without them.
+export const STEP_WAIT_MS = 10_000
 // How often the sweep reads hc for every running worker at once (one `hc ls`).
 export const SWEEP_MS = 60_000
 // How many sweeps in a row must miss a worker's tab before it is reported gone: one failed
@@ -98,6 +103,8 @@ export const BRIDGE_DIR = '.herdr-agents/board'
 export const APP_MOD_FILE = '.herdr-agents/app-mod.json'
 export const APP_MOD_FRESH_MS = 90_000
 export const BRIDGE_ACTIONS_KEPT = 10
+// With nothing else changed the board is still written this often: `at` tells a live board from a leftover, and a deleted file comes back.
+export const BRIDGE_REWRITE_MS = 60_000
 
 // The block of the state file the mod keeps current (see stateblock.ts): how many recent reports it
 // lists, and the markers that fence it.

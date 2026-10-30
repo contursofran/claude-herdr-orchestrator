@@ -66,6 +66,8 @@ export class StripState {
     this.known = null
     this.seen = new Set()
     this.board = null
+    this.boardsRead = false // the first read of the boards has ended
+    this.waiting = null // the last command that came before it
     this.arrivals = new Arrivals({ play: playSound, post: notify })
   }
 
@@ -88,22 +90,36 @@ export class StripState {
     cx.spawn(async cx => {
       for (;;) {
         const name = String(await nextCommand())
-        if (isBoardCommand(name)) {
-          openBoardPopup(this.board)
-          continue
-        }
-        if (isSheetCommand(name)) {
-          toggleSheet(this.board)
-          cx.notify()
-          continue
-        }
-        const n = pickNumber(name)
-        if (!n) continue
-        const item = pickAt(stripItems(this.board), n)
-        if (item) this.pick(this.board, item, false)
-        cx.notify()
+        // Too early to know the board: it runs when the first read ends. Only the last one: one overlay shows at a time.
+        if (this.boardsRead) this.command(name, cx)
+        else this.waiting = name
       }
     })
+  }
+
+  /** What a command does, on the board shown now. */
+  command(name, cx) {
+    if (isBoardCommand(name)) return openBoardPopup(this.board)
+    if (isSheetCommand(name)) {
+      toggleSheet(this.board)
+      return cx.notify()
+    }
+    const n = pickNumber(name)
+    if (!n) return
+    const item = pickAt(stripItems(this.board), n)
+    if (item) this.pick(this.board, item, false)
+    cx.notify()
+  }
+
+  /** The boards were read; `resolve` gives the board the focus shows. The first time, it runs the command that waited for
+   *  this, as its own task: a failure there must not end the board reader that called this. */
+  onBoardsRead(cx, resolve) {
+    if (this.boardsRead) return
+    this.boardsRead = true
+    this.board = resolve()
+    const name = this.waiting
+    this.waiting = null
+    if (name) cx.spawn(async cx => this.command(name, cx))
   }
 
   /** Select a tab and open the card for it (the owner's click or key). A click

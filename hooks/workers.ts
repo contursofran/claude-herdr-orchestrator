@@ -18,6 +18,8 @@ import {
   QUIET_BUSY_MS,
   QUIET_MS,
   SEND_DEADLINE_MS,
+  STEP_WAIT_MS,
+  SWEEP_MS,
 } from './defaults'
 import {
   closeTerminal,
@@ -91,8 +93,10 @@ export function reportRule(job: Job, token = job.token) {
     'To wait for something outside your control (CI, a merge, a free test machine), never sleep or poll inside a command for more than 2 minutes.',
     `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run with ${job.cwd} as its working directory (not the report folder), that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
     'and end your turn without RESULT.md; you get a message when the check passes or times out.',
-    `For CI on a PR, use its number. This is ready on pass or fail, and not ready while a check is pending or before any has registered: {"for": "CI on PR #123", "check": "gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!=\\"pending\\")' | grep -q true", "every": 3, "max": 45}`,
+    `For CI on a PR, use its number. This is ready on pass or fail, or at once if the PR conflicts with its base, since GitHub then runs no CI; it is not ready while a check is pending or before any has registered: {"for": "CI on PR #123", "check": "gh pr view 123 --json mergeable --jq .mergeable | grep -q CONFLICTING || gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!=\\"pending\\")' | grep -q true", "every": 3, "max": 45}`,
+    'When that wait wakes you, run gh pr view 123 --json mergeable first: on CONFLICTING, merge the base branch, resolve it, push and wait again; UNKNOWN only means GitHub is still working it out after the base moved.',
     `Temp files, PR bodies included, go in ${job.dir}, even if $TMPDIR points elsewhere; never use a fixed name in a shared folder such as /tmp, where another worker can overwrite it.`,
+    'Remove temp files by literal path, or just leave them in the job folder, which is ignored: commands like rm -rf "$d" or rm $B/*.bak stop at a "Dangerous rm operation" prompt and lose minutes.',
     "Follow the repo's and the owner's rules on commit and PR attribution, even when a session reminder asks for trailers or footers. Run the repo's PR check before the first push where it has one.",
     `If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.`,
   ].join('\n')
@@ -318,14 +322,18 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
   await endTail($, job)
 }
 
-// A blocked report (tail 'blocked') whose worker works again was answered in its tab: it is no longer
-// blocked (its turn is still on, so the watch stays as an early report's). A job with tail 'early' is left
-// as it is: its worker working means the turn it reported in is still on, not that anyone answered it.
+// A blocked report (tail 'blocked') whose worker works again was answered in its tab, or its prompt passed by
+// itself: it is no longer blocked. With no report written (the block or CLI error was all that went out) the
+// worker is simply running again, so it counts and its report or quiet end is delivered as any worker's. After
+// a real report its turn is still on, as an early report's. A job with tail 'early' is left as it is: its
+// worker working means the turn it reported in is still on, not that anyone answered it.
 // Returns the job as it is now.
 async function answered($: EngineInterface, job: Job) {
-  const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && j.tail === 'blocked' ? { ...j, tail: 'early', headerStatus: undefined } : undefined,
-  )
+  const { after } = await updateJob($, job.name, j => {
+    if (j.token !== job.token || j.status !== 'reported' || j.tail !== 'blocked') return undefined
+    if (j.reportStatus === 'done') return { ...j, tail: 'early' as const, headerStatus: undefined }
+    return { ...j, status: 'running' as const, tail: undefined, endedAt: undefined, reportStatus: undefined, headerStatus: undefined }
+  })
   return after ?? job
 }
 
@@ -405,9 +413,13 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   }
   const byName = new Map<string, HcListed>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
+  // Each worker's step queues in its own chain, so one worker's long send delays only that worker's.
+  const steps: Promise<void>[] = []
   for (const job of Object.values(await jobs($))) {
     if (job.status !== 'running' && !job.tail && !(await carriesOn($, job)) && !(await tokenless($, job))) continue
-    await serial(job.name, async () => {
+    const step = serial(job.name, async () => {
+      // It waited behind a send for a whole sweep: this list is old, and a newer sweep judges the worker.
+      if ((await $.clock.now()) - now >= SWEEP_MS) return
       const current = (await jobs($))[job.name]
       if (!current) return
       const a = byName.get(job.name)
@@ -466,7 +478,9 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
       }
       if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, status, now - q.since)
     })
+    steps.push(step)
   }
+  await Promise.race([Promise.all(steps), $.clock.sleep(STEP_WAIT_MS)])
   if (closeMinutes > 0) await closeIdle($, closeMinutes, agents)
   void refresh($)
 }
@@ -709,6 +723,7 @@ export async function deliver(
   // The file this report was kept in, for the state file's block.
   let reportFile: string | undefined
   let tail: Job['tail']
+  let errorToken: string | undefined
   if (await reported($, current)) {
     if (status === 'done' && opts.early) tail = 'early'
     body = reportBody(await $.fs.read(resultPath))
@@ -786,7 +801,25 @@ export async function deliver(
     notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   } else {
     // A CLI error, like a block, may pass: a report it writes after recovering is delivered too.
-    if (status === 'error') tail = 'blocked'
+    if (status === 'error') {
+      // Already told about this prompt's errors: a retrying CLI must not nudge the coordinator, or rewrite the
+      // screen file, each time. The job waits as after the first one; messages held for it stay held.
+      if (current.token && current.errorToken === current.token) {
+        const endedAt = await $.clock.now()
+        const { after } = await updateJob($, job.name, j =>
+          j.token === current.token && !j.stopped && !stoppedSince(j, current)
+            ? { ...j, status: 'reported', wait: undefined, endedAt, tail: 'blocked', reportStatus: status, headerStatus: undefined }
+            : undefined,
+        )
+        if (!after) return
+        arm($, after, 'resume')
+        misses.delete(job.name)
+        quiet.delete(job.name)
+        return
+      }
+      tail = 'blocked'
+      errorToken = current.token
+    }
     let lines = ''
     try {
       lines = (await readScreen($, job.name, 40)).trim()
@@ -812,6 +845,7 @@ export async function deliver(
           reportFile,
           reportStatus: status,
           headerStatus: header?.status,
+          ...(errorToken ? { errorToken } : {}),
         }
       : undefined,
   )

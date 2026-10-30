@@ -17,8 +17,11 @@ export type Job = {
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
   // set while a reported job's turn is not over, so it is still watched: 'early' = reported before its
-  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report
+  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report.
+  // A 'blocked' worker with no report that works again goes back to 'running'.
   tail?: 'early' | 'blocked'
+  // the token whose CLI error was reported: that prompt's later errors are not reported again
+  errorToken?: string
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
   // a stop was asked (set before the drop and the tab's close, and kept if the tab fails to close): nothing
@@ -91,7 +94,16 @@ export type View = { tab: 'workers' | 'decisions'; selected: number | null; work
 // One line of the band above the prompt; `state` is the status its CLI reported to hc, or
 // 'reported' once the report reached the session, 'waiting' while it waits on WAIT.json.
 // `repo` is the GitHub repo (owner/name) of the worker's folder, for links.
-export type Row = { name: string; profile: string; state: string; startedAt: number; endedAt?: number; note?: string; repo?: string }
+export type Row = {
+  name: string
+  profile: string
+  state: string
+  startedAt: number
+  endedAt?: number
+  note?: string
+  since?: number
+  repo?: string
+}
 
 // The GitHub repo (owner/name) of each folder this session and its workers used, from its git
 // remotes, and `repos` from the config (short name -> owner/name): what a #123 links to.

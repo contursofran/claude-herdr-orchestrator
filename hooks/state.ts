@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Job } from '../types'
-import { JOBS_DROP_MS, JOBS_KEEP_MS, JOBS_PREFIX } from './defaults'
+import { BLOCKED_COUNTS_MS, JOBS_DROP_MS, JOBS_KEEP_MS, JOBS_PREFIX } from './defaults'
 
 // The workers this session started, kept in $.state so a reload keeps them. Each
 // module keeps its own values the same way, as atoms only it reads and writes.
@@ -10,6 +10,13 @@ export const jobsAtom = atom({ plugin: 'herdr-agents', key: 'jobs' } as const, {
 
 // A worker that holds a slot: running, or still starting.
 export const active = (j: Job) => j.status === 'running' || j.status === 'starting'
+
+// A worker the limit counts as working: one in a slot, not parked on a WAIT.json, or one that went blocked with no
+// report less than BLOCKED_COUNTS_MS ago. After a real report its slot is already given up.
+export const working = (j: Job, now: number) =>
+  !j.wait &&
+  (active(j) ||
+    (j.status === 'reported' && j.tail === 'blocked' && j.reportStatus === 'blocked' && now - (j.endedAt ?? 0) < BLOCKED_COUNTS_MS))
 
 export async function jobs($: EngineInterface): Promise<Record<string, Job>> {
   return read($, jobsAtom)
