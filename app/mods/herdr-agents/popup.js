@@ -1,8 +1,9 @@
 // The board pop-up: the work table of the one board the strip shows, opened from `board ▴` (or ctrl-cmd-b).
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, focused, notify, props, run, terminals } from 'herdr'
+import { closeOverlay, focused, notify, props, run, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
+import { noteDismissed } from './outside.js'
 import { POPUP_ROW, POPUP_W, boardSpace, popupKeyAction, popupRefocus, projectName, rowAction, workRows, wrapUpButton } from './model.js'
 import { color, font, icon, popup as look } from './tokens.js'
 
@@ -90,6 +91,16 @@ export function popupView(board, ctl) {
       try {
         closeOverlay(props().overlay)
       } catch {} // the app's own Esc may have closed it first
+    })
+    .on_mouse_down_out(e => {
+      // The app may close a popup on this press too; this closes it either way, tells `board ▴` so it toggles, and leaves the
+      // keyboard on what was pressed. Any button dismisses.
+      ctl.leaving = true
+      noteDismissed('popup', e, { session: props()?.session, back: props()?.back, space: props()?.space })
+      if (shared('hrd.popup') === props()?.overlay) setShared('hrd.popup', null)
+      try {
+        closeOverlay(props()?.overlay)
+      } catch {} // the app already closed it
     })
     .w(POPUP_W)
     .h(height)

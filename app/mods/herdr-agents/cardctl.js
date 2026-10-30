@@ -3,9 +3,10 @@
 import { focused, run, setShared, shared } from 'herdr'
 import { canRefocus, openState } from './model.js'
 
-/** Open the card for `item` ({key}) of `board`; remembers the terminal to hand back. */
-export function openCard(board, item) {
-  const cur = shared('hrd.open')
+/** Open the card for `item` ({key}) of `board`; remembers the terminal to hand back, or the one `from` (a surface this press
+ *  just closed) would have. */
+export function openCard(board, item, from = null) {
+  const cur = shared('hrd.open') ?? from
   const seq = (shared('hrd.seq') ?? 0) + 1
   setShared('hrd.seq', seq)
   setShared('hrd.open', openState(cur, board.session, item.key, focused()?.terminal, seq, focused()?.space))

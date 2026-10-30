@@ -76,7 +76,7 @@ function segmentsRow(segments, ui) {
  *   board  the resolved board, or null (the row draws empty)
  *   ui     what main.js worked out: {mode, current, many, empty, segments, slim, meta, waiting, flash} and the handlers
  *          onPick(id, cx), onStep(dir, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
- * The caret and `all pins` open the drop panel and the popover (S8, pinsView below); onBounds(b) keeps the bar's place.
+ * The caret and `all pins` open the drop panel and the popover (S8, pinsView below); onPress(e) keeps the bar's place.
  */
 export function pinbar(board, ui) {
   if (!board) return base()
@@ -111,7 +111,7 @@ export function pinbar(board, ui) {
   return (
     base()
       // Where the drop panel and the popover go: the bar's own bounds, from the press that opens them.
-      .on_mouse_down('left', e => ui.onBounds(e?.bounds))
+      .on_mouse_down('left', e => ui.onPress(e))
       // The unread flash: a layer behind the content fades in and out, 1.1 s a time; main.js removes it after two.
       .when(ui.flash, el =>
         el.child(div().absolute().top(0).left(0).size_full().bg(color.flash).loop('opacity', { from: 0, to: 1, period: 1100 })),
