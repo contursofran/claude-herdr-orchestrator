@@ -671,7 +671,7 @@ export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ??
 export const CARD_W = 560
 export const CARD_MIN_W = 220
 export const CARD_SIDE = 170
-export const CARD_MAX_H_PCT = 50
+export const CARD_MAX_H_PCT = 70
 export function cardSize(viewport) {
   const vw = Number(viewport?.width)
   const vh = Number(viewport?.height)

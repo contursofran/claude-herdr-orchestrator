@@ -283,11 +283,11 @@ test('the card never resizes, shows or hides a layout node: no layout.* call, no
 })
 
 test('cardSize keeps the card inside a narrow window and caps its height, scrolling the rest', () => {
-  assert.deepEqual(cardSize({ width: 1200, height: 800 }), { w: CARD_W, maxH: 400 })
+  assert.deepEqual(cardSize({ width: 1200, height: 800 }), { w: CARD_W, maxH: 560 })
   const narrow = cardSize({ width: 620, height: 800 })
   assert.equal(narrow.w <= 620 - 2 * CARD_SIDE, true, 'clear of both sidebars')
   assert.equal(cardSize({ width: 300, height: 800 }).w, CARD_MIN_W)
-  assert.equal(cardSize({ width: 1200, height: 360 }).maxH, 180)
+  assert.equal(cardSize({ width: 1200, height: 360 }).maxH, 252)
   assert.deepEqual(cardSize(null), { w: CARD_W, maxH: 400 }, 'no window size: the full width')
 })
 
