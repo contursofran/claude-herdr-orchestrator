@@ -275,7 +275,7 @@ test('the debug line is the folder and the open count, and empty without a board
 const know = (key, extra = {}) => ({ key, kind: 'know', isOpen: true, at: 100, from: 'w-api', text: `${key} text`, ...extra })
 const pinBoard = (needs, session = 's') => ({ session, needs })
 
-test('pins are the open know items, in board order; ask, do and closed ones are not pins', () => {
+test('pins are the open know and do items, in board order; ask and closed ones are not pins', () => {
   const b = pinBoard([
     know('K1'),
     { key: 'D1', kind: 'ask', isOpen: true },
@@ -285,9 +285,26 @@ test('pins are the open know items, in board order; ask, do and closed ones are 
   ])
   assert.deepEqual(
     pins(b).map(p => p.key),
-    ['K1', 'K3'],
+    ['K1', 'T1', 'K3'],
+  )
+  assert.deepEqual(
+    pins(b).map(p => p.kind),
+    ['know', 'do', 'know'],
   )
   assert.deepEqual(pins(null), [])
+})
+
+test('a board with only a to-do has a pin: the bar is not empty, can go slim once read, and the strip keeps the tab', () => {
+  const b = pinBoard([{ key: 'T1', kind: 'do', isOpen: true, text: 'Merge #7', at: 5 }])
+  assert.equal(pinbarMode(pins(b)), 'full')
+  assert.equal(pinbarMode(pins(b, { [readKey('s', 'T1')]: true })), 'slim', 'a read to-do counts as read')
+  assert.equal(slimLine(pins(b, { [readKey('s', 'T1')]: true })), '1 pin · nothing new · last: Merge #7')
+  assert.deepEqual(
+    stripItems(b).map(i => i.key),
+    ['T1'],
+    'the strip tab stays',
+  )
+  assert.equal(deriveBar(newBarState(), b).view.mode, 'full')
 })
 
 test('pin fields fall back: title from the first line of text, summary from the rest, no tag, key as the last title', () => {
@@ -937,7 +954,7 @@ test('newArrivals: the first sight of a board is silent', () => {
   assert.deepEqual([...r.keys].sort(), ['D1', 'P1'])
 })
 
-test('newArrivals: a later know or ask is new; do, closed items and blocked workers are not', () => {
+test('newArrivals: a later know, do or ask is new; closed items and blocked workers are not', () => {
   const first = newArrivals(null, needsBoard(['D1', 'ask']))
   const r = newArrivals(first.keys, needsBoard(['D1', 'ask'], ['D2', 'ask'], ['P1', 'know'], ['T1', 'do'], ['P2', 'know', false]))
   assert.deepEqual(
@@ -945,6 +962,7 @@ test('newArrivals: a later know or ask is new; do, closed items and blocked work
     [
       ['D2', 'ask', 'text D2'],
       ['P1', 'know', 'text P1'],
+      ['T1', 'do', 'text T1'],
     ],
   )
 })
@@ -965,6 +983,23 @@ test('arrivalNotice: none, one, and several make one notice', () => {
     { terminal: 't9', fresh: pin },
   ])
   assert.deepEqual(many, { title: '3 new items', body: '1 question, 2 pins', terminal: 't7' })
+  const todo = [{ key: 'T1', kind: 'do', text: 'Merge' }]
+  assert.deepEqual(arrivalNotice([{ terminal: 't4', fresh: todo }]).title, 'New to-do')
+  assert.equal(arrivalNotice([{ terminal: 't4', fresh: [...todo, ...pin] }]).body, '1 to-do, 1 pin')
+})
+
+test('Arrivals: a to-do and a pin made together sound and post once; the same to-do again is silent', () => {
+  const calls = []
+  const a = new Arrivals({ play: s => calls.push(['play', s]), post: n => calls.push(['post', n.title]) })
+  a.observe([needsBoard(['D1', 'ask'])])
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['P1', 'know'])])
+  assert.deepEqual(calls, [
+    ['play', 'done'],
+    ['post', '2 new items'],
+  ])
+  calls.length = 0
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['P1', 'know'])])
+  assert.deepEqual(calls, [])
 })
 
 test('Arrivals: silent first sight, one sound and notice per change, a returning board is silent', () => {

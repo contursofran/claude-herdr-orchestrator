@@ -130,7 +130,7 @@ export async function registerTools($: EngineInterface) {
   await $.tool.register({
     name: 'pin_for_owner',
     description: [
-      'Pin one line at the top of the band above the person\'s prompt: something they have to do (kind "do": test a build at a URL, merge a PR that waits for them, restart something, answer a worker in its tab) or should know (kind "know": news, a blocker you cannot fix).',
+      'Pin one line at the top of the band above the person\'s prompt: something they have to do (kind "do": test a build at a URL, merge a PR that waits for them, restart something, answer a worker in its tab) or should know (kind "know": news, a blocker you cannot fix). In the Herdr app both kinds show in its pin bar, and a "do" item is also a tab in its needs-you strip; a question (ask_owner) is in the strip only.',
       'Use it whenever a report or status message would otherwise carry such an item, so it does not scroll away. One item per call; questions go to ask_owner instead.',
       'It stays until you unpin it with unpin_for_owner or the person ticks it off; a ticked "do" item comes back as a <herdr-owner-done> prompt.',
       'Returns its id (T1, T2…).',
