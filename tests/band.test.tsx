@@ -225,3 +225,86 @@ test('the band ends its top row with the mod version, dim, after the context siz
   expect(await row(ui, 'w-busy')).toBeDefined()
   await ui.unmount()
 })
+
+// A worker that reports with `status: blocked` in its header (a real RESULT.md), as the band and the state file show it.
+async function blockedReport($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1]) {
+  const h = await start($, on)
+  const { clock, files, emit, typed } = h
+  files['/repo/COORDINATOR-STATE.md'] = '# S\n'
+  await spawn($, ['w-a'])
+  await emit('w-a', 'working')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] =
+    `<!-- report ${token} -->\n\`\`\`report\nstatus: blocked\nsummary: needs an answer\n\`\`\`\nWhich branch?`
+  await clock.advance(12_000)
+  await emit('w-a', 'done')
+  await clock.advance(3000)
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ key: 'col0' }))?.text ?? ''
+    await ui.unmount()
+    return text
+  }
+  return { ...h, band, token }
+}
+
+test('a report with status: blocked shows Blocked, and a message to the worker ends it', async ($, on) => {
+  const { band, clock } = await blockedReport($, on)
+  expect(await band()).toMatch(/^● w-a +reviewer +\S+ +Blocked · answer it in its tab$/)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Use main.' })
+  await clock.advance(3000)
+  expect(await band()).not.toMatch(/Blocked/)
+})
+
+test('stopping a worker whose report said blocked ends Blocked and keeps its report line', async ($, on) => {
+  const { band, clock, files } = await blockedReport($, on)
+  await clock.advance(3000)
+  expect(await band()).toMatch(/Blocked/)
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
+  await clock.advance(3000)
+  expect(await band()).not.toMatch(/Blocked/)
+  expect(files['/repo/COORDINATOR-STATE.md']).toMatch(/w-a \(reviewer\) done: \S*RESULT-\S+\.md\n/)
+})
+
+test('a worker blocked after its early report leaves Blocked once it works again', async ($, on) => {
+  const { clock, files, emit, typed } = await start($, on)
+  await spawn($, ['w-a'])
+  await emit('w-a', 'working')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nDone, but one question.`
+  // The report is delivered while the worker still works (its turn has not ended).
+  await clock.advance(12_000)
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ key: 'col0' }))?.text ?? ''
+    await ui.unmount()
+    return text
+  }
+  expect(await band()).toMatch(/Reported/)
+  // Its turn goes on and stops at an approval.
+  await emit('w-a', 'blocked')
+  await clock.advance(3000)
+  expect(await band()).toMatch(/Blocked/)
+  // The owner answers in its tab: it works again, and the label goes without any message.
+  // Nothing waits on it by now, so the sweep, a minute on, sees it work.
+  await emit('w-a', 'working')
+  await clock.advance(60_000)
+  expect(await band()).not.toMatch(/Blocked/)
+})
+
+test('a worker blocked with no report leaves Blocked when it is stopped', async ($, on) => {
+  const { clock, emit } = await start($, on)
+  await spawn($, ['w-a'])
+  await emit('w-a', 'blocked')
+  await clock.advance(3000)
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ key: 'col0' }))?.text ?? ''
+    await ui.unmount()
+    return text
+  }
+  expect(await band()).toMatch(/Blocked/)
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
+  await clock.advance(3000)
+  expect(await band()).not.toMatch(/Blocked/)
+})
