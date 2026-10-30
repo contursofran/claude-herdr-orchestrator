@@ -66,6 +66,21 @@ class Install(unittest.TestCase):
         self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-strip"])
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
 
+    def test_a_missing_or_odd_main_layout_prints_a_message_and_the_install_carries_on(self):
+        os.makedirs(os.path.join(self.app, "layouts"))
+        for content in (None, '{"id": "root", "children": []}'):
+            main = os.path.join(self.app, "layouts", "main.json")
+            if content is None:
+                if os.path.exists(main):
+                    os.remove(main)
+            else:
+                with open(main, "w") as f:
+                    f.write(content)
+            done = self.install()  # check=True: a failing install.sh raises
+            self.assertIn('Layout "coordinator" not made', done.stdout)
+            self.assertTrue(done.stdout.strip().endswith("running sessions reload updates by themselves."))
+            self.assertFalse(os.path.exists(os.path.join(self.app, "layouts", "coordinator.json")))
+
 
 if __name__ == "__main__":
     unittest.main()

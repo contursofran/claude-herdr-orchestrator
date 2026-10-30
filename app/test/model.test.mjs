@@ -12,12 +12,18 @@ const board = (session, terminal, extra = {}) => ({
   needs: [],
   ...extra,
 })
-const term = (address, extra = {}) => ({ address, state: 'live', agent: 'claude-code', labels: { 'herdr.space': 's1' }, ...extra })
+const term = (address, extra = {}) => ({
+  address,
+  state: 'live',
+  program: { agent: true, name: 'claude' },
+  labels: { 'herdr.space': 's1' },
+  ...extra,
+})
 const focus = (terminal, space = 's1') => ({ space, tab: 'a', terminal })
 
 test('rule 1: a board whose coordinator terminal is gone, not live or not an agent is dropped', () => {
   const boards = [board('gone', 't9'), board('exited', 't2'), board('shell', 't3'), board('ok', 't1'), { session: 'old', at: 5, cwd: '/x' }]
-  const terminals = [term('t1'), term('t2', { state: 'exited' }), term('t3', { agent: null })]
+  const terminals = [term('t1'), term('t2', { state: 'exited' }), term('t3', { program: { agent: false } })]
   assert.equal(resolveBoard(boards, terminals, focus('t9', 'elsewhere')).board, null)
   assert.equal(resolveBoard(boards, terminals, focus('t2', 'elsewhere')).board, null)
   assert.equal(resolveBoard(boards, terminals, focus('t3', 'elsewhere')).board, null)
@@ -29,7 +35,7 @@ test('rule 2: the focused terminal is a coordinator', () => {
   const boards = [board('a', 't1'), board('b', 't2', { at: 9000 })]
   const r = resolveBoard(boards, [term('t1'), term('t2')], focus('t1'))
   assert.deepEqual([r.board.session, r.via], ['a', 2])
-  assert.deepEqual(r.pick, { space: 's1', session: 'a' })
+  assert.deepEqual(r.pick, { s1: 'a' })
 })
 
 test('rule 3: the focused terminal is a worker of a board, by name', () => {
@@ -48,7 +54,7 @@ test('rule 3 loses to rule 2 and needs a live board', () => {
 
 test('rule 4: a shell in the space of a coordinator shows its board; the newest of two wins', () => {
   const boards = [board('old', 't1', { at: 1 }), board('new', 't2', { at: 2 }), board('other', 't3', { at: 9 })]
-  const terminals = [term('t1'), term('t2'), term('t3', { labels: { 'herdr.space': 's2' } }), term('t5', { agent: null })]
+  const terminals = [term('t1'), term('t2'), term('t3', { labels: { 'herdr.space': 's2' } }), term('t5', { program: null })]
   const r = resolveBoard(boards, terminals, focus('t5'))
   assert.deepEqual([r.board.session, r.via], ['new', 4])
   assert.equal(resolveBoard(boards, terminals, focus('t5', 's2')).board.session, 'other')
@@ -57,12 +63,44 @@ test('rule 4: a shell in the space of a coordinator shows its board; the newest 
 
 test('rule 4: the board last picked by rule 2 or 3 in this space stays picked, and only in this space', () => {
   const boards = [board('old', 't1', { at: 1 }), board('new', 't2', { at: 2 })]
-  const terminals = [term('t1'), term('t2'), term('t5', { agent: null })]
+  const terminals = [term('t1'), term('t2'), term('t5', { program: null })]
   const first = resolveBoard(boards, terminals, focus('t1'))
   const next = resolveBoard(boards, terminals, focus('t5'), first.pick)
   assert.equal(next.board.session, 'old')
-  assert.equal(resolveBoard(boards, terminals, focus('t5', 's1'), { space: 's2', session: 'old' }).board.session, 'new')
-  assert.equal(resolveBoard(boards, terminals, focus('t5'), { space: 's1', session: 'gone' }).board.session, 'new')
+  assert.equal(resolveBoard(boards, terminals, focus('t5', 's1'), { s2: 'old' }).board.session, 'new')
+  assert.equal(resolveBoard(boards, terminals, focus('t5'), { s1: 'gone' }).board.session, 'new')
+})
+
+test('rule 4: the pick is remembered per space: pick on t1, visit space B, come back to t1 and a shell', () => {
+  const boards = [board('old', 't1', { at: 1 }), board('new', 't2', { at: 2 }), board('b', 't3', { at: 5 })]
+  const terminals = [
+    term('t1'),
+    term('t2'),
+    term('t3', { labels: { 'herdr.space': 's2' } }),
+    term('t5', { program: null }),
+    term('t6', { program: null, labels: { 'herdr.space': 's2' } }),
+  ]
+  let r = resolveBoard(boards, terminals, focus('t1'))
+  assert.equal(r.board.session, 'old')
+  r = resolveBoard(boards, terminals, focus('t6', 's2'), r.pick)
+  assert.equal(r.board.session, 'b')
+  r = resolveBoard(boards, terminals, focus('t5'), r.pick)
+  assert.deepEqual([r.board.session, r.via], ['old', 4])
+})
+
+test('rule 4: two coordinators in one space do not flip while both rewrite; a rule 4 pick is kept too', () => {
+  const terminals = [term('t1'), term('t2'), term('t5', { program: null })]
+  let pick = null
+  let first = null
+  for (const at of [10, 20, 30, 40]) {
+    const boards = [board('a', 't1', { at: at + (at % 20 === 0 ? 0 : 5) }), board('b', 't2', { at: at + (at % 20 === 0 ? 5 : 0) })]
+    const r = resolveBoard(boards, terminals, focus('t5'), pick)
+    first ??= r.board.session
+    assert.equal(r.board.session, first)
+    pick = r.pick
+  }
+  // The remembered file is gone: the newest of what is left.
+  assert.equal(resolveBoard([board('b', 't2', { at: 1 })], terminals, focus('t5'), pick).board.session, 'b')
 })
 
 test('rule 5: nothing, and nothing when focus is unknown', () => {
@@ -99,16 +137,42 @@ test('a plain claude started by hand in a coordinator terminal writes a second b
   assert.equal(resolveBoard([real], terminals, focus('t1'), cold.pick).board.session, 'real')
 })
 
+test('stray/real/stray on one terminal while focus is on a plain shell in the space does not flip', () => {
+  const terminals = [term('t1'), term('t5', { program: null })]
+  const real = board('real', 't1')
+  const stray = board('stray', 't1')
+  let pick = null
+  const seen = []
+  ;[
+    [stray, real],
+    [real, stray],
+    [stray, real],
+  ].forEach(([newest, other], i) => {
+    const r = resolveBoard(
+      [
+        { ...newest, at: 100 + i * 10 },
+        { ...other, at: 50 },
+      ],
+      terminals,
+      focus('t5'),
+      pick,
+    )
+    seen.push(r.board.session)
+    pick = r.pick
+  })
+  assert.deepEqual(new Set(seen).size, 1)
+})
+
 test('/clear or resume leaves two session files for one terminal: the newest, then the same one', () => {
   const boards = [board('before', 't1', { at: 1 }), board('after', 't1', { at: 2 })]
   assert.equal(resolveBoard(boards, [term('t1')], focus('t1')).board.session, 'after')
   assert.equal(resolveBoard([...boards].reverse(), [term('t1')], focus('t1')).board.session, 'after')
 })
 
-test('labelOf reads an object, "k=v" strings and {key, value} items', () => {
+test('labelOf reads the object shape only', () => {
   assert.equal(labelOf({ labels: { a: 'x' } }, 'a'), 'x')
-  assert.equal(labelOf({ labels: ['a=x', 'b=y=z'] }, 'b'), 'y=z')
-  assert.equal(labelOf({ labels: [{ key: 'a', value: 'x' }] }, 'a'), 'x')
+  assert.equal(labelOf({ labels: ['a=x'] }, 'a'), null, 'only the object shape')
+  assert.equal(labelOf({ labels: { a: 'x' } }, 'b'), null)
   assert.equal(labelOf({ labels: {} }, 'a'), null)
   assert.equal(labelOf({}, 'a'), null)
   assert.equal(labelOf(undefined, 'a'), null)

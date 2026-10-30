@@ -1,7 +1,7 @@
 // Merges app/keys.json into the app's keys.json: adds missing keys, never replaces one that is bound, prints what it skipped.
 //
 //   node app/keys.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,10 +31,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const wanted = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'keys.json'), 'utf8'))
     const existing = existsSync(target) ? JSON.parse(readFileSync(target, 'utf8')) : {}
     const { keys, added, skipped } = mergeKeys(existing, wanted)
-    if (added.length) writeFileSync(target, `${JSON.stringify(keys, null, 2)}\n`)
+    if (added.length) {
+      writeFileSync(`${target}.tmp`, `${JSON.stringify(keys, null, 2)}\n`)
+      renameSync(`${target}.tmp`, target)
+    }
     for (const s of skipped) console.log(`Key not added, already bound: ${s}`)
   } catch (e) {
-    console.error(`Keys not merged: ${e.message}`)
-    process.exit(1)
+    // Not fatal: the install carries on without the keys.
+    console.log(`Keys not merged: ${e.message}`)
   }
 }

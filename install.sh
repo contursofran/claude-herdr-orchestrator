@@ -70,8 +70,9 @@ if [[ -d $app_home ]]; then
   mkdir -p "$app_home/mods/herdr-agents"
   # The app writes jsconfig.json and gpui-kit.d.ts into mod folders.
   rsync -a --delete --exclude jsconfig.json --exclude gpui-kit.d.ts "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
-  node "$here/app/layout.mjs" "$app_home"
-  node "$here/app/keys.mjs" "$app_home"
+  # A layout or key problem is printed and does not stop the install.
+  node "$here/app/layout.mjs" "$app_home" || echo "Layout step failed; carrying on."
+  node "$here/app/keys.mjs" "$app_home" || echo "Keys step failed; carrying on."
 fi
 
 echo "Installed herdr-agents into $claude. A first install loads in sessions started from now on; running sessions reload updates by themselves."

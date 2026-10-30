@@ -1,5 +1,4 @@
 {
   "extends": "./.claude-plugin/types/tsconfig.json",
-  "compilerOptions": { "noUnusedLocals": true },
-  "exclude": ["node_modules", "app"]
+  "compilerOptions": { "noUnusedLocals": true }
 }

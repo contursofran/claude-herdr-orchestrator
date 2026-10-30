@@ -28,24 +28,15 @@ export function applyFile(boards, id, text) {
   }
 }
 
-/** The value of one label on a terminal; core terminals carry `labels` as an object, a list of "k=v" or a list of {key, value}. */
+/** The value of one label on a terminal; core terminals carry `labels` as an object (`labels["herdr.space"]`). */
 export function labelOf(terminal, key) {
   const labels = terminal?.labels
-  if (!labels) return null
-  if (Array.isArray(labels)) {
-    for (const l of labels) {
-      if (typeof l === 'string') {
-        const i = l.indexOf('=')
-        if (i > 0 && l.slice(0, i) === key) return l.slice(i + 1)
-      } else if (l && (l.key ?? l.name) === key) return String(l.value)
-    }
-    return null
-  }
+  if (!labels || typeof labels !== 'object' || Array.isArray(labels)) return null
   const v = labels[key]
   return v === undefined || v === null ? null : String(v)
 }
 
-const live = t => t && t.state === 'live' && Boolean(t.agent)
+const live = t => t && t.state === 'live' && t.program?.agent === true
 
 function choose(candidates, last) {
   if (candidates.length === 0) return null
@@ -59,49 +50,52 @@ function choose(candidates, last) {
  *   boards    every board read, an array
  *   terminals terminals() from herdr
  *   focus     focused() from herdr
- *   last      the {space, session} that rule 2 or 3 last picked, or null
- * Returns {board, via, pick}: via is 2, 3, 4 or null; `pick` is the value to pass as `last` next time.
+ *   last      the pick map {space: session} returned by the last call, or null
+ * Returns {board, via, pick}: via is 2, 3, 4 or null; `pick` is the map to pass as `last` next time.
  *
- * Several boards can match (a /clear or resume leaves two session files for one terminal, and a plain `claude`
- * started by hand in a coordinator's terminal inherits its HC_TERMINAL_ID and writes a board of its own).
- * The one picked last stays picked while its file exists; otherwise the newest `at` wins, and equal ones go by session id.
- * Without that, two boards rewritten every 3 s would swap places on every write.
+ * Several boards can match (a /clear or resume leaves two session files for one terminal, a plain `claude`
+ * started by hand in a coordinator's terminal inherits its HC_TERMINAL_ID and writes a board of its own, and a
+ * space can hold two coordinators). The board shown in a space stays shown, whatever rule found it, while its
+ * file exists and still matches; otherwise the newest `at` wins, and equal ones go by session id.
+ * Without that, boards rewritten every 3 s would swap places on every write.
  */
 export function resolveBoard(boards, terminals, focus, last = null) {
+  const picks = last ?? {}
   const byAddress = new Map((terminals ?? []).map(t => [t.address, t]))
   // 1. A board counts only while its coordinator terminal is live and runs an agent; boards without the field are ignored.
   const alive = (boards ?? []).filter(b => {
     const address = b?.coordinator?.terminal
     return typeof address === 'string' && live(byAddress.get(address))
   })
-  const none = { board: null, via: null, pick: last }
+  const none = { board: null, via: null, pick: picks }
   if (!focus) return none
   const space = focus.space ?? null
+  const remembered = space === null ? null : { session: picks[space] }
+  const found = (board, via) => ({ board, via, pick: space === null ? picks : { ...picks, [space]: board.session } })
 
   // 2. The focused terminal is a board's coordinator.
   if (focus.terminal) {
     const board = choose(
       alive.filter(b => b.coordinator.terminal === focus.terminal),
-      last,
+      remembered,
     )
-    if (board) return { board, via: 2, pick: { space, session: board.session } }
+    if (board) return found(board, 2)
     // 3. The focused terminal is one of a board's workers, by name.
     const name = byAddress.get(focus.terminal)?.name
     if (name) {
       const worker = choose(
         alive.filter(b => (b.workers ?? []).some(w => w.name === name)),
-        last,
+        remembered,
       )
-      if (worker) return { board: worker, via: 3, pick: { space, session: worker.session } }
+      if (worker) return found(worker, 3)
     }
   }
 
   // 4. A board whose coordinator sits in the focused space.
   if (space) {
     const inSpace = alive.filter(b => labelOf(byAddress.get(b.coordinator.terminal), 'herdr.space') === space)
-    const sticky = last && last.space === space ? last : null
-    const board = choose(inSpace, sticky)
-    if (board) return { board, via: 4, pick: last }
+    const board = choose(inSpace, remembered)
+    if (board) return found(board, 4)
   }
   // 5. Nothing.
   return none

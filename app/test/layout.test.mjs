@@ -46,6 +46,10 @@ test("the pin bar goes after tabs and the strip after work-body, with the plan's
   assert.deepEqual(layout.cloned_from, { name: 'main' })
 })
 
+test('cloned_from carries the version when it is known', () => {
+  assert.deepEqual(coordinatorLayout(main(), '0.1.9').cloned_from, { name: 'main', version: '0.1.9' })
+})
+
 test('everything else is main as it was, and main is not changed', () => {
   const input = main()
   const layout = coordinatorLayout(input)

@@ -3,7 +3,8 @@
 // (layout.clone would switch the owner's window).
 //
 //   node app/layout.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,8 +17,8 @@ const block = (id, px, role) => ({
   content: { mod: 'herdr-agents', props: { role } },
 })
 
-/** `main` with the pin bar after `tabs` and the strip after `work-body`, both in the `work` column. Throws if main has another shape. */
-export function coordinatorLayout(main) {
+/** `main` with (`version` is the app's, for `cloned_from`) the pin bar after `tabs` and the strip after `work-body`, both in the `work` column. Throws if main has another shape. */
+export function coordinatorLayout(main, version) {
   const layout = structuredClone(main)
   const find = (node, id) => {
     if (node?.id === id) return node
@@ -35,7 +36,7 @@ export function coordinatorLayout(main) {
   if (find(layout, 'hrd-pins') || find(layout, 'hrd-strip')) throw new Error('layouts/main.json already has the pin bar or strip')
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
-  layout.cloned_from = { name: 'main' }
+  layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
 
@@ -44,7 +45,15 @@ export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) return 'exists'
   const main = JSON.parse(readFileSync(join(home, 'layouts', 'main.json'), 'utf8'))
-  writeFileSync(target, `${JSON.stringify(coordinatorLayout(main), null, 2)}\n`)
+  let version
+  try {
+    version = execFileSync('herdr-app', ['--version'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).match(
+      /\d[\w.+-]*/,
+    )?.[0]
+  } catch {}
+  // The app reads this folder live: write beside it and rename.
+  writeFileSync(`${target}.tmp`, `${JSON.stringify(coordinatorLayout(main, version), null, 2)}\n`)
+  renameSync(`${target}.tmp`, target)
   return 'written'
 }
 
@@ -58,7 +67,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {
-    console.error(`Layout "coordinator" not made: ${e.message}`)
-    process.exit(1)
+    // Not fatal: the install carries on without the layout.
+    console.log(`Layout "coordinator" not made: ${e.message}`)
   }
 }
