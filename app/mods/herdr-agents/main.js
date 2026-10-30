@@ -4,8 +4,8 @@ import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
-import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, resolveBoard } from './model.js'
-import { pinbar, pinsView } from './pinbar.js'
+import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
+import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
@@ -43,11 +43,17 @@ export default class HerdrAgents extends View {
     }
     this.boards = new Boards()
     if (props()?.role === 'pins') {
-      // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
-      // `gone` are the pins Done here, hidden at once.
+      // The drop panel and the popover get their pins in props(), so the first draw has its content; their one board is
+      // watched only so a pin resolved meanwhile leaves. `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
       this.popup = makePopupState(cx)
       this.watchAges(cx)
+      this.drawnChanged() // the props' list is what the first draw shows
+      this.boards.startOne(cx, props().session, null, cx => {
+        if (!this.drawnChanged()) return
+        if (pinsOverlayEmpty(props(), this.pinsBoard(), this.gone)) closePinsOverlay()
+        else cx.notify()
+      })
       return
     }
     if (props()?.role === 'board') {
@@ -100,9 +106,14 @@ export default class HerdrAgents extends View {
       boards: this.boards.list(),
       open: role === 'card' ? shared('hrd.open') : role === 'sheet' ? shared('hrd.sheet') : null,
       pinAt: this.pin?.shownAt,
-      pins: role === 'pins' ? props() : null,
+      pins: role === 'pins' ? { ...props(), list: stillOpen(props().list ?? [], this.pinsBoard()) } : null,
       gone: this.gone,
     })
+  }
+
+  /** The board a pins overlay was opened on, once read. */
+  pinsBoard() {
+    return this.boards.list().find(b => b.session === props()?.session)
   }
 
   /** What was just drawn is what the next tick compares with. */
@@ -114,7 +125,8 @@ export default class HerdrAgents extends View {
   /** Whether what this copy draws from the boards changed since it last asked. */
   drawnChanged() {
     const role = props()?.role
-    const key = drawnKey(role, this.boards.list(), props()?.session, role === 'sheet' ? shared('hrd.sheet') : null)
+    const open = role === 'sheet' ? shared('hrd.sheet') : role === 'pins' ? props()?.list : null
+    const key = drawnKey(role, this.boards.list(), props()?.session, open)
     if (key === this.drawn) return false
     this.drawn = key
     return true
@@ -138,7 +150,7 @@ export default class HerdrAgents extends View {
   render(cx) {
     if (props()?.role === 'version') return versionView(this.version)
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
-    if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup))
+    if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))
     if (props()?.role === 'board')
       return popupView(
         this.boards.list().find(b => b.session === props().session),

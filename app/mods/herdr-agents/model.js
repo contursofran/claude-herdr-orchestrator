@@ -59,6 +59,13 @@ export function drawnKey(role, boards, session, open = null) {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
   }
+  if (role === 'pins')
+    return JSON.stringify(
+      stillOpen(
+        open ?? [],
+        list.find(b => b.session === session),
+      ).map(p => p.id),
+    )
   if (role === 'sheet') return open ? JSON.stringify(list.map(({ at: _at, ...b }) => b)) : ''
   return JSON.stringify(list.map(({ at: _at, tasks, ...b }) => ({ ...b, rows: (tasks ?? []).map(t => [t?.key, t?.joined]) })))
 }
@@ -194,6 +201,19 @@ export function pins(board, read = {}, hidden = new Set()) {
       }
     })
     .filter(p => !hidden.has(p.id))
+}
+
+/** Those of `list` (an overlay's pins) still open on `board`. With no board read yet, all of them. */
+export function stillOpen(list, board) {
+  if (!board) return list
+  const open = new Set(pins(board).map(p => p.id))
+  return list.filter(p => open.has(p.id))
+}
+
+/** Whether a pins overlay has nothing left to show: its pin, or every pin, was resolved or Done. */
+export function pinsOverlayEmpty({ view, id, list = [] }, board, gone = new Set()) {
+  const left = stillOpen(list, board).filter(p => !gone.has(p.id))
+  return view === 'panel' ? !left.some(p => p.id === id) : left.length === 0
 }
 
 /** The newest of some pins; the later one in board order when `at` is equal. */
@@ -919,6 +939,7 @@ export function arrivalNotice(arrivals) {
 // ---- The pin drop panel and the all-pins popover (S8) ----
 
 export const PINS_ALL_W = 470
+export const PINS_ALL_ROW_TEXT = 3 // lines of a row's summary
 const PINS_ALL_ROW = 122 // padding 10 + 8, title 18, text 3 x 18, buttons 24, gaps 4 + 4
 const PINS_ALL_ROWS = 4 // more than this scroll
 const PINS_ALL_CHROME = 2 + 20 + 24 + 4 // border, padding, header, gap
@@ -964,15 +985,49 @@ export function fitHeight(height, y, viewport, zoom = 1) {
 export const allPinsHeight = n => PINS_ALL_CHROME + (PINS_ALL_ROW + 4) * Math.min(Math.max(n, 1), PINS_ALL_ROWS)
 
 /**
+ * The pin bar's place, worked out from the layout tree: `x` and `right` are what fixed blocks take on its left and right,
+ * `y` is its bottom edge. The app multiplies a layout's px by the zoom. Null with no pin bar in the tree, or when a block
+ * sized by weight comes before it or beside it, which the tree alone cannot place.
+ */
+export function barArea(root, zoom = 1) {
+  const scale = zoom > 0 ? zoom : 1
+  const isBar = node => node?.type === 'block' && node.content?.props?.role === 'pinbar'
+  const walk = node => {
+    if (isBar(node)) return Number(node.size?.px) > 0 ? { x: 0, y: Number(node.size.px), right: 0 } : null
+    const kids = node?.children ?? []
+    for (let i = 0; i < kids.length; i++) {
+      if (kids[i]?.hidden) continue
+      const inner = walk(kids[i])
+      if (!inner) continue
+      const fixed = list => {
+        const shown = list.filter(c => !c?.hidden)
+        return shown.every(c => Number(c?.size?.px) >= 0) ? shown.reduce((sum, c) => sum + Number(c.size.px), 0) : null
+      }
+      const before = fixed(kids.slice(0, i))
+      if (node.type === 'row') {
+        const after = fixed(kids.slice(i + 1))
+        return before === null || after === null ? null : { ...inner, x: inner.x + before, right: inner.right + after }
+      }
+      if (node.type === 'column') return before === null ? null : { ...inner, y: inner.y + before }
+      return inner
+    }
+    return null
+  }
+  const area = walk(root)
+  return area && { x: area.x * scale, y: area.y * scale, right: area.right * scale }
+}
+
+/**
  * Where the overlay goes. `bar` is the pin bar's bounds in the window ({x, y, width, height}) as a click reported them;
- * without them the work area is taken to lie between the sidebars. The panel is as wide as the bar, right under it; the
+ * without them `area` (barArea) places it, and with neither the work area is taken to lie between the sidebars. The panel is as wide as the bar, right under it; the
  * popover is right aligned under it.
  */
-export function pinsSpot(view, bar, viewport) {
+export function pinsSpot(view, bar, viewport, area = null) {
   const ok = Number(bar?.width) > 0
-  const x = ok ? bar.x : PANEL_FALLBACK_SIDE
-  const y = ok ? bar.y + bar.height : PANEL_FALLBACK_TOP
-  const width = ok ? bar.width : Math.max(CARD_MIN_W, Number(viewport?.width) - 2 * PANEL_FALLBACK_SIDE || CARD_W)
+  const x = ok ? bar.x : (area?.x ?? PANEL_FALLBACK_SIDE)
+  const y = ok ? bar.y + bar.height : (area?.y ?? PANEL_FALLBACK_TOP)
+  const side = area ? area.x + area.right : 2 * PANEL_FALLBACK_SIDE
+  const width = ok ? bar.width : Math.max(CARD_MIN_W, Number(viewport?.width) - side || CARD_W)
   if (view === 'panel') return { x, y, width }
   return { x: Math.max(0, x + width - PINS_ALL_W - 8), y: y + 4, width: PINS_ALL_W }
 }
