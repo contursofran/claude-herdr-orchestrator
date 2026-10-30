@@ -13,6 +13,7 @@ export class Outbox {
     this.now = now
     this.queue = []
     this.sent = []
+    this.failed = [] // sends that failed, for the quiet line of another item: {session, key, action, at}
   }
 
   /** Read keys to leave out of the lists: waiting or sent and not yet gone from the board. */
@@ -29,6 +30,7 @@ export class Outbox {
    *  Returns its id, or null when an action for the same item already waits (two presses before a redraw). */
   schedule(cx, session, action) {
     if (action.key && this.queue.some(q => q.session === session && q.key === action.key)) return null
+    this.failed = this.failed.filter(f => !(f.session === session && f.key === action.key)) // a new try replaces the old failure
     const id = actionFile(this.now(), Math.random().toString(36).slice(2, 8))
     this.queue = queueAction(this.queue, { id, session, action, now: this.now() })
     cx.timer.after(UNDO_MS + 50, cx => this.flush(cx))
@@ -51,6 +53,7 @@ export class Outbox {
           await this.send(q.session, q.action, q.id)
         } catch (e) {
           this.sent = this.sent.filter(s => s !== entry)
+          this.failed.push({ session: q.session, key: q.key, action: q.action, at: this.now() })
           this.notify({ title: 'Could not send', body: String(e?.message ?? e), level: 'error' })
         }
       }
@@ -61,6 +64,10 @@ export class Outbox {
   /** Call when the boards change: forget what the boards settled and report failures. Returns true when anything changed. */
   settle(boards) {
     const { sent, failed } = settleSent(this.sent, boards)
+    for (const f of failed) {
+      const was = this.sent.find(s => s.id === f.id)
+      if (was) this.failed.push({ session: was.session, key: was.key, action: was.action, at: this.now() })
+    }
     const changed = sent.length !== this.sent.length
     this.sent = sent
     for (const f of failed) this.notify({ title: 'Action failed', body: f.message, level: 'error' })

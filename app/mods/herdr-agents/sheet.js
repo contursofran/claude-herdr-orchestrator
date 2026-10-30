@@ -4,11 +4,11 @@ import { send } from './board.js'
 import { copyableText } from './copy.js'
 import { copyKey } from './copystate.js'
 import { CardState, clearStaleSheet, firstThisRun } from './cardstate.js'
-import { button, faceIcon, ghost, keyButton } from './card.js'
-import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetSize, sheetView, whyLines } from './sheetmodel.js'
+import { button, faceIcon, ghost, keyButton, quietRow } from './card.js'
+import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetNext, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, pageSheet } from './sheetctl.js'
 import { noteDismissed } from './outside.js'
-import { pastFrame } from './model.js'
+import { pastFrame, quietLine } from './model.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
 /** The sheet's state for this copy (main.js, role `sheet`): the card's (an Outbox for the undo window, the focus handle),
@@ -146,9 +146,22 @@ export function sheetBlock(boards, ctl, cx) {
     closeSheet()
     cx.notify()
   }
+  // An answer or Done queues the action and pages to the next open item, or closes with none.
   const choose = (opt, cx) => {
-    if (opt.action && board) ctl.schedule(cx, board.session, opt.action)
-    else if (opt.url) exec('open', [opt.url]).catch(() => {})
+    if (opt.action && board) {
+      ctl.step(cx, board.session, opt.action, {
+        now: Date.now(),
+        next: hidden => sheetNext(board, open.key, hidden),
+        go: item => pageSheet(item.key),
+        close: () => closeSheet(),
+      })
+      cx.notify()
+    } else if (opt.url) exec('open', [opt.url]).catch(() => {})
+  }
+  const line = quietLine(board, open.key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
+  const back = (_e, cx) => {
+    ctl.undoTo(line, item => pageSheet(item.key))
+    cx.notify()
   }
   const askPrincipal = (_e, cx) => {
     // The board has no chat action: this hands the owner the coordinator's terminal, and the sheet closes.
@@ -343,6 +356,7 @@ export function sheetBlock(boards, ctl, cx) {
         .px(20)
         .py(14)
         .child(header(view, board, close, cx, size.meta))
+        .when(line, el => el.child(quietRow(line, back)))
         .when(!narrow && !gone, el => el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)))
         .when(gone, el => el.child(waiting).child(div().flex_1()))
         .when(narrow && !gone, el =>

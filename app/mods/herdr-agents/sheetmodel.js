@@ -1,6 +1,6 @@
 // The context sheet's logic (S9), with no gpui-kit or herdr imports so node can test it (app/test).
 import { copyTargets } from './copystate.js'
-import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, stripItems } from './model.js'
+import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, readKey, stripItems } from './model.js'
 
 const firstLine = text =>
   String(text ?? '')
@@ -55,6 +55,18 @@ export function sheetPage(board, key) {
   if (at < 0) return { i: 0, n: keys.length, prev: keys[keys.length - 1], next: keys[0] }
   const step = d => keys[(at + d + keys.length) % keys.length]
   return { i: at + 1, n: keys.length, prev: keys.length > 1 ? step(-1) : null, next: keys.length > 1 ? step(1) : null }
+}
+
+/** The open item after `key` on the sheet's pager, wrapping, leaving out items whose action waits or went out (`hidden`,
+ *  a Set of read keys). null when no other is left. */
+export function sheetNext(board, key, hidden = new Set()) {
+  const keys = sheetItems(board)
+    .map(i => i.key)
+    .filter(k => k === key || !hidden.has(readKey(board.session, k)))
+  const at = keys.indexOf(key)
+  const rest = at < 0 ? keys : [...keys.slice(at + 1), ...keys.slice(0, at)]
+  const next = rest.find(k => k !== key)
+  return next ? { key: next } : null
 }
 
 /** The item ⌘J opens on: the one the card shows (`cardKey`) if it is an open item here, else the first decision, then

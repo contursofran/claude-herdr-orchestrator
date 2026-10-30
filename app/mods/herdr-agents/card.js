@@ -6,7 +6,7 @@ import { copyableText } from './copy.js'
 import { copyKey, copyTargets } from './copystate.js'
 import { noteDismissed } from './outside.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem, pastFrame } from './model.js'
+import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem, pastFrame, quietLine, showNext } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
 /** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
@@ -102,6 +102,27 @@ export function faceIcon(face) {
   return svg(icon(name)).size(14).flex_none().text_color(color.text)
 }
 
+/** The quiet line on the item the owner moved on to: the choice just made on another item, with `undo` while it waits, or
+ *  that it was not sent, with `retry` (both go back to that item). `line` is from quietLine(). */
+export function quietRow(line, onBack) {
+  const what = [line.verb, line.detail].filter(Boolean).join(' · ')
+  return div()
+    .id('quiet-line')
+    .flex_none()
+    .flex()
+    .items_center()
+    .gap(10)
+    .child(
+      div()
+        .min_w_0()
+        .truncate()
+        .text_size(11)
+        .text_color(color.dim)
+        .child(line.kind === 'failed' ? `${line.key}: not sent · ${what}` : `${line.key}: ${what} · sending`),
+    )
+    .child(button(line.kind === 'failed' ? 'quiet-retry' : 'quiet-undo', line.kind === 'failed' ? 'retry' : 'undo', onBack))
+}
+
 function header(view, onClose) {
   return div()
     .flex()
@@ -151,9 +172,23 @@ export function card(boards, ctl, cx) {
     closeCard()
     cx.notify()
   }
-  const schedule = (cx, action) => ctl.schedule(cx, board.session, action)
-  const answer = (i, cx) => schedule(cx, answerAction(key, view.options[i]))
-  const done = (_e, cx) => schedule(cx, doneAction(key))
+  // An answer or Done queues the action and moves to the next open item, or closes with none (Esc's way back to the terminal).
+  const act = (action, cx) => {
+    ctl.step(cx, board.session, action, {
+      now: Date.now(),
+      next: hidden => nextItem(board, key, hidden),
+      go: item => openCard(board, item),
+      close: () => closeCard(),
+    })
+    cx.notify()
+  }
+  const answer = (i, cx) => act(answerAction(key, view.options[i]), cx)
+  const done = (_e, cx) => act(doneAction(key), cx)
+  const line = quietLine(board, key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
+  const back = (_e, cx) => {
+    ctl.undoTo(line, item => openCard(board, item))
+    cx.notify()
+  }
   const link = () => {
     if (view.url) exec('open', [view.url]).catch(() => {})
   }
@@ -164,6 +199,7 @@ export function card(boards, ctl, cx) {
   }
 
   const body = div().id('card-scroll').flex().flex_col().gap(12).flex_1().min_h_0().overflow_y_scroll()
+  if (line) body.child(quietRow(line, back))
   if (view.face === 'ask') {
     body.child(copyableText(`card-copy-${key}`, view.text, ctl.copy))
     body.child(
@@ -239,7 +275,8 @@ export function card(boards, ctl, cx) {
             }),
           ),
         )
-        .when(more, el => el.child(button('card-next', 'next ›', next, true))),
+        // A choice made here moves on at once, so `next ›` stays only for an item closed from elsewhere.
+        .when(showNext(view, more), el => el.child(button('card-next', 'next ›', next, true))),
     )
   }
 

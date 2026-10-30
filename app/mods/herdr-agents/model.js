@@ -742,6 +742,32 @@ export function nextItem(board, key, hidden = new Set()) {
   return rest.find(i => i.key !== key) ?? null
 }
 
+/** How long a failed send stays on the quiet line of another item, ms. The error notice has already shown. */
+export const FAIL_LINE_MS = 60000
+
+/**
+ * The quiet line for an action on ANOTHER item than `key` of `board`, shown on the card or sheet the owner moved on to:
+ * a failed send first ({kind: 'failed', key, verb, detail}, to retry by opening that item), else the latest action still
+ * waiting out its undo time ({kind: 'waiting', key, verb, detail, undoId}). null when there is none. `failed` entries are
+ * {session, key, action, at}; `queue` as for cardView.
+ */
+export function quietLine(board, key, { queue = [], failed = [], now = 0 } = {}) {
+  if (!board) return null
+  const other = q => q.session === board.session && q.key && q.key !== key
+  const say = q => {
+    const answered = q.action?.action === 'answer'
+    return { key: q.key, verb: answered ? 'answer' : 'done', detail: answered ? String(q.action.answer ?? '') : '' }
+  }
+  const bad = failed.filter(f => other(f) && now - f.at < FAIL_LINE_MS).pop()
+  if (bad) return { kind: 'failed', ...say(bad), undoId: null }
+  const waiting = queue.filter(other).pop()
+  return waiting ? { kind: 'waiting', ...say(waiting), undoId: waiting.id } : null
+}
+
+/** Whether the card's status face has `next ›`: a choice made here moves on at once, so only an item closed from elsewhere
+ *  (verb `closed`) keeps it, and only with another item to go to. */
+export const showNext = (view, more) => Boolean(more) && view?.verb === 'closed'
+
 const MODIFIER_KEYS = new Set(['shift', 'control', 'ctrl', 'alt', 'option', 'cmd', 'meta', 'super', 'fn', 'capslock'])
 
 /**

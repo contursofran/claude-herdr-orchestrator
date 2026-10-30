@@ -1,5 +1,6 @@
 // What the card keeps between draws. No `herdr` import: everything outside comes in as an argument, so it can be tested.
 import { CopyState } from './copystate.js'
+import { rowsSteady } from './model.js'
 import { Outbox } from './outbox.js'
 
 /**
@@ -16,6 +17,31 @@ export class CardState {
     this.h = handle
     this.token = null
     this.copy = new CopyState()
+    this.movedAt = undefined // when the card or sheet last moved to another item: presses aimed at the old one are ignored for ROWS_SETTLE_MS
+  }
+
+  /**
+   * An answer or Done from the card or sheet: queue it, then move to the item `next(hidden)` finds ({key}, or null) with
+   * go(item), or with none close with close(). A press right after a move is ignored, silently (it was aimed at the old
+   * item). Returns 'ignored', 'moved' or 'closed'.
+   */
+  step(cx, session, action, { now, next, go, close }) {
+    if (!rowsSteady(this, now)) return 'ignored'
+    if (!this.schedule(cx, session, action)) return 'ignored'
+    const item = next(this.outbox.hidden())
+    if (!item) {
+      close()
+      return 'closed'
+    }
+    this.movedAt = now
+    go(item)
+    return 'moved'
+  }
+
+  /** Undo the action of the quiet line (`line` from quietLine) and go back to its item. */
+  undoTo(line, go) {
+    if (line.undoId) this.outbox.undo(line.undoId)
+    go({ key: line.key })
   }
 
   /** Called with the boards after each change; true when something was settled (redraw). */
