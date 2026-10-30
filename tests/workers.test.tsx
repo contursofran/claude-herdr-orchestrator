@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { BATCH_MS } from '../hooks/defaults'
+import { BATCH_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
 import { command, settled, spawn, start, stopAll } from './harness'
 
 // Starting workers: the rules spawn applies, from the built-in profiles in effect. A report
@@ -101,6 +101,8 @@ test('a prompt that starts no work is typed again, and a worker it never reaches
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-late', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
   await settled()
   await clock.settle()
+  expect(typed).toHaveLength(1)
+  await clock.advance(PROMPT_WAIT_MS)
   expect(typed).toHaveLength(2)
   expect(typed[1]).toBe(typed[0])
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
@@ -113,6 +115,9 @@ test('a prompt that starts no work is typed again, and a worker it never reaches
   stalls['w-lost'] = 3
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
   await settled()
+  await clock.advance(PROMPT_WAIT_MS)
+  await clock.advance(PROMPT_WAIT_MS)
+  await clock.advance(PROMPT_WAIT_MS)
   expect(typed).toHaveLength(5)
   await clock.advance(10_000)
   await clock.advance(BATCH_MS)
@@ -516,6 +521,7 @@ test('a prompt that never arrived is not reported over a newer prompt to the sam
   await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-lost' })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it again.' })
   await settled()
+  await clock.advance(PROMPT_CHECK_MS)
   await clock.advance(10_000)
   expect(submitted.filter(t => t.includes('<herdr-agent name="w-lost"'))).toEqual([])
   await stopAll($, clock, ['w-lost'])

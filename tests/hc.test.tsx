@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
-import { BATCH_MS, LOST_REPORT_MS, PROMPT_CHECK_MS } from '../hooks/defaults'
-import { command, settled, spawn, start, stopAll } from './harness'
+import { BATCH_MS, LOST_REPORT_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
+import { command, registering, settled, spawn, start, stopAll, until } from './harness'
 
 // The hc side of the mod: the guard, how a worker is started, prompted, watched, messaged and
 // closed, and what happens when hc says no. The fake in harness.tsx answers like hc 0.1.14 did.
@@ -178,10 +178,81 @@ test('a prompt that finds the text still in the input box presses Enter instead 
   onKeys['w-hc'] = 'working'
   await $.tool.call(spawnArgs)
   await settled()
-  await clock.advance(PROMPT_CHECK_MS)
+  await clock.advance(PROMPT_WAIT_MS)
   expect(typed).toHaveLength(1)
   expect(keyed).toEqual([['w-hc', 'enter']])
   await stopAll($, clock, ['w-hc'])
+})
+
+// Seen with a real builder: hc says idle and started: false for 56 s, as Claude starts no turn until its
+// session.start hooks are done, and a copy typed meanwhile ran after the first (hc-check, app-s0-spike).
+test('a prompt the CLI sits on is not typed again while it starts its turn', async ($, on) => {
+  const { clock, calls, typed, holds, screens, status } = await start($, on)
+  holds.add('w-hc')
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(56_000)
+  expect(typed).toHaveLength(1)
+  holds.delete('w-hc')
+  screens['w-hc'] = ''
+  status['w-hc'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  expect(typed).toHaveLength(1)
+  expect(calls.filter(c => c[1] === 'read' && c.includes('--lines'))).toEqual([])
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a prompt the CLI still sits on after the wait, shown as its paste placeholder, is submitted and not typed again', async ($, on) => {
+  const { clock, typed, keyed, holds, onKeys } = await start($, on)
+  holds.add('w-hc')
+  onKeys['w-hc'] = 'working'
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(PROMPT_WAIT_MS)
+  expect(typed).toHaveLength(1)
+  expect(keyed).toEqual([['w-hc', 'enter']])
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a short turn that started and ended between two looks counts as started', async ($, on) => {
+  const { clock, typed, holds, screens, status, turns } = await start($, on)
+  holds.add('w-hc')
+  await $.tool.call(spawnArgs)
+  await settled()
+  // Back at an empty input box, status done: only the turn count says the prompt ran.
+  holds.delete('w-hc')
+  screens['w-hc'] = ''
+  status['w-hc'] = 'done'
+  turns['w-hc'] = 1
+  await clock.advance(PROMPT_WAIT_MS * 2)
+  expect(typed).toHaveLength(1)
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a prompt that really was dropped is typed again once the wait is over, and not before', async ($, on) => {
+  const { clock, typed, stalls } = await start($, on)
+  stalls['w-hc'] = 1
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(PROMPT_WAIT_MS - 5000)
+  expect(typed).toHaveLength(1)
+  await clock.advance(5000)
+  await until(clock, () => typed.length === 2)
+  expect(typed[1]).toBe(typed[0])
+  await stopAll($, clock, ['w-hc'])
+})
+
+// Each $.tool.register waits 8 s for a tool an --agent's tools line never lets in, and Claude starts no turn until
+// session.start is done: seven tools held a builder's first prompt for 56 s.
+test("a worker's session does not wait for its tools to register", async ($, on) => {
+  let release = () => {}
+  registering.until = new Promise<void>(resolve => (release = resolve))
+  const { clock, tools } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
+  expect(Object.keys(tools)).toEqual([])
+  release()
+  registering.until = undefined
+  await until(clock, () => Object.keys(tools).length === 7)
+  expect(Object.keys(tools)).toContain('spawn')
 })
 
 test('a prompt hc refuses because the worker is blocked is reported at once as not typed', async ($, on) => {

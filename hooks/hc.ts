@@ -11,6 +11,7 @@ export type HcTerminal = {
   name?: string | null
   state: string
   status: { state: string; app?: string; kind?: string | null } | null
+  turn?: number
   labels?: Record<string, string>
   cwd?: string
 }
