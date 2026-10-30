@@ -11,7 +11,7 @@
     "cwd": { "type": "string", "description": "The coordinator's folder." },
     "at": {
       "type": "number",
-      "description": "When it was last written, ms since the epoch. Written when something else changed, and at least once a minute while the session lives, so a live board is newer than a leftover. The file also comes back within about 2 minutes if deleted."
+      "description": "When it was last written, ms since the epoch. Written when something else changed, and at least once a minute while the session lives, so a live board is newer than a leftover. The file also comes back within about one minute if deleted."
     },
     "coordinator": {
       "type": "object",

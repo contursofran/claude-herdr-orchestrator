@@ -300,7 +300,9 @@ export function agedTimes(role, { boards = [], open = null, pinAt = null, pins =
   }
   if ((role === 'card' || role === 'sheet') && open) {
     const board = boards.find(b => b.session === open.session)
-    return known(board && openNeeds(board).find(n => n.key === open.key)?.at)
+    // The sheet stays on an answered item until the owner closes it; the card only draws open ones.
+    const needs = role === 'sheet' ? board?.needs : board && openNeeds(board)
+    return known(needs?.find(n => n.key === open.key)?.at)
   }
   return []
 }
