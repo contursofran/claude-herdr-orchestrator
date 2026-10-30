@@ -361,3 +361,16 @@ test('a command with no board after the first read opens nothing', async () => {
   assert.equal(state.opened, null)
   assert.equal(part.waiting, null, 'it does not fire later, when a board appears')
 })
+
+test('the waiting command runs as its own task: its failure does not reach the board reader', async () => {
+  const tasks = []
+  const own = { notify() {}, spawn: f => tasks.push(f) }
+  const part = new StripState()
+  part.waiting = 'herdr-agents.board'
+  part.command = () => {
+    throw new Error('command failed')
+  }
+  assert.doesNotThrow(() => part.onBoardsRead(own, () => ({ session: 's' })))
+  assert.equal(tasks.length, 1)
+  await assert.rejects(tasks[0](own), /command failed/)
+})

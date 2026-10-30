@@ -18,8 +18,9 @@ export class SheetState extends CardState {
     this.newest = new Map() // path -> number of its latest read
   }
 
-  /** Read `path` once per `opened` (an open of the sheet on one item), so a rewritten file shows the next time the item
-   *  opens, with no timer. The last text stays up during a re-read; the sheet redraws only if the text changed. */
+  /** Read `path` once per `opened` (an open of the sheet on one item, with that path), so a rewritten file shows the next
+   *  time the item opens, with no timer. The last text stays up during a re-read, and also when the re-read fails; the sheet
+   *  redraws only if the text changed. */
   read(cx, path, opened) {
     if (this.opened === opened) return
     this.opened = opened
@@ -33,6 +34,7 @@ export class SheetState extends CardState {
       } catch {}
       if (this.newest.get(path) !== n) return // a later read has this path
       if (this.files.has(path) && this.files.get(path) === value) return
+      if (value === null && this.files.get(path) != null) return // this read failed: the good text stays
       this.files.set(path, value)
       cx.notify()
     })
@@ -119,7 +121,8 @@ export function sheetBlock(boards, ctl, cx) {
   const raw = sheetView(board, open.key, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, now: Date.now() })
   const token = `${open.session}:${open.seq ?? 0}`
   // The "Why" box falls back to the asker's RESULT.md, read each time the sheet opens that item; the draw after it arrives has it.
-  ctl.read(cx, raw.whyFile, `${token}:${open.key}`)
+  // The path is in the key: it can appear after the open, when the board arrives late or the need is rewritten.
+  ctl.read(cx, raw.whyFile, `${token}:${open.key}:${raw.whyFile}`)
   const view = raw.whyFile
     ? sheetView(board, open.key, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, now: Date.now(), fileText: ctl.files.get(raw.whyFile) })
     : raw

@@ -249,3 +249,48 @@ test('closed and opened with the same seq it reads again; an older read ending l
   await Promise.all(slow.map(f => f(c)))
   assert.match(open(), /two/)
 })
+
+test('a path that appears after the open is read: a board that arrives late', async () => {
+  const { b, s, c } = fileSheet()
+  app.files = { [FILE]: 'first text' }
+  globalThis.window = { viewport_size: () => TALL }
+  app.store['hrd.sheet'] = { session: b.session, key: 'D7', seq: 1 }
+  sheetBlock([], s, c)
+  await c.finish()
+  sheetBlock([b], s, c)
+  await c.finish()
+  assert.match(textOf(sheetBlock([b], s, c)).join(' '), /first text/)
+})
+
+test('a path that appears after the open is read: a need rewritten while open', async () => {
+  const { b, c, open } = fileSheet()
+  const need = b.needs.find(n => n.key === 'D7')
+  need.text = 'written on the board'
+  delete need.source
+  app.files = { [FILE]: 'first text' }
+  assert.match(open(), /written on the board/)
+  await c.finish()
+  need.text = ''
+  need.source = { file: FILE }
+  open()
+  await c.finish()
+  assert.match(open(), /first text/)
+})
+
+test('a re-read that fails keeps the good text, with no redraw; a later good read replaces it', async () => {
+  const { c, open } = fileSheet()
+  app.files = { [FILE]: 'first text' }
+  open(1)
+  await c.finish()
+  app.files = { [FILE]: new Error('no access') }
+  open(2)
+  await c.finish()
+  assert.equal(c.redraws(), 1)
+  const after = open(2)
+  assert.match(after, /first text/)
+  assert.doesNotMatch(after, /No text to show/)
+  app.files = { [FILE]: 'second text' }
+  open(3)
+  await c.finish()
+  assert.match(open(3), /second text/)
+})
