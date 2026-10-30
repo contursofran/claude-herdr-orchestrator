@@ -1,8 +1,9 @@
 // Reads the boards the plugin writes (~/.herdr-agents/board/<session>.json) and keeps them current.
-import { exec, home, readTextFile, watchFolder } from 'herdr'
-import { applyFile, boardIdIn } from './model.js'
+import { exec, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
+import { actionFile, applyFile, boardIdIn } from './model.js'
 
 export const boardDir = () => `${home()}/.herdr-agents/board`
+export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
 
 export class Boards {
   constructor() {
@@ -48,4 +49,21 @@ export class Boards {
     }
     this.files = applyFile(this.files, id, text)
   }
+}
+
+/**
+ * Writes one action file for a board: into outgoing/ first, then `mv` into <session>.actions/ so the plugin never reads a
+ * half-written file. Returns the file name, which is the id the board reports the outcome under (`board.actions`).
+ */
+export async function send(session, action, id = actionFile(Date.now(), Math.random().toString(36).slice(2, 8))) {
+  const out = outgoingDir()
+  const dest = `${boardDir()}/${session}.actions`
+  await exec('mkdir', ['-p', out, dest])
+  await writeTextFile(`${out}/${id}`, JSON.stringify(action), null)
+  const moved = await exec('mv', [`${out}/${id}`, `${dest}/${id}`])
+  if (moved.code !== 0) {
+    await exec('rm', ['-f', `${out}/${id}`]) // nothing is left behind in outgoing/
+    throw new Error(moved.stderr.trim() || 'mv failed')
+  }
+  return id
 }

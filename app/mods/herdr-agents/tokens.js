@@ -7,7 +7,16 @@ export const color = {
   text: '#EDEDED',
   soft: '#BDBDBD',
   dim: '#6A6A6A',
+  slimBar: '#131313',
+  flash: '#262626',
+  segCurrent: '#EDEDED',
+  segUnread: '#9A9A9A',
+  segRead: '#3A3A3A',
+  chipText: '#111111',
+  hover: '#222222',
 }
+
+export const icon = name => `mods/herdr-agents/icons/${name}.svg`
 
 export const row = { pins: 38, strip: 34 }
 
@@ -24,4 +33,3 @@ export const strip = {
   muted: '#8A8A8A',
   spin: 1400,
 }
-export const icon = dir => `mods/herdr-agents/icons/${dir}.svg`

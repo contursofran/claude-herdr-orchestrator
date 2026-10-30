@@ -121,6 +121,218 @@ export function debugLine(board) {
   return `${board.cwd ?? ''} · ${openNeeds(board).length} open`
 }
 
+// ---- Pin bar (S4) ----
+
+/** The key the read marks use: one per board and item. */
+export const readKey = (session, key) => `${session}:${key}`
+
+/** How long Done × waits for undo before the action file is written, ms. */
+export const UNDO_MS = 5000
+
+function textParts(text) {
+  const lines = String(text ?? '')
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+  return { first: lines[0] ?? '', rest: lines.slice(1).join(' ') }
+}
+
+/**
+ * The pins on a board: open items of kind `know`, in board order.
+ *   read    {"<session>:<key>": true}
+ *   hidden  a Set of read keys to leave out (a Done × waiting to be sent, or sent and not yet gone from the board)
+ * Fields from #83/#84 are used when present: title (else the first line of text, else the key), summary (else, with a
+ * title, the text; without one, the rest of the text after its first line), tag, who (`from`).
+ */
+export function pins(board, read = {}, hidden = new Set()) {
+  if (!board) return []
+  return (board.needs ?? [])
+    .filter(n => n.kind === 'know' && n.isOpen === true)
+    .map(n => {
+      const id = readKey(board.session, n.key)
+      const { first, rest } = textParts(n.text)
+      const given = typeof n.title === 'string' ? n.title.trim() : ''
+      // The plugin sends title = text today (#84): a title equal to the whole text counts as no title.
+      const hasTitle = given !== '' && given !== String(n.text ?? '').trim()
+      const title = (hasTitle ? textParts(given).first : first) || n.key
+      const summary = (typeof n.summary === 'string' && n.summary.trim()) || (hasTitle ? [first, rest].filter(Boolean).join(' ') : rest)
+      return {
+        id,
+        key: n.key,
+        title,
+        summary,
+        tag: typeof n.tag === 'string' && n.tag.trim() ? n.tag.trim() : null,
+        who: n.from ?? '',
+        at: typeof n.at === 'number' ? n.at : 0,
+        unread: read?.[id] !== true,
+      }
+    })
+    .filter(p => !hidden.has(p.id))
+}
+
+/** The newest of some pins; the later one in board order when `at` is equal. */
+export function newestPin(list) {
+  let best = null
+  for (const p of list) if (!best || p.at >= best.at) best = p
+  return best
+}
+
+/** The pin the full bar shows: the one picked by the owner (`sel`, an id) while it exists, else the newest unread, else null. */
+export function currentPin(list, sel = null) {
+  const picked = sel && list.find(p => p.id === sel)
+  if (picked) return picked
+  return newestPin(list.filter(p => p.unread))
+}
+
+/** 'empty' (no pins: the row stays, blank), 'full' (a pin to show) or 'slim' (pins, all read). */
+export function pinbarMode(list, sel = null) {
+  if (list.length === 0) return 'empty'
+  return currentPin(list, sel) ? 'full' : 'slim'
+}
+
+/** The slim line: `N pins · nothing new · last: <title>`. */
+export function slimLine(list) {
+  const last = newestPin(list)
+  if (!last) return ''
+  return `${list.length} ${list.length === 1 ? 'pin' : 'pins'} · nothing new · last: ${last.title}`
+}
+
+/** The segments: one per pin, in board order, with the kind the bar draws (current, unread, read). */
+export function segments(list, current) {
+  return list.map(p => ({ id: p.id, kind: current && p.id === current.id ? 'current' : p.unread ? 'unread' : 'read' }))
+}
+
+/** Pin ids in `list` that were not in `prev` (a Set, or null on the first call, when nothing is new). */
+export function newPinIds(prev, list) {
+  if (!prev) return []
+  return list.map(p => p.id).filter(id => !prev.has(id))
+}
+
+/** `5m`, `2h`, `3d` from a time in ms; `now` under a minute; empty without a time. */
+export function ageText(at, now) {
+  if (!at || !now || now < at) return at ? 'now' : ''
+  const s = Math.floor((now - at) / 1000)
+  if (s < 60) return 'now'
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
+
+/** The read marks without entries of sessions that have no board; the same object when nothing goes. */
+export function pruneRead(read, boards) {
+  const live = new Set((boards ?? []).map(b => b.session))
+  const out = {}
+  let dropped = false
+  for (const [k, v] of Object.entries(read ?? {})) {
+    const session = k.slice(0, Math.max(k.lastIndexOf(':'), 0))
+    if (live.has(session)) out[k] = v
+    else dropped = true
+  }
+  return dropped ? out : read
+}
+
+/** The read marks with one more. */
+export const markRead = (read, id) => (read?.[id] === true ? read : { ...(read ?? {}), [id]: true })
+
+// ---- Sending (S4): an action waits UNDO_MS in the mod, then is written to the board's actions folder ----
+
+/** `{action:"done", key}`: an open to-do is done; an open know is dismissed. */
+export const doneAction = key => ({ action: 'done', key })
+
+/** A file name that sorts by time: `<ms>-<random>.json`. */
+export const actionFile = (ms, rand) => `${String(ms).padStart(13, '0')}-${rand}.json`
+
+/** The queue with one more action that goes out at now + UNDO_MS. `id` is its action file name. */
+export function queueAction(queue, { id, session, action, now }) {
+  return [...queue, { id, session, action, key: action.key ?? null, due: now + UNDO_MS }]
+}
+
+/** The queue without the action (undo). */
+export const cancelAction = (queue, id) => queue.filter(q => q.id !== id)
+
+/** {due, rest}: what is ready to send at `now`, in queue order, and what keeps waiting. */
+export function takeDue(queue, now) {
+  return { due: queue.filter(q => q.due <= now), rest: queue.filter(q => q.due > now) }
+}
+
+/** How long a sent action keeps its item hidden while the board shows no outcome (the plugin may have stopped), ms. */
+export const SENT_HIDE_MS = 60000
+
+/**
+ * Read keys of items whose action waits or was sent and still shows open on the board. A sent action older than
+ * SENT_HIDE_MS (when `now` is given) no longer hides its item.
+ */
+export function hiddenKeys(queue, sent, now = null) {
+  const live = sent.filter(s => now === null || s.at === undefined || now - s.at < SENT_HIDE_MS)
+  return new Set([...queue, ...live].filter(q => q.key).map(q => readKey(q.session, q.key)))
+}
+
+/**
+ * Sent actions after the boards moved on: {sent, failed}. One is settled (dropped) when its board is gone, when the board
+ * reports its outcome, or when its item is no longer open. A reported `ok:false` goes to `failed` with the message.
+ */
+export function settleSent(sent, boards) {
+  const keep = []
+  const failed = []
+  for (const s of sent) {
+    const board = (boards ?? []).find(b => b.session === s.session)
+    if (!board) continue
+    const outcome = (board.actions ?? []).find(a => a.id === s.id)
+    if (outcome) {
+      if (outcome.ok === false) failed.push({ id: s.id, message: outcome.message ?? '' })
+      continue
+    }
+    const open = (board.needs ?? []).some(n => n.key === s.key && n.isOpen === true)
+    if (open) keep.push(s)
+  }
+  return { sent: keep, failed }
+}
+
+/** The pin bar's memory between draws: the picked pin, the board it was on, the pins seen, the pins already flashed. */
+export const newBarState = () => ({ session: null, sel: null, seen: null, flashed: new Set() })
+
+/**
+ * One draw of the pin bar, pure. `waiting` are the queued actions ({id, session, key}) and `hidden` the keys to leave out.
+ * Returns {state, view, list, flashStart}: the next state, the data pinbar() draws (without handlers), and the pin id
+ * whose flash starts now (once per pin), else null.
+ */
+export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0 } = {}) {
+  if (!board) return { state: prev, view: { mode: 'empty', waiting: [] }, list: [], flashStart: null }
+  const list = pins(board, read, hidden)
+  let { session, sel, seen, flashed } = prev
+  if (session !== board.session) {
+    session = board.session
+    sel = null
+    seen = null
+  }
+  if (newPinIds(seen, list).length) sel = null // a new pin takes the bar back from a picked one
+  seen = new Set(list.map(p => p.id))
+
+  const mode = pinbarMode(list, sel)
+  const current = currentPin(list, sel)
+  let flashStart = null
+  if (mode === 'full' && current.unread && !flashed.has(current.id)) {
+    flashStart = current.id
+    flashed = new Set(flashed).add(current.id)
+  }
+  const all = pins(board, read)
+  return {
+    state: { session, sel, seen, flashed },
+    list,
+    flashStart,
+    view: {
+      mode,
+      current,
+      segments: segments(list, current),
+      slim: slimLine(list),
+      meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
+      waiting: waiting
+        .filter(q => q.session === board.session)
+        .map(q => ({ id: q.id, title: all.find(p => p.key === q.key)?.title ?? q.key })),
+    },
+  }
+}
+
 // --- S12: the agents list's Orchestrators section ---
 
 /** Rule 1 of the resolver: the boards whose coordinator terminal exists, is live and runs an agent
