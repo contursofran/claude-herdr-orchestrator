@@ -759,7 +759,7 @@ test('otherCount: the terminal cycles through every other board, in address orde
   assert.equal(next('t4'), 't1', 'wraps')
   // Walking from board to board visits all of them.
   const seen = []
-  for (let at = 't1', i = 0; i < 4; i++) (seen.push(at), (at = next(at)))
+  for (let at = 't1', i = 0; i < 4; i++) seen.push(at), (at = next(at))
   assert.deepEqual(seen, ['t1', 't2', 't3', 't4'])
   // A shown board with no place in the order still gets the first one after it.
   const withGap = otherCount(boards, terminals, board('x', 't25'))
