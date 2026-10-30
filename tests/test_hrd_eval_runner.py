@@ -488,7 +488,7 @@ class ArgvEnvTest(unittest.TestCase):
         self.assertNotIn("--session-id", argv)
 
     def test_run_env_puts_the_shim_first_and_sets_the_gh_state(self):
-        env_patch = {"GH_TOKEN": "t", "GITHUB_TOKEN": "t", "CLAUDECODE": "1", "HERDR_SOCKET": "s", "KEEP_ME": "k"}
+        env_patch = {"GH_TOKEN": "t", "GITHUB_TOKEN": "t", "CLAUDECODE": "1", "HERDR_SOCKET": "s", "HC_TERMINAL_ID": "h", "KEEP_ME": "k"}
         with mock.patch.dict(os.environ, env_patch):
             env = HR.run_env(self.run, self.PROFILE)
         self.assertTrue(env["PATH"].startswith(os.path.join(self.run, "bin") + os.pathsep))
@@ -496,7 +496,7 @@ class ArgvEnvTest(unittest.TestCase):
         self.assertEqual(env["GH_CONFIG_DIR"], os.path.join(self.run, "gh-config"))
         self.assertEqual(env["CLAUDE_ENV_FILE"], os.path.join(self.run, "env.sh"))
         self.assertEqual(env["X_EXTRA"], "1")
-        for dropped in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "HERDR_SOCKET"):
+        for dropped in ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "HERDR_SOCKET", "HC_TERMINAL_ID"):
             self.assertNotIn(dropped, env)
         self.assertEqual(env["KEEP_ME"], "k")
 

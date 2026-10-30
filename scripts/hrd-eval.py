@@ -67,7 +67,7 @@ GRADE_TRIES = 2  # a hidden grade that fails runs again once (a test past its ti
 QUESTION_HOWS = ("recommended", "auto", "unanswered", "stop")  # run.json's questions: how each one was answered
 MERGE_UNION = ["CHANGELOG.md"]  # files two slices both add lines to: merged as a union in the grade, as a coordinator would
 DISALLOW = "WebFetch(domain:github.com)"
-ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "SSH_AUTH_SOCK")  # and every HERDR_* variable
+ENV_DROP = ("GH_TOKEN", "GITHUB_TOKEN", "CLAUDECODE", "SSH_AUTH_SOCK")  # and every HERDR_* and HC_* variable
 ARM_KEYS = ("profiles", "disable", "fixRound", "maxFixRounds", "note", "agents")
 AGENT_ROLES = ("planner", "builder", "reviewer")  # the roles an arm's `agents` key may pin
 AGENT_PREFIX = "hrd-eval-"  # the name a pinned agent gets: new, so no question of which definition wins
@@ -298,7 +298,7 @@ def clean_env(folder):
     a coordinator and any GIT_CONFIG_* variable. git reads only folder/gitconfig, never the system config, and never
     prompts. The file is written on every call, so no call can start without it."""
     folder = os.path.abspath(folder)
-    env = {k: v for k, v in os.environ.items() if k not in ENV_DROP and not k.startswith(("HERDR_", "GIT_CONFIG_"))}
+    env = {k: v for k, v in os.environ.items() if k not in ENV_DROP and not k.startswith(("HERDR_", "HC_", "GIT_CONFIG_"))}
     write_git_config(folder)
     env.update(GIT_CONFIG_GLOBAL=os.path.join(folder, "gitconfig"), GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
     return env
