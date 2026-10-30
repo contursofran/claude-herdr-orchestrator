@@ -1,6 +1,6 @@
-// A stand-in for the app's `gpui-kit` and `herdr` modules, so a view can really be built in a test. It is as strict as the
-// app where `herdr-app check` is not: a colour must be a hex string, and a bare number as a line height is refused (the app
-// reads it as a multiple of the font size, and the text does not draw).
+// A stand-in for the app's `gpui-kit` and `herdr` modules, so a view can really be built in a test. It is stricter than
+// `herdr-app check`: a colour must be a hex string, and a bare number as a line height is refused (with one, the panel drew
+// no text; with "20px" it does).
 import { registerHooks } from 'node:module'
 
 const COLOUR = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i
