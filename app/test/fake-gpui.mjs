@@ -52,6 +52,7 @@ export const app = {
   viewport: null,
   focused: null,
   ran: [],
+  execs: [],
   settings: { zoom: 1 },
 }
 
@@ -71,6 +72,10 @@ globalThis.__fakeGpui = {
   closeOverlay: id => {
     if (app.closeThrows) throw new Error('overlay already closed')
     app.closed.push(id)
+  },
+  exec: async (command, args) => {
+    app.execs.push([command, ...(args ?? [])])
+    return { exitCode: 0 }
   },
   focused: () => app.focused ?? null,
   layout: () => app.layout ?? null,

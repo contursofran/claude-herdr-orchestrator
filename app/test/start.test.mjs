@@ -276,9 +276,8 @@ function startTimed(props) {
 
 test('only the copies that draw ages and have no timer for them start the age timer', () => {
   globalThis.localStorage = { getItem: () => null, setItem() {} }
-  for (const role of ['pinbar', 'card', 'sheet', 'pins']) assert.ok(startTimed({ role, list: [] }).every[AGE_TICK_MS], role)
-  for (const role of ['strip', 'board', 'agents', 'version'])
-    assert.equal(startTimed({ role, session: 's' }).every[AGE_TICK_MS], undefined, role)
+  for (const role of ['pinbar', 'card', 'sheet', 'pins', 'board']) assert.ok(startTimed({ role, list: [] }).every[AGE_TICK_MS], role)
+  for (const role of ['strip', 'agents', 'version']) assert.equal(startTimed({ role, session: 's' }).every[AGE_TICK_MS], undefined, role)
 })
 
 test('a pins copy on screen redraws when an age moves with the clock, and not within the minute', t => {
@@ -292,6 +291,38 @@ test('a pins copy on screen redraws when an age moves with the clock, and not wi
   clock += 30_000
   tick()
   assert.equal(counts.notify, 1)
+})
+
+test('the board pop-up redraws when a merge age moves with the clock, and not within the minute', t => {
+  const T0 = 1_000_000_000
+  let clock = T0 + 2 * 60_000
+  t.mock.method(Date, 'now', () => clock)
+  const board = {
+    session: 's',
+    tasks: [
+      { key: 'a', pr: 5, isMerged: true, mergedAt: T0 },
+      { key: 'b', pr: 6, isMerged: false },
+    ],
+  }
+  const { copy, counts, tick } = startTimed({ role: 'board', session: 's', board, height: 300 })
+  copy.render()
+  clock += 30_000
+  tick()
+  assert.equal(counts.notify, 0)
+  clock += 30_000
+  tick()
+  assert.equal(counts.notify, 1)
+})
+
+test('the board pop-up with no merged row asks for no redraw as the clock moves', t => {
+  let clock = 1_000_000_000
+  t.mock.method(Date, 'now', () => clock)
+  const board = { session: 's', tasks: [{ key: 'a', pr: 5, isMerged: false }] }
+  const { copy, counts, tick } = startTimed({ role: 'board', session: 's', board, height: 300 })
+  copy.render()
+  clock += 10 * 60_000
+  tick()
+  assert.equal(counts.notify, 0)
 })
 
 test('a closed card or sheet asks for no redraw as the clock moves', t => {

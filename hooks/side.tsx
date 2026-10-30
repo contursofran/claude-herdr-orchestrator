@@ -187,19 +187,23 @@ export async function pollPrs($: EngineInterface) {
   try {
     const { v, tasks, now } = await gather($, (_, text) => text)
     const listed = new Set(tasks.filter(t => t.pr && t.repo).map(t => `${t.repo}#${t.pr}`))
-    const want = [...listed].filter(k => v.prs[k]?.state !== 'MERGED' && v.prs[k]?.state !== 'CLOSED')
+    // A merged PR is asked once more when it has no merge time yet (one stored before `mergedAt`); null (gh gave none) is an answer.
+    const want = [...listed].filter(k => v.prs[k]?.state !== 'CLOSED' && (v.prs[k]?.state !== 'MERGED' || v.prs[k]?.mergedAt === undefined))
     const got: Record<string, Pr> = {}
     let failed = ''
     for (const k of want.slice(0, SIDE_WORK_ROWS)) {
       const [repo = '', n = ''] = k.split('#')
       try {
-        const ran = await $.process.run(['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,statusCheckRollup'], { timeoutMs: 20_000 })
+        const ran = await $.process.run(['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup'], {
+          timeoutMs: 20_000,
+        })
         if (ran.exitCode !== 0) {
           failed = ran.stderr.trim().split('\n')[0] || `exit ${ran.exitCode}`
           continue
         }
-        const pr = JSON.parse(ran.stdout) as { state: Pr['state']; statusCheckRollup?: Check[] }
-        got[k] = { state: pr.state, ci: ciOf(pr.statusCheckRollup ?? []), at: now }
+        const pr = JSON.parse(ran.stdout) as { state: Pr['state']; mergedAt?: string | null; statusCheckRollup?: Check[] }
+        const mergedAt = pr.mergedAt ? Date.parse(pr.mergedAt) : NaN
+        got[k] = { state: pr.state, ci: ciOf(pr.statusCheckRollup ?? []), at: now, mergedAt: Number.isFinite(mergedAt) ? mergedAt : null }
       } catch (err) {
         failed = String(err)
       }
@@ -664,6 +668,7 @@ export async function boardSnapshot($: EngineInterface) {
             workers: r.jobs.map(j => j.name),
             isFinished: r.isFinished,
             isMerged: r.isMerged,
+            mergedAt: r.mergedAt ?? null,
           },
     ),
     needs: items.map(it => {

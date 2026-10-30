@@ -119,7 +119,7 @@ export type Board = { now: number; rows: Row[]; context?: { tokens: number; limi
 export type SideItem = { key: string; kind: 'ask' | 'do' | 'know'; title: string; text: string; from: string; at: number }
 
 // A PR's GitHub state as the sidebar last read it: `ci` sums its checks.
-export type Pr = { state: 'OPEN' | 'MERGED' | 'CLOSED'; ci: 'pass' | 'fail' | 'pending' | 'none'; at: number }
+export type Pr = { state: 'OPEN' | 'MERGED' | 'CLOSED'; ci: 'pass' | 'fail' | 'pending' | 'none'; at: number; mergedAt?: number | null }
 
 // The sidebar (/hrd-side). Rows keep their slots: `items` and `tasks` (task keys) are in
 // arrival order and only Clear done removes them. `answers` holds what the person answered
