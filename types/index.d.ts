@@ -21,6 +21,11 @@ export type Job = {
   tail?: 'early' | 'blocked'
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
+  // a stop was asked (set before the drop and the tab's close, and kept if the tab fails to close): nothing
+  // more is reported, noticed or sent for it
+  stopped?: boolean
+  // a hash of the RESULT.md without its token line that the coordinator was told about (see noticeTokenless)
+  noticed?: string
   // the brief's first line: the sidebar's task title (TASK.md changes with follow-ups)
   brief?: string
   // the issue and PR numbers it worked on: the brief's first #123, then the PR its reports link
@@ -53,6 +58,8 @@ export type Decision = {
   options?: string[]
   recommended?: number
   quiet?: boolean
+  // the report's token, for a worker's DECISION line (a rewrite of that report does not pin it again)
+  token?: string
 }
 
 // A decision closed with `decided`, shown on the band for a while with its answer.
@@ -64,6 +71,7 @@ export type Settled = {
   answer: string
   by: 'coordinator' | 'owner'
   at: number
+  token?: string
 }
 
 // Something the person has to do (`do`: test a build, merge a PR) or should know (`know`),
@@ -72,7 +80,9 @@ export type Todo = { id: number; kind: 'do' | 'know'; text: string; from: string
 
 // A prompt for the coordinator held until its batch goes out (see outbox.ts). `report` marks a
 // worker's report: a batch with one ends with the worker count.
-export type OutboxItem = { text: string; report?: true }
+// `worker` (and, for a report, its `token`) says whose it is: a newer report of the same worker and
+// token replaces one still held, and a stop drops what is held for the worker.
+export type OutboxItem = { text: string; report?: true; worker?: string; token?: string }
 
 // The band's open tab and, on the decisions tab, the decision shown.
 // `workers: 'list'` (Details) shows every worker; compact shows the first few.

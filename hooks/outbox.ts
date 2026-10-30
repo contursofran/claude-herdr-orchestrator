@@ -36,12 +36,44 @@ export function turnRunning() {
 }
 
 // Queues a prompt for the coordinator. A batch with a report ends with the worker count (see flush).
-export async function post($: EngineInterface, text: string, report = false) {
-  const item: OutboxItem = report ? { text, report: true } : { text }
-  await update($, outbox, list => [...list, item])
+// `from` names the worker (and report token) it is about: a report still held for the same worker and
+// token is replaced, so one batch carries only the newest text of a rewritten report.
+export async function post($: EngineInterface, text: string, report = false, from?: { worker: string; token?: string }) {
+  const item: OutboxItem = {
+    text,
+    ...(report ? { report: true as const } : {}),
+    ...(from?.worker ? { worker: from.worker } : {}),
+    ...(from?.token ? { token: from.token } : {}),
+  }
+  const same = (i: OutboxItem) => report && !!i.report && !!from && i.worker === from.worker && i.token === from.token
+  await update($, outbox, list => {
+    // A replaced item takes its note of held messages not sent into the one that replaces it.
+    const notes = list.filter(same).flatMap(i => i.text.match(HELD_NOTE) ?? [])
+    const missing = notes.filter(n => !item.text.includes(n))
+    if (missing.length) item.text = item.text.replace(/\n<\/herdr-agent>\s*$/, `\n${missing.join('\n')}\n</herdr-agent>`)
+    return [...list.filter(i => !same(i)), item]
+  })
   lastAt = await $.clock.now()
   await save($)
   void kick($)
+}
+
+// The note deliver and the gone report put at the end of a report for messages they did not send.
+const HELD_NOTE = /\[\d+ message\(s\) held for it were not sent[^\n]*?\](?=\n<\/herdr-agent>\s*$)/g
+
+// The items a flush has taken and not yet got through, so a stop meanwhile can take its worker's out of them.
+let inFlight: OutboxItem[] = []
+
+// A stopped worker: nothing held for it is sent, nor put back by a flush that fails. Returns what was dropped.
+export async function dropHeld($: EngineInterface, worker: string) {
+  let dropped: OutboxItem[] = []
+  await update($, outbox, list => {
+    dropped = list.filter(i => i.worker === worker)
+    return dropped.length ? list.filter(i => i.worker !== worker) : list
+  })
+  inFlight = inFlight.filter(i => i.worker !== worker)
+  await save($)
+  return dropped
 }
 
 // The sweep's tick (register.tsx): a batch that a refused prompt kept goes out without a new post or turn's end.
@@ -80,14 +112,17 @@ async function flush($: EngineInterface): Promise<boolean> {
     return []
   })
   if (items.length === 0) return true
+  inFlight = items
   try {
     let text = items.map(i => i.text).join('\n\n')
     if (items.some(i => i.report)) text += await belowTarget($)
     await save($)
     await $.prompt.submit({ text: text.trim() })
+    inFlight = []
     return true
   } catch (err) {
-    await update($, outbox, list => [...items, ...list])
+    // Without what a stop dropped meanwhile.
+    await update($, outbox, list => [...inFlight, ...list])
     await save($)
     $.ui.toast(`herdr-agents: a prompt for the coordinator was not sent (${err}); it goes with the next one`)
     return false

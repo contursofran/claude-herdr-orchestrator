@@ -31,6 +31,7 @@ function modVersion($: EngineInterface) {
 
 export type BandRender = RenderInput<'AbovePrompt'>
 export type ToolUseRender = RenderInput<'ToolUse'>
+export type ToolResultRender = RenderInput<'ToolResult'>
 
 // The band above the prompt. Wide: decisions listed on the left, the selected one on
 // the right with its answers, workers below. Under 120 columns the list folds into a
@@ -347,6 +348,21 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
       ) : null}
     </Box>
   )
+}
+
+// An Edit or Write of a Markdown file draws no row: notes kept in .md files buried what the owner needs to
+// read. One that failed or was cut off stays, and ctrl+o (isExpanded) shows them all.
+const writesMarkdown = (tool: string, path: unknown) =>
+  (tool === 'Edit' || tool === 'Write') && typeof path === 'string' && /\.(md|markdown)$/i.test(path)
+
+export function hidesToolUse({ props: p }: ToolUseRender) {
+  const path = (p.input as { file_path?: unknown } | undefined)?.file_path
+  return writesMarkdown(p.tool, path) && !p.isErrored && !p.isInterrupted && !p.isExpanded
+}
+
+export function hidesToolResult({ props: p }: ToolResultRender) {
+  const path = (p.output as { filePath?: unknown } | undefined)?.filePath
+  return writesMarkdown(p.tool, path) && !p.isErrored && !p.isExpanded
 }
 
 // spawn and message calls drawn with their brief cut to its first line: the full
