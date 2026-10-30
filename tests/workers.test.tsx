@@ -2240,7 +2240,8 @@ test('a worker messaged while its WAIT.json is open works again: not waiting, co
   expect(jobOf(s.store, 'w-busy').wait).toBeUndefined()
   const jobs = Object.values((s.store.get('jobs:session-1234') as { jobs: Record<string, Job> }).jobs)
   expect(jobs.filter(j => active(j) && !j.wait).map(j => j.name)).toEqual(['w-busy'])
-  // Its WAIT.json is still on disk, and does not bring the wait back while it works; it reports again as any worker does.
+  // Its WAIT.json is gone, so the wait does not come back while it works; it reports again as any worker does.
+  expect(s.files[`${W}/WAIT.json`]).toBeUndefined()
   await s.clock.advance(3 * 60_000)
   expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'running' })
   expect(jobOf(s.store, 'w-busy').wait).toBeUndefined()
