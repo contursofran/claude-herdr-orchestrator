@@ -7,7 +7,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { listOrder } from "./model.js";
+import { listOrder, parkedNote } from "./model.js";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 
 function find(node, id) {
@@ -304,7 +304,9 @@ export class AgentsList {
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = this.since(a);
-      const idle = a.status === "idle" && !a.focused;
+      // A worker parked on WAIT.json is idle to Herdr, like a finished one: say what it waits for.
+      const parked = a.status === "idle" ? parkedNote(boards.list(), all, a.address) : null;
+      const idle = a.status === "idle" && !a.focused && !parked;
       const isPinned = this.pins.includes(a.address);
       const pin = div()
         .id(`pin-${a.address}`)
@@ -353,7 +355,8 @@ export class AgentsList {
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().flex_none().max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
-          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
+          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`)))
+          .when(Boolean(parked), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u23f8 ${parked}`))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address && !isOrch, el => el.child(pin))

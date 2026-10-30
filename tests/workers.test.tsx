@@ -2252,3 +2252,33 @@ test('a worker messaged while its WAIT.json is open works again: not waiting, co
   expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported' })
   await stopAll($, s.clock, ['w-busy'])
 })
+
+const parked = (submitted: string[]) => submitted.filter(s => s.includes('status="parked"'))
+
+test('a worker that parks on WAIT.json tells the coordinator once, with the wait and its PR, and not the worker', async ($, on) => {
+  const { clock, submitted, typed, files, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"PR #77 checks","check":"false","every":1,"max":60}'
+  const before = typed.length
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)).toHaveLength(1)
+  expect(parked(submitted)[0]).toMatch(/name="w-busy".*waiting for: PR #77 checks \(PR #77\)\. It is not finished/s)
+  expect(typed.length).toBe(before)
+  // A re-check does not say it again, and a parked worker is not reported.
+  await clock.advance(5 * 60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)).toHaveLength(1)
+  expect(submitted.some(s => /status="done"/.test(s))).toBe(false)
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'running' })
+})
+
+test('a parked worker with no PR in its wait names none', async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)[0]).toMatch(/waiting for: CI\. It is not finished/)
+  expect(parked(submitted)[0]).not.toContain('PR #')
+})

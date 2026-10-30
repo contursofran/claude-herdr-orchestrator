@@ -602,11 +602,19 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       return true
     }
     const set = wait
-    await updateJob(
+    const { after } = await updateJob(
       $,
       job.name,
       live(job, j => ({ ...j, wait: set })),
     )
+    // The wait takes effect once: the coordinator is told (never the worker, which a message would wake). Not a report.
+    if (after) {
+      const pr = [...(after.prs ?? [])].pop() ?? `${set.for} ${set.check}`.match(/(?:\bPR\s*#?|#|\bpr\s+\w+\s+)(\d{1,6})\b/i)?.[1]
+      await post(
+        $,
+        `<herdr-agent name="${job.name}" profile="${job.profile}" status="parked">\nParked on WAIT.json, waiting for: ${set.for}${pr ? ` (PR #${pr})` : ''}. It is not finished: its report comes when the wait ends.\n</herdr-agent>`,
+      )
+    }
   }
   if (wait.lastAt !== undefined && now - wait.lastAt < wait.every * 60_000) return true
   const ran = await $.process.run(['/bin/bash', '-c', wait.check], { cwd: job.cwd, timeoutMs: 120_000 }).catch((err: unknown) => ({
