@@ -344,7 +344,9 @@ export function strip(board, ctx = {}) {
   const other = otherCount(ctx.boards ?? [], ctx.terminals ?? terminals(), board)
   const tabs = div().id('strip-tabs').flex_1().min_w(0).pl(8).flex().items_end().overflow_x_scroll()
   for (const item of items) tabs.child(tab(item, board, state, now))
-  const right = div().flex_none().h(32).pr(8).flex().items_center().gap(12)
+  // A divider and a gap before the right-hand group, so a tab cut by the scroll reads as "more this way" and never runs into `ctx`.
+  const right = div().id('strip-right').flex_none().h(32).pl(12).pr(8).flex().items_center().gap(12)
+  right.child(div().id('strip-divider').w(1).h(16).bg(look.line))
   if (other.count > 0 && other.terminal) {
     right.child(
       div()
