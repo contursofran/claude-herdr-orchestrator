@@ -813,3 +813,31 @@ export function arrivalNotice(arrivals) {
   if (pinsN) parts.push(`${pinsN} ${pinsN === 1 ? 'pin' : 'pins'}`)
   return { title: `${all.length} new items`, body: parts.join(', '), terminal }
 }
+
+// --- S6: the band steps aside ---
+
+/** How often the pin bar copy says it is running, and how old the file may be before the plugin ignores it. */
+export const HEARTBEAT_MS = 30_000
+
+/** The coordinators this machine's plugin sessions run in: live boards' `coordinator.terminal`, without the other
+ *  machines' (`machine/t4`: a plugin there reads its own `t4`, which would match the wrong terminal). */
+export function localCoordinators(boards, terminals) {
+  const out = aliveBoards(boards, terminals).map(b => b.coordinator.terminal)
+  return [...new Set(out.filter(a => !a.includes('/')))]
+}
+
+/** The text of ~/.herdr-agents/app-mod.json. `core` is the hc core's id (`hc server status`), left out when unknown, so
+ *  a second core on the same HOME (its own `t1`) is told apart from this one. */
+export function heartbeat(boards, terminals, now, core = '') {
+  return JSON.stringify({ at: now, terminals: localCoordinators(boards, terminals), ...(core ? { core } : {}) })
+}
+
+/** The core id out of `hc server status --json` output, or '' when it does not say. */
+export function coreIdOf(text) {
+  try {
+    const id = JSON.parse(text)?.core?.id
+    return typeof id === 'string' ? id : ''
+  } catch {
+    return ''
+  }
+}

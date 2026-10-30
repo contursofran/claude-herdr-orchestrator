@@ -456,6 +456,8 @@ export async function start(
         event(t.name, 'removed')
         return ok({ removed: t.address })
       }
+      // The hc core this session talks to (`hc server status`).
+      if (sub === 'server') return ok({ core: { id: 'core-A', name: 'mac' }, live: 1 })
       return ok({})
     }
     // /repo and /srv are GitHub checkouts; a folder in one (/repo/wt) is a worktree of it.

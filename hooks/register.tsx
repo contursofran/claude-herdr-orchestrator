@@ -1,4 +1,5 @@
 import type { Register } from 'claude-code'
+import { appModShown, learnCore, watchAppMod } from './appmod'
 import { drawBand, hidesToolResult, hidesToolUse, shortenBrief } from './band'
 import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
@@ -66,6 +67,7 @@ export const register: Register = on => {
       return started
     }
     void sweep($, closeMinutes).catch(() => {})
+    void learnCore($)
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
@@ -82,6 +84,7 @@ export const register: Register = on => {
           .then(() => refresh($))
           .then(() => syncSide($))
           .then(() => publishBoard($))
+          .then(() => watchAppMod($))
           .catch(() => {}),
     )
     $.clock.every(PR_POLL_MS, () => void pollPrs($).catch(() => {}))
@@ -171,7 +174,7 @@ export const register: Register = on => {
   // what waits for the person and the workers, unless the sidebar shows them.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     session.bandId = e.requestId
-    return (await drawSettings($, e)) ?? ((await sideShown($)) ? next(e) : drawBand($, e, next))
+    return (await drawSettings($, e)) ?? ((await sideShown($)) || (await appModShown($)) ? next(e) : drawBand($, e, next))
   })
 
   // The sidebar (/hrd-side).

@@ -94,6 +94,9 @@ export const OUTBOX_PREFIX = 'outbox:'
 // The board for apps outside Claude Code (see bridge.ts), under the home folder, and how
 // many of their last actions the snapshot reports.
 export const BRIDGE_DIR = '.herdr-agents/board'
+// The app mod's heartbeat file (under HOME), and how old it may be while the band still steps aside.
+export const APP_MOD_FILE = '.herdr-agents/app-mod.json'
+export const APP_MOD_FRESH_MS = 90_000
 export const BRIDGE_ACTIONS_KEPT = 10
 
 // The block of the state file the mod keeps current (see stateblock.ts): how many recent reports it

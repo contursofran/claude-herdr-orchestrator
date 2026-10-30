@@ -1,10 +1,10 @@
 import { View, div } from 'gpui-kit'
 import { focused, props, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
-import { Boards } from './board.js'
+import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
 import { onBoardsChanged } from './cardstate.js'
-import { resolveBoard } from './model.js'
+import { HEARTBEAT_MS, resolveBoard } from './model.js'
 import { pinbar } from './pinbar.js'
 import { popupView } from './popup.js'
 import { PinCtl } from './pinctl.js'
@@ -46,11 +46,33 @@ export default class HerdrAgents extends View {
     this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
-    this.boards.start(cx, cx =>
-      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx),
-    )
+    this.beating = pinbarCopy
+    this.boards.start(cx, cx => {
+      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx)
+      // The first read says which coordinators are live: tell the plugin now, not 30 s later.
+      if (this.beating && !this.started) {
+        this.started = true
+        this.beat(cx)
+      }
+    })
+    // A data timer, no cx.notify: it must not redraw the window. One writer per window: the pin bar copy only.
+    if (pinbarCopy) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
+  }
+
+  beat(cx) {
+    cx.spawn(async () => {
+      try {
+        await beat(this.boards.list(), terminals())
+      } catch {
+        // the plugin keeps its band when the file goes stale
+      }
+    })
+  }
+
+  async close() {
+    if (this.beating) await clearBeat()
   }
 
   render(cx) {
