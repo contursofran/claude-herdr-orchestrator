@@ -136,6 +136,17 @@ test('a trust prompt that reads as idle is answered before the first prompt goes
   await stopAll($, clock, ['w-hc'])
 })
 
+test('a trust prompt with the folder path wrapped over lines is still answered', async ($, on) => {
+  const { clock, typed, keyed, screens, status } = await start($, on)
+  screens['w-hc'] = 'Do you trust /re\npo/wt?\n❯ 1. Yes, I trust this folder'
+  status['w-hc'] = 'idle'
+  await $.tool.call(spawnArgs)
+  await settled()
+  expect(keyed).toEqual([['w-hc', 'down', 'enter']])
+  expect(typed).toHaveLength(1)
+  await stopAll($, clock, ['w-hc'])
+})
+
 test('a CLI that reports a word and then exits is a failed start', async ($, on) => {
   const { clock, submitted, waitReplies } = await start($, on)
   waitReplies['w-hc'] = [{ ended: true, reason: 'exit', status: 'idle', exit_code: 1 }]

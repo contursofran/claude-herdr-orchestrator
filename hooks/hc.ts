@@ -101,7 +101,9 @@ export async function acceptFolderTrust($: EngineInterface, worker: string, cwd:
   if (!resolved.some((r: string) => cwd === r || cwd.startsWith(`${r}/`))) return false
 
   const screen = await readScreen($, worker)
-  if (!screen.includes(cwd)) return false
+  // A narrow terminal wraps a long path over several lines, so compare without whitespace.
+  const squash = (t: string) => t.replace(/\s+/g, '')
+  if (!squash(screen).includes(squash(cwd))) return false
   let keys: string[]
   if (/Yes, I trust this folder/.test(screen)) keys = ['down', 'enter']
   else if (/Trust and continue/.test(screen)) keys = ['enter']
