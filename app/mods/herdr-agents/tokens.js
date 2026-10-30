@@ -45,3 +45,6 @@ export const card = {
   kbdRec: '#BDBDBD',
   hover: '#1E1E1E',
 }
+
+// The board pop-up (S7).
+export const popup = { bg: '#181818', border: '#3A3A3A', head: '#7A7A7A', rowHover: '#1C1C1C', cell: 44 }

@@ -1,17 +1,22 @@
 import { div, svg } from 'gpui-kit'
-import { nextCommand, shared, terminals } from 'herdr'
+import { closeOverlay, nextCommand, openOverlay, run, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
   counts,
   flashing,
+  isBoardCommand,
   isUnseen,
   nextPick,
   observeArrivals,
   otherCount,
   pickAt,
   pickNumber,
+  POPUP_W,
+  popupHeight,
+  popupSpot,
   stripItems,
+  workRows,
 } from './model.js'
 import { closeCard, openCard } from './cardctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
@@ -75,6 +80,10 @@ export class StripState {
     cx.spawn(async cx => {
       for (;;) {
         const name = String(await nextCommand())
+        if (isBoardCommand(name)) {
+          openBoardPopup(cx, this.board)
+          continue
+        }
         const n = pickNumber(name)
         if (!n) continue
         const item = pickAt(stripItems(this.board), n)
@@ -95,6 +104,33 @@ export class StripState {
     if (!next) closeCard()
     else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) openCard(board, item, null, terminals())
   }
+}
+
+/** Open the work table above the strip, right aligned. Only the owner's click or key calls this. One overlay at a
+ *  time: an open card goes first. `cx` is the caller's own. The popup's root has a fixed size, so its height is
+ *  worked out here from the rows and handed over as a prop. */
+let popupId = null
+
+export function openBoardPopup(cx, board) {
+  if (!board) return
+  const height = popupHeight(workRows(board).length)
+  const view = window.viewport_size()
+  if (shared('hrd.open')) closeCard(false)
+  // A second open replaces the first instead of stacking on it.
+  if (popupId) {
+    try {
+      closeOverlay(popupId)
+    } catch {}
+  }
+  popupId = openOverlay({
+    mod: 'herdr-agents',
+    kind: 'popup',
+    frame: 'none',
+    width: POPUP_W,
+    height,
+    at: popupSpot(view.width, view.height, height),
+    props: { role: 'board', session: board.session, height },
+  })
 }
 
 function tab(item, board, state, now) {
@@ -170,8 +206,26 @@ function count(name, n) {
     .child(String(n))
 }
 
-/** A pill on the right: no action yet for `board` (S7) and `⌘J` (S9). */
+/** A pill on the right: no action yet for `⌘J` (S9). */
 const pill = text => div().h(24).px(8).flex().items_center().rounded(5).text_color(look.muted).child(text)
+
+/** `board ▴`: opens the work table above it. */
+const boardPill = board =>
+  div()
+    .id('strip-board')
+    .h(24)
+    .px(8)
+    .flex()
+    .items_center()
+    .rounded(5)
+    .text_color(look.muted)
+    .cursor_pointer()
+    .hover(el => el.bg(look.pillHover))
+    .on_mouse_down('left', (_e, cx) => {
+      openBoardPopup(cx, board)
+      cx.notify()
+    })
+    .child('board ▴')
 
 /** The strip's row: tabs for what needs the owner, then counts. Always the same height so nothing resizes the terminal. */
 export function strip(board, ctx = {}) {
@@ -215,7 +269,7 @@ export function strip(board, ctx = {}) {
         .child(count('waiting', c.waiting))
         .child(count('blocked', c.blocked)),
     )
-    .child(pill('board ▾'))
+    .child(boardPill(board))
     .child(pill('⌘J'))
   return root.child(tabs).child(right)
 }
