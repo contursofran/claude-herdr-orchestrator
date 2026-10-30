@@ -4,11 +4,37 @@ import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
 import { beforeEach, test } from 'node:test'
 
-const state = { props: null, store: {}, closed: [] }
+const state = { props: null, store: {}, closed: [], reads: [], file: null }
 globalThis.__startFake = {
   View: class {},
+  appHome: () => '/home',
+  // Chains anything; records the text it is given.
+  div: () => {
+    const el = new Proxy(
+      { kids: [] },
+      {
+        get: (t, name) => {
+          if (name === 'kids') return t.kids
+          if (name === 'when') return (cond, f) => (cond ? f(el) : el)
+          if (name === 'child') return kid => (t.kids.push(kid), el)
+          return () => el
+        },
+      },
+    )
+    return el
+  },
+  readTextFile: async path => {
+    state.reads.push(path)
+    return state.file
+  },
+  theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
   closeOverlay: id => state.closed.push(id),
-  openOverlay: () => 'o4',
+  focused: () => state.focused ?? null,
+  run: () => {},
+  openOverlay: o => {
+    state.opened = o
+    return 'o4'
+  },
   props: () => state.props,
   shared: k => state.store[k],
   setShared: (k, v) => {
@@ -20,6 +46,7 @@ const shim = {
   'gpui-base': ['h_flex', 'v_flex'],
   herdr: [
     'agents',
+    'appHome',
     'closeOverlay',
     'exec',
     'focused',
@@ -126,6 +153,19 @@ test('a new strip copy replaces the board pop-up the last copy opened, by its sh
   assert.equal(state.store['hrd.popup'], 'o4')
 })
 
+test('the board pop-up remembers the terminal to hand back; a card being replaced decides it', () => {
+  globalThis.window = { viewport_size: () => ({ width: 1280, height: 820 }) }
+  state.focused = { terminal: 't2', space: 'a' }
+  state.store = {}
+  openBoardPopup({ session: 's', items: [] })
+  assert.equal(state.opened.props.back, 't2')
+  assert.equal(state.opened.props.space, 'a')
+  state.store = { 'hrd.open': { back: 't1', space: 'b' } }
+  openBoardPopup({ session: 's', items: [] })
+  assert.equal(state.opened.props.back, 't1')
+  state.focused = null
+})
+
 test('an overlay copy takes the keyboard after its first draw', async () => {
   const handle = {
     focused: 0,
@@ -139,4 +179,45 @@ test('an overlay copy takes the keyboard after its first draw', async () => {
   assert.equal(handle.focused, 0)
   await tasks[0]({ sleep: async () => {}, notify() {} })
   assert.equal(handle.focused, 1)
+})
+
+const startVersion = async file => {
+  state.props = { role: 'version' }
+  state.reads = []
+  state.file = file
+  const spawned = []
+  const counts = { notify: 0, timers: 0 }
+  const copy = new HerdrAgents()
+  const own = {
+    notify: () => counts.notify++,
+    spawn: f => spawned.push(f),
+    timer: { every: () => counts.timers++, after: () => counts.timers++ },
+  }
+  copy.init(state.props, own)
+  await Promise.all(spawned.map(f => f(own)))
+  return { copy, counts, spawned }
+}
+
+test('the version copy reads its file once, with no timer, no boards and no shared state', async () => {
+  const { copy, counts, spawned } = await startVersion('{"version":"1.2.3","commit":"abc1234"}')
+  assert.deepEqual(state.reads, ['/home/mods/herdr-agents/version.json'])
+  assert.equal(spawned.length, 1)
+  assert.equal(counts.timers, 0)
+  assert.equal(counts.notify, 1)
+  assert.equal(copy.boards, undefined)
+  assert.deepEqual(state.store, {})
+  assert.equal(copy.render().kids[0].kids[0], 'herdr-agents 1.2.3 · abc1234')
+})
+
+test('a version copy with a missing or bad file draws no text and does not redraw', async () => {
+  for (const file of [null, 'not json']) {
+    const { copy, counts } = await startVersion(file)
+    assert.equal(counts.notify, 0)
+    assert.deepEqual(copy.render().kids, [])
+  }
+})
+
+test('before the file is read the version copy draws no text', () => {
+  state.props = { role: 'version' }
+  assert.deepEqual(new HerdrAgents().render().kids, [])
 })

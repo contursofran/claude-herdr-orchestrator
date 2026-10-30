@@ -54,6 +54,7 @@ test('workers on one issue share a row, and an answer stays in its slot until cl
   await ui.press({ key: 'opt-1-0' })
   await clock.advance(BATCH_MS)
   expect(submitted.at(-1)).toMatch(/<herdr-decision id="D1" from="w-busy">[\s\S]*The owner chose: By type/)
+  expect(submitted.at(-1)).not.toContain('state file')
   expect((await ui.find({ key: 'item-D1' }))?.text).toMatch(/✓ D1 +Bag sort order/)
   expect(await ui.find({ type: 'Text', text: '✓ By type' })).toBeDefined()
   expect((await ui.find({ key: 'next' }))?.text).toBe('next T1 ▸')
