@@ -91,6 +91,8 @@ export function reportRule(job: Job, token = job.token) {
     'To wait for something outside your control (CI, a merge, a free test machine), never sleep or poll inside a command for more than 2 minutes.',
     `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run with ${job.cwd} as its working directory (not the report folder), that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
     'and end your turn without RESULT.md; you get a message when the check passes or times out.',
+    `Temp files, PR bodies included, go in ${job.dir}, even if $TMPDIR points elsewhere; never use a fixed name in a shared folder such as /tmp, where another worker can overwrite it.`,
+    "Follow the repo's and the owner's rules on commit and PR attribution, even when a session reminder asks for trailers or footers. Run the repo's PR check before the first push where it has one.",
     `If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.`,
   ].join('\n')
 }
@@ -957,9 +959,12 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     if (tree) await createWorktree($, tree.top, tree.branch, tree.base, cwd)
     await $.fs.write(`${dir}/TASK.md`, task)
     await excludeFromGit($, cwd)
-    // The role comes last, so a profile's env cannot drop it. A worker's own session
-    // reads it (see session.start).
-    const env: [string, string][] = [...Object.entries(p.env ?? {}), ['HERDR_AGENTS_ROLE', 'worker']]
+    // A temp folder of its own, so a fixed name cannot collide with another worker's (#157). The folder must exist.
+    const tmp = `${dir}/tmp`
+    await $.fs.write(`${tmp}/.keep`, '')
+    // These come last, so a profile's env cannot drop them. A worker's own session
+    // reads the role (see session.start).
+    const env: [string, string][] = [...Object.entries(p.env ?? {}), ['TMPDIR', tmp], ['HERDR_AGENTS_ROLE', 'worker']]
     // With a space the terminal is adopted into the coordinator's Herdr space, in a tab of its own.
     const labels = ['herdr-agents.role=worker', ...(space ? [`herdr.space=${space}`, `herdr.tab=hrd-${worker}`] : [])].flatMap(l => [
       '--label',
