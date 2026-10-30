@@ -8,6 +8,8 @@ import { BAND, command, settled, start, stopAll, test } from './harness'
 const FILE = '/home/t/.herdr-agents/app-mod.json'
 const PANE = { plugin: 'herdr-agents', component: 'Pane', requestId: 'hrd-side', props: { bodyColumns: 80, bodyRows: 30 } } as const
 
+const BOARD = '/home/t/.herdr-agents/board/session-1234.json'
+
 const beat = (at: number, terminals: unknown = ['t1'], core?: string) => JSON.stringify({ at, terminals, ...(core ? { core } : {}) })
 const hidden = async (band: { redraw: () => Promise<unknown>; find: (q: object) => Promise<unknown> }) => {
   await band.redraw()
@@ -183,5 +185,79 @@ test('PR checks are polled while the app mod draws the boards, with no sidebar',
   const row = (await ui.find({ key: 'task-acme/app-client#12' }))?.text ?? ''
   expect(row).toMatch(/#12 +hotbar keys +· +✓ +· +◐/)
   await ui.unmount()
+  await stopAll($, clock, ['w-done'])
+})
+
+test('a merged PR gets its merge time from the same gh call, and is not asked again once it has one', async ($, on) => {
+  const { clock, typed, files, prs, shell } = await start($, on)
+  await $.tool.call({
+    tool: 'mcp__herdr-agents__spawn',
+    worker: 'w-done',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    task: '# Build #12: hotbar keys',
+  })
+  await settled()
+  await clock.settle()
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-done/RESULT.md'] =
+    `<!-- report ${token} -->\nOpened https://github.com/acme/app-client/pull/15. Tests pass.`
+  await clock.advance(3000)
+  const task = () => (JSON.parse(files[BOARD]!).tasks as { key: string; pr?: number; isMerged: boolean; mergedAt?: number | null }[])[0]!
+  const asked = () => shell.filter(c => c.startsWith('gh pr view 15')).length
+  const tick = async () => {
+    for (let i = 0; i < 5; i++) {
+      await clock.advance(30_000)
+      files[FILE] = beat(clock.now())
+    }
+  }
+  files[FILE] = beat(clock.now())
+  prs['acme/app-client#15'] = { state: 'OPEN', statusCheckRollup: [] }
+  await tick()
+  expect(task()).toMatchObject({ pr: 15, isMerged: false, mergedAt: null })
+  expect(shell.find(c => c.startsWith('gh pr view 15'))).toContain('state,mergedAt,statusCheckRollup')
+
+  // It merges: the one gh call brings the time, as ms, to the board.
+  prs['acme/app-client#15'] = { state: 'MERGED', mergedAt: '2026-10-30T20:00:00Z', statusCheckRollup: [] }
+  await tick()
+  expect(task()).toMatchObject({ isMerged: true, mergedAt: Date.parse('2026-10-30T20:00:00Z') })
+  const after = asked()
+  await tick()
+  await tick()
+  expect(asked(), 'a merged PR with its time is not asked about again').toBe(after)
+  await stopAll($, clock, ['w-done'])
+})
+
+test('a merged PR with no merge time is asked once more and then left alone, even if gh gives none', async ($, on) => {
+  const { clock, typed, files, prs, shell } = await start($, on)
+  await $.tool.call({
+    tool: 'mcp__herdr-agents__spawn',
+    worker: 'w-done',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    task: '# Build #12: hotbar keys',
+  })
+  await settled()
+  await clock.settle()
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-done/RESULT.md'] =
+    `<!-- report ${token} -->\nOpened https://github.com/acme/app-client/pull/15. Tests pass.`
+  await clock.advance(3000)
+  const asked = () => shell.filter(c => c.startsWith('gh pr view 15')).length
+  const tick = async () => {
+    for (let i = 0; i < 5; i++) {
+      await clock.advance(30_000)
+      files[FILE] = beat(clock.now())
+    }
+  }
+  files[FILE] = beat(clock.now())
+  prs['acme/app-client#15'] = { state: 'MERGED', statusCheckRollup: [] } // gh says merged and no time
+  await tick()
+  const after = asked()
+  expect(after).toBeGreaterThan(0)
+  await tick()
+  await tick()
+  expect(asked()).toBe(after)
+  expect(JSON.parse(files[BOARD]!).tasks[0]).toMatchObject({ isMerged: true, mergedAt: null })
   await stopAll($, clock, ['w-done'])
 })
