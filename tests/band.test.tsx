@@ -333,3 +333,48 @@ test('a worker blocked with no report leaves Blocked when it is stopped', async 
   await clock.advance(3000)
   expect(await band()).not.toMatch(/Blocked/)
 })
+
+test('a Markdown edit draws no row, unless it failed, was cut off or the view shows everything', async ($, on) => {
+  await start($, on)
+  const use = (tool: string, file_path: string, more = {}) =>
+    $.ui.mount({
+      plugin: 'herdr-agents',
+      component: 'ToolUse',
+      surface: 'terminal',
+      props: { tool_use_id: 'x', tool, input: { file_path }, isRunning: false, isErrored: false, isInterrupted: false, ...more },
+    })
+  const result = (tool: string, filePath: string, more = {}) =>
+    $.ui.mount({
+      plugin: 'herdr-agents',
+      component: 'ToolResult',
+      surface: 'terminal',
+      props: { tool_use_id: 'x', tool, output: { filePath }, isErrored: false, ...more },
+    })
+  const drawn = async (mounted: ReturnType<typeof use> | ReturnType<typeof result>) => {
+    const ui = await mounted
+    const found = await ui.find({ type: 'Text', text: /engine band/ })
+    await ui.unmount()
+    return found !== undefined
+  }
+
+  for (const [tool, path] of [
+    ['Edit', '/repo/COORDINATOR-STATE.md'],
+    ['Write', '/repo/docs/NOTES.MD'],
+    ['Edit', '/repo/a.markdown'],
+  ]) {
+    expect(await drawn(use(tool!, path!))).toBe(false)
+    expect(await drawn(result(tool!, path!))).toBe(false)
+  }
+
+  // Other files and other tools are drawn as ever.
+  expect(await drawn(use('Edit', '/repo/hooks/band.tsx'))).toBe(true)
+  expect(await drawn(result('Write', '/repo/hooks/md'))).toBe(true)
+  expect(await drawn(use('Read', '/repo/README.md'))).toBe(true)
+
+  // What the owner still has to see.
+  expect(await drawn(use('Edit', '/repo/a.md', { isErrored: true }))).toBe(true)
+  expect(await drawn(use('Edit', '/repo/a.md', { isInterrupted: true }))).toBe(true)
+  expect(await drawn(use('Edit', '/repo/a.md', { isExpanded: true }))).toBe(true)
+  expect(await drawn(result('Edit', '/repo/a.md', { isErrored: true }))).toBe(true)
+  expect(await drawn(result('Edit', '/repo/a.md', { isExpanded: true }))).toBe(true)
+})
