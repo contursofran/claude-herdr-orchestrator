@@ -50,15 +50,17 @@ Subagent transcripts (<session>/subagents/*.jsonl) are not top-level files and a
 
 GitHub section, through `gh`, per repo:
   repos     the GitHub `origin` remotes of the working folders of every session in the window. --repo OWNER/NAME
-            (repeatable) reports only the repos named; --repo +OWNER/NAME adds one to the repos found. A folder
-            that is gone, such as a pruned worktree, gives no repo and is counted on one line.
+            (repeatable) reports only the repos named and reads no folders, even when mixed with +; --repo +OWNER/NAME
+            alone adds one to the repos found. A folder that is gone, such as a pruned worktree, gives no repo and is
+            counted on one line.
   window    GitHub filters by date: runs and PRs count from the UTC date the window starts on.
   CI        per workflow: runs, failures (failure or timed_out), median and worst queue wait (created to started)
             and run time (started to last update). Runs that never started a job (startup failure, cancelled
             while queued) are left out and counted on one "ignored" line. Skipped and unfinished runs are left out.
   PR flow   merged PRs (newest 40): open to merged, fix commits (committed after opening) and failed CI runs on
-            the head branch. A branch that is the base of a merged PR is not a work branch: its runs do not count.
-A repo `gh` cannot read, or with no runs and no merged PRs, shows one line. pi sessions are not analysed here:
+            the head branch. A branch that is the base of a merged PR counts as a base, and its runs do not count.
+            Limit: a stacked PR's parent branch is a base too, so its failures are not counted.
+A repo `gh` cannot read or answering in an unexpected shape, or with no runs and no merged PRs, shows one line. pi sessions are not analysed here:
 their count is printed, and agent-metrics.py reads them.
 """
 
@@ -129,6 +131,7 @@ REPO_ARG = re.compile(r"\+?[\w.-]+/[\w.-]+")
 GITHUB_REMOTE = re.compile(r"(?:^|@|//)github\.com[:/]+([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 PR_LIMIT = 40  # newest merged PRs per repo: GitHub caps the commits query size
 RUNS_CAP = 1000  # GitHub returns no more runs than this for a filtered query
+MALFORMED = (ValueError, KeyError, TypeError, AttributeError)  # what a gh reply of the wrong shape raises
 # What woke the coordinator. `report`, `pipeline` and `bgtask` prompts are mechanical: no human asked for them.
 KINDS = ("report", "pipeline", "bgtask", "panel", "compact", "owner")
 MECH = ("report", "pipeline", "bgtask")
@@ -929,18 +932,20 @@ def job_count(repo, run_id):
 
 
 def read_runs(repo, day):
-    """The finished runs from `day` on (skipped ones left out); returns (runs, None), or (None, why)."""
+    """The finished runs from `day` on (skipped ones left out); returns (runs, whether GitHub's cap was hit, None), or
+    (None, False, why). The cap counts every row GitHub returned, the ones left out too."""
     out, why = gh("api", "--paginate", f"repos/{repo}/actions/runs?per_page=100&created=>={day}", "--jq",
                   ".workflow_runs[]|[.name,.conclusion,.created_at,.run_started_at,.updated_at,(.id|tostring),.head_branch]|@tsv")
     if why:
-        return None, why
+        return None, False, why
     runs = []
-    for line in out.splitlines():
+    lines = out.splitlines()
+    for line in lines:
         name, concl, created, started, updated, rid, branch = (line.split("\t") + [""] * 7)[:7]
         if started and concl not in ("skipped", ""):
             runs.append({"id": rid, "name": name, "concl": concl, "created": created, "started": started,
                          "updated": updated, "branch": branch})
-    return runs, None
+    return runs, len(lines) >= RUNS_CAP, None
 
 
 def jobless_runs(repo, runs):
@@ -976,7 +981,8 @@ def pr_flow(prs, runs, jobless):
     rows = []
     for p in prs:
         opened = epoch(p["createdAt"])
-        rows.append({"number": p["number"], "title": p["title"], "author": (p.get("author") or {}).get("login") or "?",
+        rows.append({"number": int(p["number"]), "title": str(p["title"]),
+                     "author": str((p.get("author") or {}).get("login") or "?"),
                      "hours": (epoch(p["mergedAt"]) - opened) / 3600,
                      "fix_commits": sum(1 for c in p.get("commits", []) if c.get("committedDate") and epoch(c["committedDate"]) > opened),
                      "failed_ci": failed[p["headRefName"]]})
@@ -992,19 +998,26 @@ def pr_flow(prs, runs, jobless):
 def repo_flow(repo, day):
     """CI and PR flow of one repo. A failure ends up in `error` or `prs_error`: it never stops the report."""
     flow = {"repo": repo}
-    runs, why = read_runs(repo, day)
+    runs, capped, why = read_runs(repo, day)
     if why:
         flow["error"] = why
         return flow
     jobless = jobless_runs(repo, runs)
     ignored = collections.Counter(r["name"] for r in runs if r["id"] in jobless)
-    flow.update(workflows=workflow_rows(runs, jobless), ignored=dict(ignored), runs_capped=len(runs) >= RUNS_CAP)
+    try:
+        flow.update(workflows=workflow_rows(runs, jobless), ignored=dict(ignored), runs_capped=capped)
+    except MALFORMED as e:
+        flow["error"] = f"unexpected reply: {e}"
+        return flow
     out, why = gh("pr", "list", "-R", repo, "--state", "merged", "--limit", str(PR_LIMIT), "--search", f"merged:>={day}",
                   "--json", "number,title,author,createdAt,mergedAt,headRefName,baseRefName,commits", timeout=180)
     if not why:
         try:
-            flow["prs"] = pr_flow(json.loads(out), runs, jobless)
-        except (ValueError, KeyError, TypeError) as e:
+            prs = json.loads(out)
+            if not isinstance(prs, list):
+                raise TypeError("not a list")
+            flow["prs"] = pr_flow(prs, runs, jobless)
+        except MALFORMED as e:
             why = f"unexpected reply: {e}"
     if why:
         flow["prs_error"] = why
@@ -1082,7 +1095,8 @@ def main():
     ap.add_argument("--reports", default="~/.herdr-agents/reports", metavar="DIR",
                     help="the mod's report archive, read for worker folders that were removed (default %(default)s)")
     ap.add_argument("--repo", action="append", default=[], type=repo_arg, metavar="[+]OWNER/NAME",
-                    help="report only this repo, or with + add it to the repos found from the sessions' folders (repeatable)")
+                    help="report only this repo; a plain OWNER/NAME turns off finding repos from the sessions' folders, even when "
+                         "mixed with +. +OWNER/NAME alone adds it to the repos found (repeatable)")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the tables")
     args = ap.parse_args()
     days = args.days

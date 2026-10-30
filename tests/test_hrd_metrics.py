@@ -1102,6 +1102,11 @@ class RepoChoice(unittest.TestCase):
             self.assertEqual(hm.choose_repos(["acme/one"], {"/any"}), (["acme/one"], {}))
         find.assert_not_called()
 
+    def test_a_plain_repo_flag_mixed_with_a_plus_one_reads_no_folder(self):
+        with mock.patch.object(hm, "find_repos") as find:
+            self.assertEqual(hm.choose_repos(["acme/one", "+acme/two"], {"/any"}), (["acme/one", "acme/two"], {}))
+        find.assert_not_called()
+
     def test_a_plus_repo_flag_adds_to_the_repos_found_once(self):
         with mock.patch.object(hm, "find_repos", return_value=(["acme/found"], {"gone": 2})):
             self.assertEqual(hm.choose_repos(["+acme/extra", "+acme/found"], {"/any"}), (["acme/extra", "acme/found"], {"gone": 2}))
@@ -1199,6 +1204,15 @@ class GithubFlow(unittest.TestCase):
         fake = FakeGh(runs={"acme/app": [run_row(n) for n in range(1000)]})
         self.assertIn("at most 1000 runs", self.text(self.flow(fake)))
 
+    def test_skipped_and_unfinished_rows_count_towards_the_runs_cap(self):
+        rows = [run_row(n) for n in range(900)] + [run_row(n, concl="skipped") for n in range(50)] + [run_row(n, concl="") for n in range(50)]
+        flow = self.flow(FakeGh(runs={"acme/app": rows}))
+        self.assertEqual(flow["workflows"][0]["runs"], 900)
+        self.assertIn("at most 1000 runs", self.text(flow))
+
+    def test_one_row_under_the_runs_cap_says_nothing(self):
+        self.assertNotIn("at most 1000 runs", self.text(self.flow(FakeGh(runs={"acme/app": [run_row(n) for n in range(999)]}))))
+
     def test_a_repo_gh_cannot_read_is_one_line(self):
         fake = FakeGh(fail={"acme/app": "HTTP 404: Not Found\nmore detail"})
         text = self.text(self.flow(fake))
@@ -1230,6 +1244,36 @@ class GithubFlow(unittest.TestCase):
     def test_a_malformed_pr_reply_is_a_line_not_a_crash(self):
         fake = FakeGh(prs={"acme/app": [{"number": 1}]})
         self.assertIn("PRs: gh cannot read them: unexpected reply", self.text(self.flow(fake)))
+
+    def test_each_malformed_pr_reply_is_one_line_and_keeps_the_ci_rows(self):
+        replies = {"an object": {"number": 1}, "an empty object": {}, "null": None, "a null row": [None],
+                   "a null mergedAt": [dict(merged_pr(1), mergedAt=None)], "a bad date": [dict(merged_pr(1), createdAt="soon")],
+                   "a null number": [dict(merged_pr(1), number=None)], "null commits": [dict(merged_pr(1), commits=None)]}
+        for name, reply in replies.items():
+            with self.subTest(name):
+                fake = FakeGh(runs={"acme/app": [run_row(1)]})
+                fake.prs = {"acme/app": reply}
+                text = self.text(self.flow(fake))
+                self.assertIn("Check", text)
+                self.assertEqual(text.count("PRs: gh cannot read them: unexpected reply"), 1)
+
+    def test_a_null_title_or_login_still_prints(self):
+        pr = dict(merged_pr(4), title=None, author={"login": 7})
+        self.assertIn("PRs merged: 1", self.text(self.flow(FakeGh(prs={"acme/app": [pr]}))))
+
+    def test_a_bad_run_date_is_the_repos_one_line(self):
+        row = "\t".join(["Check", "success", "soon", iso(NOW), iso(NOW), "1", "feature"])
+        text = self.text(self.flow(FakeGh(runs={"acme/app": [row]})))
+        self.assertTrue(text.startswith("  acme/app: gh cannot read it: unexpected reply: "), text)
+        self.assertEqual(text.count("\n"), 1)
+
+    def test_a_malformed_repo_does_not_stop_the_others(self):
+        bad = "\t".join(["Check", "success", "soon", iso(NOW), iso(NOW), "1", "feature"])
+        fake = FakeGh(runs={"acme/bad": [bad], "acme/good": [run_row(1)]})
+        with mock.patch.object(hm.subprocess, "run", fake):
+            _, flows = hm.github_flows(["acme/bad", "acme/good"], NOW)
+        self.assertIn("unexpected reply", flows[0]["error"])
+        self.assertEqual(flows[1]["workflows"][0]["runs"], 1)
 
     def test_a_pr_with_no_author_still_prints(self):
         pr = dict(merged_pr(4), author=None)
@@ -1284,6 +1328,10 @@ esac
         self.assertIn("  acme/app\n", out)
         self.assertIn("Check", out)
         self.assertIn("== coordinator sessions", out)
+
+    def test_help_says_a_plain_repo_turns_off_folders_even_mixed_with_plus(self):
+        text = " ".join(self.run_script("--help").split())
+        self.assertIn("a plain OWNER/NAME turns off finding repos from the sessions' folders, even when mixed with +", text)
 
     def test_no_repos_says_so(self):
         self.assertIn("no repos:", self.run_script())
