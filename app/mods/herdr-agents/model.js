@@ -185,6 +185,7 @@ export function pins(board, read = {}, hidden = new Set()) {
         summary,
         tag: typeof n.tag === 'string' && n.tag.trim() ? n.tag.trim() : null,
         who: n.from ?? '',
+        text: String(n.text ?? '').trim(),
         at: typeof n.at === 'number' ? n.at : 0,
         unread: read?.[id] !== true,
       }
@@ -782,15 +783,17 @@ export function rowAction(row, terminals, space = null) {
 }
 
 /**
- * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card}: booleans).
- * Opening the card closes the pop-up; opening the pop-up closes the card and hands the keyboard back (`refocus`),
- * because the card took it.
+ * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card, pins}: booleans).
+ * Opening the card closes the pop-up and the pins overlay; opening the pop-up or the pins overlay closes the others and,
+ * when a card was open, hands the keyboard back (`refocus`), because the card took it. A second open of the same kind
+ * replaces the first.
  */
 export function overlayPlan(kind, open) {
   const popup = Boolean(open?.popup)
   const card = Boolean(open?.card)
-  if (kind === 'card') return { closePopup: popup, closeCard: false, refocus: false }
-  return { closePopup: popup, closeCard: card, refocus: card }
+  const pins = Boolean(open?.pins)
+  if (kind === 'card') return { closePopup: popup, closeCard: false, closePins: pins, refocus: false }
+  return { closePopup: popup, closeCard: card, closePins: pins, refocus: card }
 }
 
 /** The action file for the header's wrap up / keep going: `on` is the state to set. */
@@ -850,6 +853,74 @@ export function arrivalNotice(arrivals) {
   if (asks) parts.push(`${asks} ${asks === 1 ? 'question' : 'questions'}`)
   if (pinsN) parts.push(`${pinsN} ${pinsN === 1 ? 'pin' : 'pins'}`)
   return { title: `${all.length} new items`, body: parts.join(', '), terminal }
+}
+
+// ---- The pin drop panel and the all-pins popover (S8) ----
+
+export const PINS_ALL_W = 470
+const PINS_ALL_ROW = 122 // padding 10 + 8, title 18, text 3 x 18, buttons 24, gaps 4 + 4
+const PINS_ALL_ROWS = 4 // more than this scroll
+const PINS_ALL_CHROME = 2 + 20 + 24 + 4 // border, padding, header, gap
+const PANEL_CHAR_W = 7.8 // a 13 px mono character
+const PANEL_MAX_LINES = 12
+const PANEL_FALLBACK_TOP = 80 // tabs 42 + pin bar 38, when the bar's own bounds are not known
+const PANEL_FALLBACK_SIDE = CARD_SIDE
+const PINS_MIN_H = 120 // an overlay never gets smaller than this, however small the window
+const PINS_WINDOW_GAP = 8 // kept free between an overlay and the window's bottom edge
+
+/** Unread first, then read; the newest first within each (board order when equal). Does not change `list`. */
+export function orderPins(list) {
+  return list
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => Number(b.p.unread) - Number(a.p.unread) || b.p.at - a.p.at || a.i - b.i)
+    .map(x => x.p)
+}
+
+/** The read marks with every pin of `list` marked; the same object when none was unread. */
+export const markAllRead = (read, list) => list.reduce((r, p) => markRead(r, p.id), read)
+
+/** A pin's drop panel is this tall for `text` at `width`: fixed, because a popup whose root has no size draws nothing. */
+export function panelHeight(text, width) {
+  const per = Math.max(10, Math.floor((Number(width) - 16 - 39) / PANEL_CHAR_W))
+  const lines = String(text ?? '')
+    .split('\n')
+    .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / per)), 0)
+  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + 12 + 18 + 12 + 28 + 14
+}
+
+/** The drop panel's context line: who, age and tag, as far as the pin has them. */
+export const pinContext = (pin, now) => [pin.who, ageText(pin.at, now), pin.tag].filter(Boolean).join(' · ')
+
+/** `height`, limited to what fits below `y` in the window, so the buttons stay reachable and the content scrolls. The app
+ *  scales an overlay's size by the zoom but not its position, so what is left below `y` is divided by it. */
+export function fitHeight(height, y, viewport, zoom = 1) {
+  const vh = Number(viewport?.height)
+  if (!(vh > 0)) return height
+  return Math.min(height, Math.max(PINS_MIN_H, (vh - y - PINS_WINDOW_GAP) / (zoom > 0 ? zoom : 1)))
+}
+
+/** The all-pins popover's height for `n` pins. */
+export const allPinsHeight = n => PINS_ALL_CHROME + (PINS_ALL_ROW + 4) * Math.min(Math.max(n, 1), PINS_ALL_ROWS)
+
+/**
+ * Where the overlay goes. `bar` is the pin bar's bounds in the window ({x, y, width, height}) as a click reported them;
+ * without them the work area is taken to lie between the sidebars. The panel is as wide as the bar, right under it; the
+ * popover is right aligned under it.
+ */
+export function pinsSpot(view, bar, viewport) {
+  const ok = Number(bar?.width) > 0
+  const x = ok ? bar.x : PANEL_FALLBACK_SIDE
+  const y = ok ? bar.y + bar.height : PANEL_FALLBACK_TOP
+  const width = ok ? bar.width : Math.max(CARD_MIN_W, Number(viewport?.width) - 2 * PANEL_FALLBACK_SIDE || CARD_W)
+  if (view === 'panel') return { x, y, width }
+  return { x: Math.max(0, x + width - PINS_ALL_W - 8), y: y + 4, width: PINS_ALL_W }
+}
+
+/** Done from the overlay: a list of requests in shared("hrd.doneReq"), so two in one tick both stay; the pin bar copy empties
+ *  it and turns each into the same queued, undoable action as its own Done ×. These are the usable ones of `list`. */
+export function doneRequests(list) {
+  if (!Array.isArray(list)) return []
+  return list.filter(r => r?.session && r?.key).map(r => ({ session: r.session, key: r.key }))
 }
 
 // --- S6: the band steps aside ---
