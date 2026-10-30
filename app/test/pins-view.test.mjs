@@ -39,7 +39,7 @@ beforeEach(() => {
 test('the drop panel draws: text, then who, age and tag, with a line height the app can use', () => {
   app.props = { view: 'panel', session: 's', id: 's:K2', list, width: 900, height: 200, overlay: 'o1' }
   const root = pinsView(new Set(), {})
-  assert.deepEqual(textOf(findId(root, 'pin-full')), ['K2 full text'])
+  assert.deepEqual(textOf(findId(root, 'pin-full')), ['K2 full text', 'Copy'])
   assert.deepEqual(textOf(findId(root, 'pin-context')), ['builder · 2m · PR'])
 })
 

@@ -1,5 +1,7 @@
 import { div, svg } from 'gpui-kit'
 import { closeOverlay, props, setShared, shared } from 'herdr'
+import { copyableText } from './copy.js'
+import { CopyState, copyKey } from './copystate.js'
 import {
   PINS_ALL_ROW_TEXT,
   ageText,
@@ -218,6 +220,7 @@ export function pinsView(gone, ctl, board = null) {
     .filter(x => !gone.has(x.id))
     .map(x => ({ ...x, unread: read[x.id] !== true }))
   const close = closePinsOverlay
+  const copy = (ctl.copy ??= new CopyState())
   // The next overlay takes the keyboard, and hands it back to the terminal this one would have.
   const openNext = (view, opts) => {
     ctl.leaving = true
@@ -226,8 +229,11 @@ export function pinsView(gone, ctl, board = null) {
   const root = div()
     .id('pins-overlay')
     .track_focus(ctl.h)
-    .on_key_down(e => {
-      if (popupKeyAction(e.keystroke ?? e.key, e.is_held) === 'close') close()
+    .on_key_down((e, cx) => {
+      const keystroke = e.keystroke ?? e.key
+      const chord = p.view === 'panel' && !e.is_held ? copyKey(keystroke) : null
+      if (chord) copy.key(cx, chord, 'pin-copy', list.find(x => x.id === p.id)?.text)
+      else if (popupKeyAction(keystroke, e.is_held) === 'close') close()
     })
     .w(Number(p.width))
     .h(p.view === 'panel' ? Number(p.height) : Math.min(Number(p.height), allPinsHeight(list.length)))
@@ -262,7 +268,7 @@ export function pinsView(gone, ctl, board = null) {
           .text_size(font.terminalSize)
           .line_height(`${font.terminalLine}px`)
           .text_color(color.text)
-          .child(pin?.text ?? ''),
+          .child(copyableText('pin-copy', pin?.text ?? '', copy, color.text)),
       )
       .child(
         div()

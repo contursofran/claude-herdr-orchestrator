@@ -2,6 +2,8 @@ import { div, svg } from 'gpui-kit'
 import { exec, notify, run, settings, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
+import { copyableText } from './copy.js'
+import { copyKey, copyTargets } from './copystate.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
 import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
@@ -135,6 +137,7 @@ export function card(boards, ctl, cx) {
   const token = `${open.session}:${open.key}:${open.seq ?? 0}`
   if (ctl.token !== token) {
     ctl.token = token
+    ctl.copy.selected = false
     cx.spawn(async cx => {
       await cx.sleep(60)
       ctl.h.focus()
@@ -161,7 +164,7 @@ export function card(boards, ctl, cx) {
 
   const body = div().id('card-scroll').flex().flex_col().gap(12).flex_1().min_h_0().overflow_y_scroll()
   if (view.face === 'ask') {
-    body.child(div().text_color(color.soft).child(view.text))
+    body.child(copyableText(`card-copy-${key}`, view.text, ctl.copy))
     body.child(
       div()
         .flex()
@@ -186,7 +189,7 @@ export function card(boards, ctl, cx) {
         ),
     )
   } else if (view.face === 'do') {
-    body.child(div().text_color(color.soft).child(view.text))
+    body.child(copyableText(`card-copy-${key}`, view.text, ctl.copy))
     body.child(
       div()
         .flex()
@@ -239,18 +242,22 @@ export function card(boards, ctl, cx) {
     )
   }
 
+  const canCopy = copyTargets(view.text).length > 0
   return root.child(
     div()
       .id('card-body')
       .track_focus(ctl.h)
       .on_key_down((e, cx) => {
-        const act = cardKeyAction(view.face, e.keystroke ?? e.key, {
+        const keystroke = e.keystroke ?? e.key
+        const act = cardKeyAction(view.face, keystroke, {
           options: view.options?.length ?? 0,
           url: Boolean(view.url),
           held: e.is_held,
+          copy: canCopy ? copyKey(keystroke) : null,
         })
         if (act.type === 'ignore') return
-        if (act.type === 'answer') answer(act.index, cx)
+        if (act.type === 'copy') ctl.copy.key(cx, act.chord, `card-copy-${key}`, view.text)
+        else if (act.type === 'answer') answer(act.index, cx)
         else if (act.type === 'done') done(null, cx)
         else if (act.type === 'link') link()
         else close(null, cx)
@@ -269,7 +276,7 @@ export function card(boards, ctl, cx) {
           .flex_none()
           .text_size(11)
           .text_color(look.meta)
-          .child(cardHint(view.face, { options: view.options?.length ?? 0, url: Boolean(view.url) })),
+          .child(cardHint(view.face, { options: view.options?.length ?? 0, url: Boolean(view.url), copy: canCopy })),
       ),
   )
 }

@@ -723,10 +723,12 @@ export function cardFor(boards, open, ctx = {}) {
 }
 
 /** The line under the keys: which keys answer, and that any other one closes the card and is lost. */
-export function cardHint(face, { options = 0, url = false } = {}) {
+export function cardHint(face, { options = 0, url = false, copy = false } = {}) {
   const n = Math.min(Math.max(Number(options) || 0, 0), 3)
-  if (face === 'ask' && n) return `${n === 1 ? '1' : `1-${n}`} answers · esc or any other key closes, and that key is lost`
-  if (face === 'do') return `${url ? '1 done · 2 opens the link' : '1 done'} · esc or any other key closes, and that key is lost`
+  const c = copy ? ' · c copies' : ''
+  if (face === 'ask' && n) return `${n === 1 ? '1' : `1-${n}`} answers${c} · esc or any other key closes, and that key is lost`
+  if (face === 'do') return `${url ? '1 done · 2 opens the link' : '1 done'}${c} · esc or any other key closes, and that key is lost`
+  if (copy) return 'c copies · esc or any other key closes, and that key is lost'
   return 'esc or any key closes'
 }
 
@@ -747,12 +749,13 @@ const MODIFIER_KEYS = new Set(['shift', 'control', 'ctrl', 'alt', 'option', 'cmd
  * other key closes the card and is lost. A key held down (`held`) is ignored, so an answer is not followed by a close.
  * Returns {type: 'answer', index} | {type: 'done'} | {type: 'link'} | {type: 'close'} | {type: 'ignore'}.
  */
-export function cardKeyAction(face, keystroke, { options = 0, url = false, held = false } = {}) {
+export function cardKeyAction(face, keystroke, { options = 0, url = false, held = false, copy = null } = {}) {
   if (held) return { type: 'ignore' }
   // The whole chord (`keystroke`), not the bare key: ctrl-1 or alt-1 is not `1`.
   const k = String(keystroke ?? '').toLowerCase()
   if (MODIFIER_KEYS.has(k)) return { type: 'ignore' }
   if (k === 'escape') return { type: 'close' }
+  if (copy) return { type: 'copy', chord: copy }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
   if (face === 'ask' && n && n <= options) return { type: 'answer', index: n - 1 }
   if (face === 'do' && n === 1) return { type: 'done' }

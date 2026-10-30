@@ -189,6 +189,7 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
     pos,
     waitingOn: waitingOn(board, key),
     why: whyText(need, fileText),
+    pinText: whySource(need) === 'text' ? whyText(need) : '',
     whyFile: whyFile(board, need),
     source: [need?.from, { excerpt: 'excerpt', file: 'RESULT.md' }[whySource(need)], ageText(need?.at, now)].filter(Boolean).join(' · '),
     refs: sheetRefs(board, need),
@@ -233,12 +234,13 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
  * page, `1`-`3` press that option when there is one (`options`); anything else is left alone, so the sheet takes
  * nothing it has no use for. A held key is ignored. Returns {type: 'close' | 'prev' | 'next' | 'option', index?} or {type: 'ignore'}.
  */
-export function sheetKeyAction(keystroke, { options = 0, held = false } = {}) {
+export function sheetKeyAction(keystroke, { options = 0, held = false, copy = null } = {}) {
   if (held) return { type: 'ignore' }
   const k = String(keystroke ?? '').toLowerCase()
   if (k === 'escape') return { type: 'close' }
   if (k === 'left') return { type: 'prev' }
   if (k === 'right') return { type: 'next' }
+  if (copy) return { type: 'copy', chord: copy }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
   if (n && n <= options) return { type: 'option', index: n - 1 }
   return { type: 'ignore' }
@@ -270,9 +272,15 @@ export function sheetMore(view, size) {
 }
 
 /** The line under the sheet: which keys do what, and first of all (it may be cut) that there is more to scroll to. */
-export function sheetHint({ options = 0, paged = false, more = false } = {}) {
+export function sheetHint({ options = 0, paged = false, more = false, copy = false } = {}) {
   const n = Math.min(Math.max(Number(options) || 0, 0), 3)
-  return [more ? 'scroll for more' : '', n ? `${n === 1 ? '1' : `1-${n}`} choose` : '', paged ? '← → page' : '', 'esc closes']
+  return [
+    more ? 'scroll for more' : '',
+    n ? `${n === 1 ? '1' : `1-${n}`} choose` : '',
+    paged ? '← → page' : '',
+    copy ? 'c copies' : '',
+    'esc closes',
+  ]
     .filter(Boolean)
     .join(' · ')
 }
