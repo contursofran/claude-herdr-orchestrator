@@ -4,7 +4,7 @@ import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
-import { HEARTBEAT_MS, drawnKey, resolveBoard } from './model.js'
+import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, resolveBoard } from './model.js'
 import { pinbar, pinsView } from './pinbar.js'
 import { makePopupState, popupView, releasePopup, takeKeyboard } from './popup.js'
 import { PinCtl } from './pinctl.js'
@@ -13,8 +13,8 @@ import { StripState, strip } from './strip.js'
 import { readVersion, versionView } from './version.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
-// Role `agents` is the agents list (agents.js), which keeps state of its own. Roles still to come (board,
-// sheet, pins) draw nothing. Each role takes what it needs from the same bag.
+// Role `agents` is the agents list (agents.js), which keeps state of its own; `version`, `pins` and `board` have their own
+// branches here. Each of the roles below takes what it needs from the same bag.
 const roles = {
   pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
   strip: (board, x) => strip(board, x.strip),
@@ -47,6 +47,7 @@ export default class HerdrAgents extends View {
       // `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
       this.keys = takeKeyboard(cx)
+      this.watchAges(cx)
       return
     }
     if (props()?.role === 'board') {
@@ -81,11 +82,39 @@ export default class HerdrAgents extends View {
     if (pinbarCopy) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
+    if (props()?.role !== 'strip') this.watchAges(cx) // the strip draws no ages
+  }
+
+  /** Ages on screen move with the clock, not with a board write. A look at the time: no process, no read, and a redraw only
+   *  when one would read differently. The agents list has its own timer. */
+  watchAges(cx) {
+    this.ages = new AgeClock()
+    cx.timer.every(AGE_TICK_MS, cx => {
+      if (this.ages.moved(this.agedTimes(), Date.now())) cx.notify()
+    })
+  }
+
+  agedTimes() {
+    const role = props()?.role
+    return agedTimes(role, {
+      boards: this.boards.list(),
+      open: role === 'card' ? shared('hrd.open') : role === 'sheet' ? shared('hrd.sheet') : null,
+      pinAt: this.pin?.shownAt,
+      pins: role === 'pins' ? props() : null,
+      gone: this.gone,
+    })
+  }
+
+  /** What was just drawn is what the next tick compares with. */
+  drewAges(el) {
+    this.ages?.drawn(this.agedTimes(), Date.now())
+    return el
   }
 
   /** Whether what this copy draws from the boards changed since it last asked. */
   drawnChanged() {
-    const key = drawnKey(props()?.role, this.boards.list(), props()?.session)
+    const role = props()?.role
+    const key = drawnKey(role, this.boards.list(), props()?.session, role === 'sheet' ? shared('hrd.sheet') : null)
     if (key === this.drawn) return false
     this.drawn = key
     return true
@@ -109,7 +138,7 @@ export default class HerdrAgents extends View {
   render(cx) {
     if (props()?.role === 'version') return versionView(this.version)
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
-    if (props()?.role === 'pins') return pinsView(this.gone, this.keys)
+    if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.keys))
     if (props()?.role === 'board')
       return popupView(
         this.boards.list().find(b => b.session === props().session),
@@ -121,12 +150,14 @@ export default class HerdrAgents extends View {
     const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
     this.last = found.pick
     if (this.part) this.part.board = found.board
-    return draw(found.board, {
-      pin: this.pin,
-      card: this.card,
-      sheet: this.sheet,
-      cx,
-      strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
-    })
+    return this.drewAges(
+      draw(found.board, {
+        pin: this.pin,
+        card: this.card,
+        sheet: this.sheet,
+        cx,
+        strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
+      }),
+    )
   }
 }

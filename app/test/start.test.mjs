@@ -82,6 +82,7 @@ registerHooks({
   },
 })
 
+const { AGE_TICK_MS } = await import('../mods/herdr-agents/model.js')
 const { default: HerdrAgents } = await import('../mods/herdr-agents/main.js')
 const { openBoardPopup } = await import('../mods/herdr-agents/strip.js')
 
@@ -220,4 +221,80 @@ test('a version copy with a missing or bad file draws no text and does not redra
 test('before the file is read the version copy draws no text', () => {
   state.props = { role: 'version' }
   assert.deepEqual(new HerdrAgents().render().kids, [])
+})
+
+// The timers a copy starts, by interval; `tick` runs its age timer with this copy's own cx.
+function startTimed(props) {
+  state.props = props
+  const every = {}
+  const counts = { notify: 0 }
+  const own = {
+    notify: () => counts.notify++,
+    spawn() {},
+    focus_handle: () => ({}),
+    timer: { every: (ms, f) => (every[ms] = f), after() {} },
+  }
+  const copy = new HerdrAgents()
+  copy.init(state.props, own)
+  return { copy, counts, every, tick: () => every[AGE_TICK_MS](own) }
+}
+
+test('only the copies that draw ages and have no timer for them start the age timer', () => {
+  globalThis.localStorage = { getItem: () => null, setItem() {} }
+  for (const role of ['pinbar', 'card', 'sheet', 'pins']) assert.ok(startTimed({ role, list: [] }).every[AGE_TICK_MS], role)
+  for (const role of ['strip', 'board', 'agents', 'version'])
+    assert.equal(startTimed({ role, session: 's' }).every[AGE_TICK_MS], undefined, role)
+})
+
+test('a pins copy on screen redraws when an age moves with the clock, and not within the minute', t => {
+  let clock = 1_000_000_000 + 2 * 60_000
+  t.mock.method(Date, 'now', () => clock)
+  const { copy, counts, tick } = startTimed({ role: 'pins', view: 'list', width: 100, height: 100, list: [{ id: 'a', at: 1_000_000_000 }] })
+  copy.render()
+  clock += 30_000
+  tick()
+  assert.equal(counts.notify, 0)
+  clock += 30_000
+  tick()
+  assert.equal(counts.notify, 1)
+})
+
+test('a closed card or sheet asks for no redraw as the clock moves', t => {
+  let clock = 1_000_000_000
+  t.mock.method(Date, 'now', () => clock)
+  for (const role of ['card', 'sheet']) {
+    const { counts, tick } = startTimed({ role })
+    clock += 10 * 60_000
+    tick()
+    assert.equal(counts.notify, 0, role)
+  }
+})
+
+test('an open card, an open sheet and the pin bar redraw when the age they show moves, and not within the minute', t => {
+  const T0 = 1_000_000_000
+  let clock = T0 + 2 * 60_000
+  t.mock.method(Date, 'now', () => clock)
+  const need = { key: 'D1', kind: 'ask', isOpen: true, at: T0 }
+  const pin = { key: 'K1', kind: 'know', isOpen: true, at: T0, title: 'p', text: 'p' }
+  const board = { session: 's', needs: [need, pin] }
+  const copies = {
+    card: startTimed({ role: 'card' }),
+    sheet: startTimed({ role: 'sheet' }),
+    pinbar: startTimed({ role: 'pinbar' }),
+  }
+  state.store['hrd.open'] = { session: 's', key: 'D1' }
+  state.store['hrd.sheet'] = { session: 's', key: 'D1' }
+  for (const { copy } of Object.values(copies)) copy.boards.files = { s: board }
+  copies.pinbar.copy.pin.ui(board, { notify() {}, timer: { after() {} }, spawn() {} })
+  for (const [role, { counts, tick, copy }] of Object.entries(copies)) {
+    state.props = { role } // props() answers for one copy at a time here
+    copy.ages.drawn(copy.agedTimes(), clock)
+    clock += 30_000
+    tick()
+    assert.equal(counts.notify, 0, `${role} within the minute`)
+    clock += 30_000
+    tick()
+    assert.equal(counts.notify, 1, `${role} past the minute`)
+    clock -= 60_000
+  }
 })

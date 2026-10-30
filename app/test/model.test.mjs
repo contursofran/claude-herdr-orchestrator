@@ -1069,7 +1069,7 @@ test('drawnKey: each copy changes only with what it draws', async () => {
     needs: [],
   }
   const other = { ...base, session: 'o' }
-  const key = (role, b, session) => drawnKey(role, b, session)
+  const key = (role, b, session) => drawnKey(role, b, session, role === 'sheet' ? { session: 's' } : null)
   for (const role of ['agents', 'board', 'sheet', 'pinbar', 'strip', 'card']) {
     assert.equal(key(role, [{ ...base, at: 2 }], 's'), key(role, [base], 's'), `${role}: the time of a write draws nothing`)
   }
@@ -1095,4 +1095,50 @@ test('drawnKey: each copy changes only with what it draws', async () => {
   const coord = { ...base, coordinator: { terminal: 'x' } }
   assert.notEqual(key('agents', [coord], 's'), key('agents', [base], 's'))
   assert.notEqual(key('agents', [base, other], 's'), key('agents', [base], 's'), 'a board gone or new')
+  // A closed sheet draws nothing, so nothing on a board redraws it.
+  assert.equal(drawnKey('sheet', [minute], 's', null), drawnKey('sheet', [base], 's', null))
+})
+
+const MIN = 60_000
+const T0 = 1_000_000_000
+
+test('AgeClock: the clock past a minute asks for a redraw, within a minute it does not, and nothing to age never does', async () => {
+  const { AgeClock } = await import('../mods/herdr-agents/model.js')
+  const ages = new AgeClock()
+  ages.drawn([T0], T0 + 2 * MIN)
+  assert.equal(ages.moved([T0], T0 + 2 * MIN + 30_000), false, 'still 2m')
+  assert.equal(ages.moved([T0], T0 + 3 * MIN), true, 'now 3m')
+  assert.equal(ages.moved([T0], T0 + 3 * MIN + 1000), false, 'asked once for 3m')
+  // Past an hour the text moves once an hour.
+  ages.drawn([T0], T0 + 61 * MIN)
+  assert.equal(ages.moved([T0], T0 + 62 * MIN), false)
+  const none = new AgeClock()
+  none.drawn([], T0)
+  assert.equal(none.moved([], T0 + 90 * MIN), false)
+})
+
+test('agedTimes: the ages each copy has on screen', async () => {
+  const { agedTimes } = await import('../mods/herdr-agents/model.js')
+  const board = {
+    session: 's',
+    needs: [
+      { key: 'D1', kind: 'ask', isOpen: true, at: 7 },
+      { key: 'D2', kind: 'ask', isOpen: false, at: 8 },
+    ],
+  }
+  const boards = [board]
+  for (const role of ['card', 'sheet']) {
+    assert.deepEqual(agedTimes(role, { boards, open: { session: 's', key: 'D1' } }), [7], role)
+    assert.deepEqual(agedTimes(role, { boards, open: null }), [], `${role} closed`)
+    assert.deepEqual(agedTimes(role, { boards, open: { session: 's', key: 'D2' } }), [], `${role} on an answered item`)
+    assert.deepEqual(agedTimes(role, { boards, open: { session: 'x', key: 'D1' } }), [], `${role} on a board that ended`)
+  }
+  assert.deepEqual(agedTimes('pinbar', { pinAt: 9 }), [9])
+  assert.deepEqual(agedTimes('pinbar', { pinAt: null }), [])
+  const list = [{ id: 'a', at: 1 }, { id: 'b', at: 2 }, { id: 'c' }]
+  assert.deepEqual(agedTimes('pins', { pins: { list } }), [1, 2])
+  assert.deepEqual(agedTimes('pins', { pins: { list, view: 'panel', id: 'b' } }), [2], 'the drop panel shows one pin')
+  assert.deepEqual(agedTimes('pins', { pins: { list }, gone: new Set(['a']) }), [2], 'a pin marked done is not drawn')
+  for (const role of ['strip', 'board', 'agents', 'version'])
+    assert.deepEqual(agedTimes(role, { boards, pinAt: 9, open: { session: 's', key: 'D1' } }), [], role)
 })

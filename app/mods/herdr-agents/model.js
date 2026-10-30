@@ -47,9 +47,9 @@ export function applyFile(boards, id, text) {
 /** What one copy of the mod draws from the boards, as text: a board change that leaves this the same needs no redraw, and every
  *  redraw of a mod redraws the whole window (#151). `at` is left out everywhere: it says only that the file was written.
  *  The agents list draws coordinators and parked workers; the pop-up its own board; the sheet task rows too (the tasks waiting on
- *  an item). The pin bar, strip and card draw no task rows, but the strip sizes the pop-up from how many there are, so the rows'
+ *  an item), only while open (`open`, its hrd.sheet). The pin bar, strip and card draw no task rows, but the strip sizes the pop-up from how many there are, so the rows'
  *  keys count and their text (a minute clock) does not. */
-export function drawnKey(role, boards, session) {
+export function drawnKey(role, boards, session, open = null) {
   const list = boards ?? []
   if (role === 'agents')
     return JSON.stringify(
@@ -59,7 +59,7 @@ export function drawnKey(role, boards, session) {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
   }
-  if (role === 'sheet') return JSON.stringify(list.map(({ at: _at, ...b }) => b))
+  if (role === 'sheet') return open ? JSON.stringify(list.map(({ at: _at, ...b }) => b)) : ''
   return JSON.stringify(list.map(({ at: _at, tasks, ...b }) => ({ ...b, rows: (tasks ?? []).map(t => [t?.key, t?.joined]) })))
 }
 
@@ -283,6 +283,43 @@ export function ageText(at, now) {
   if (s < 3600) return `${Math.floor(s / 60)}m`
   if (s < 86400) return `${Math.floor(s / 3600)}h`
   return `${Math.floor(s / 86400)}d`
+}
+
+/** How often a copy that draws ages looks at them. */
+export const AGE_TICK_MS = 60_000
+
+/** The times behind the ages a copy has on screen; [] when it shows none (a closed card or sheet, no pin, other roles).
+ *   boards  every board read       open  hrd.open or hrd.sheet, for the card and the sheet
+ *   pinAt   the pin bar's current pin's time       pins  props() of a pins copy       gone  the pins it has hidden */
+export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set() } = {}) {
+  const known = at => (at ? [at] : [])
+  if (role === 'pinbar') return known(pinAt)
+  if (role === 'pins') {
+    const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
+    return (pins?.view === 'panel' ? list.filter(p => p.id === pins.id) : list).flatMap(p => known(p.at))
+  }
+  if ((role === 'card' || role === 'sheet') && open) {
+    const board = boards.find(b => b.session === open.session)
+    return known(board && openNeeds(board).find(n => n.key === open.key)?.at)
+  }
+  return []
+}
+
+/** Asks for a redraw only when an age on screen would read differently: `drawn` after each draw, `moved` on each tick. */
+export class AgeClock {
+  constructor() {
+    this.key = ''
+  }
+
+  drawn(times, now) {
+    this.key = times.map(at => ageText(at, now)).join()
+  }
+
+  moved(times, now) {
+    const before = this.key
+    this.drawn(times, now)
+    return this.key !== before
+  }
 }
 
 /** The read marks without entries of sessions that have no board; the same object when nothing goes. */
