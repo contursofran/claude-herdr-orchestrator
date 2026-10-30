@@ -1,5 +1,5 @@
 // Makes layouts/coordinator.json from layouts/main.json: the same window with two always-present rows,
-// the pin bar under the tabs and the strip under the work area. Written only if absent, and never switched to
+// the pin bar under the tabs and the strip under the work area, and the answer card floating over the terminal. Written only if absent, and never switched to
 // (layout.clone would switch the owner's window).
 //
 //   node app/layout.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
@@ -17,9 +17,14 @@ const block = (id, px, role) => ({
   content: { mod: 'herdr-agents', props: { role } },
 })
 
-/** The answer card: a panel row between the work area and the strip, hidden until the owner opens it (it then resizes the
- *  terminal by its height, and only then). The height is set by `layout.resize` on each open. */
-const cardBlock = () => ({ ...block('hrd-card', 120, 'card'), hidden: true })
+/** The answer card: a floating block over the `main` block, at the bottom edge, centred. Herdr draws its frame and the
+ *  mod draws nothing while no card is open, so the terminal's size never changes. */
+const cardBlock = () => ({
+  id: 'hrd-card',
+  content: { mod: 'herdr-agents', props: { role: 'card' } },
+  edge: 'bottom',
+  align: 'center',
+})
 
 const findNode = (node, id) => {
   if (node?.id === id) return node
@@ -30,16 +35,33 @@ const findNode = (node, id) => {
   return null
 }
 
-/** Adds the card block to the `work` column of `layout`, right before the strip (else after `work-body`), in place.
- *  true if it added it; false when it is there already or the column has no place for it. Nothing else is touched. */
+/** Removes the old hidden `hrd-card` row (the panel of S5) from whichever node holds it, in place. true if it was there. */
+function removeCardRow(node) {
+  const kids = node?.children
+  if (!Array.isArray(kids)) return false
+  const at = kids.findIndex(c => c?.id === 'hrd-card')
+  if (at >= 0) {
+    kids.splice(at, 1)
+    return true
+  }
+  return kids.some(removeCardRow)
+}
+
+/** Whether any node already floats an `hrd-card` (the owner may have dragged it: its saved spot stays as it is). */
+function hasFloatingCard(node) {
+  if ((node?.floating ?? []).some(f => f?.id === 'hrd-card')) return true
+  return (node?.children ?? []).some(hasFloatingCard)
+}
+
+/** Brings the answer card up to date in `layout`, in place: the old hidden row goes, and a floating `hrd-card` is added
+ *  to the `main` block unless one floats already (that one is left alone, spot and all). true if anything changed;
+ *  nothing is added when there is no `main` block. */
 export function addCard(layout) {
-  if (findNode(layout, 'hrd-card')) return false
-  const kids = findNode(layout, 'work')?.children
-  if (!kids) return false
-  let at = kids.findIndex(c => c.id === 'hrd-strip')
-  if (at < 0) at = kids.findIndex(c => c.id === 'work-body') + 1
-  if (at <= 0) return false
-  kids.splice(at, 0, cardBlock())
+  let changed = removeCardRow(layout)
+  if (hasFloatingCard(layout)) return changed
+  const main = findNode(layout, 'main')
+  if (!main) return changed
+  main.floating = [...(main.floating ?? []), cardBlock()]
   return true
 }
 

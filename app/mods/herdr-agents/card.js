@@ -7,7 +7,10 @@ import { answerAction, cardFor, cardHint, cardKeyAction, doneAction, nextItem } 
 import { color, font, icon, card as look } from './tokens.js'
 
 /** The card's state for this copy (main.js, role `card`). */
-export const makeCardState = cx => new CardState({ send, notify, handle: cx.focus_handle(), run, open: shared('hrd.open') })
+export const makeCardState = cx => new CardState({ send, notify, handle: cx.focus_handle() })
+
+/** The card's width in px: it floats, so it sizes to its content and needs a fixed width. */
+export const CARD_W = 560
 
 const ghost = (id, label, onClick) =>
   div()
@@ -26,7 +29,7 @@ const ghost = (id, label, onClick) =>
 function keyButton(id, hint, label, rec, onClick) {
   return div()
     .id(id)
-    .flex_none()
+    .min_w_0()
     .flex()
     .items_center()
     .gap(8)
@@ -58,7 +61,7 @@ function keyButton(id, hint, label, rec, onClick) {
           .child(hint),
       ),
     )
-    .child(label)
+    .child(div().min_w_0().child(label))
 }
 
 /** A plain button without a key hint. */
@@ -109,18 +112,20 @@ function header(view, onClose) {
 }
 
 /**
- * The card's panel: the one open item of `open` (shared "hrd.open"), on its board. It draws nothing until opened.
+ * The floating card: the one open item of `open` (shared "hrd.open"), on its board. It draws nothing until opened (Herdr
+ * hides a floating block that renders nothing) and nothing it does touches the terminal's size. Herdr draws the frame
+ * (background, border, corners, shadow), so only the content is drawn here, at a fixed width.
  *   ctl    a CardState
  *   boards all boards (the open item's board is found by session, so a change of focus does not blank it)
- * The owner's click or key is the only thing that opens or closes it (it resizes the terminal), and it takes the keyboard.
+ * The owner's click or key is the only thing that opens or closes it, and it takes the keyboard.
  */
 export function card(boards, ctl, cx) {
-  const root = div().id('card').size_full().min_h_0().flex().flex_col().bg(color.bar).p(0).text_size(font.size)
+  const root = div().id('card').w(CARD_W).flex().flex_col().text_size(font.size)
   const open = shared('hrd.open')
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
     ctl.token = null
-    return root
+    return div()
   }
   const board = (boards ?? []).find(b => b.session === open.session)
 
@@ -140,8 +145,6 @@ export function card(boards, ctl, cx) {
     closeCard()
     cx.notify()
   }
-  // The panel keeps its height: nothing resizes the terminal but the owner's click or key, and a failed answer
-  // comes back to the options, which need the room they had.
   const schedule = (cx, action) => ctl.schedule(cx, board.session, action)
   const answer = (i, cx) => schedule(cx, answerAction(key, view.options[i]))
   const done = (_e, cx) => schedule(cx, doneAction(key))
@@ -150,13 +153,13 @@ export function card(boards, ctl, cx) {
   }
   const next = (_e, cx) => {
     const item = nextItem(board, key, ctl.outbox.hidden())
-    if (item) openCard(board, item, ctl.outbox, terminals())
+    if (item) openCard(board, item)
     cx.notify()
   }
 
   const body = div().flex().flex_col().gap(12)
   if (view.face === 'ask') {
-    body.child(div().text_color(color.soft).max_h(40).overflow_hidden().child(view.text))
+    body.child(div().text_color(color.soft).child(view.text))
     body.child(
       div()
         .flex()
@@ -181,7 +184,7 @@ export function card(boards, ctl, cx) {
         ),
     )
   } else if (view.face === 'do') {
-    body.child(div().text_color(color.soft).max_h(40).overflow_hidden().child(view.text))
+    body.child(div().text_color(color.soft).child(view.text))
     body.child(
       div()
         .flex()
@@ -250,18 +253,11 @@ export function card(boards, ctl, cx) {
         else if (act.type === 'link') link()
         else close(null, cx)
       })
-      .flex_1()
-      .min_h_0()
-      .mx(0)
       .flex()
       .flex_col()
       .gap(12)
       .px(16)
       .py(14)
-      .bg(look.bg)
-      .border(1)
-      .border_color(look.border)
-      .rounded(10)
       .child(header(view, close))
       .child(body)
       .child(

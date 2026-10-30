@@ -539,25 +539,10 @@ export function nextPick(current, session, key, toggle) {
   return { session, key }
 }
 
-// --- S5: the answer card, a hidden panel row below the terminal ---
-
-/** The card block's id in the layout. */
-export const CARD_ID = 'hrd-card'
+// --- S5: the answer card, a floating block over the terminal ---
 
 /** The `answer` action file body for one decision. */
 export const answerAction = (key, answer) => ({ action: 'answer', key, answer })
-
-/** Panel height in px for a face (`ask`, `do`, `resolved`, `blocked`) and an option count: border 2 + padding 28, the
- *  header 20, a gap of 12 before each row, a question or note 40 (two lines), a row of buttons 28 with 6 between, and
- *  the key hint under them (a gap of 12 and a line of 16). */
-export function cardHeight(face, options = 0) {
-  const base = 30 + 20 + 12 + 16
-  const rows = Math.min(Math.max(Number(options) || 0, 1), 6)
-  if (face === 'ask') return base + 12 + 40 + 12 + rows * 28 + (rows - 1) * 6
-  if (face === 'do') return base + 12 + 40 + 12 + 28
-  if (face === 'blocked') return base + 12 + 20 + 12 + 28
-  return base + 12 + 28 // resolved
-}
 
 /**
  * What the card draws for item `key` of `board`, pure. `queue` are actions waiting out their undo time, `sent` the ones
@@ -669,9 +654,3 @@ export function cardKeyAction(face, keystroke, { options = 0, url = false, held 
  * `seq` is a counter bumped on every open, so the card takes the keyboard on each open, even of the same item.
  */
 export const openState = (current, session, key, back, seq = 0) => ({ session, key, back: current?.back ?? back ?? null, seq })
-
-/** The height the panel needs to show `key` of `board` right now (`now` as for cardView: an old sent answer is not counted). */
-export function openHeight(board, key, ctx) {
-  const view = cardView(board, key, ctx)
-  return cardHeight(view?.face, view?.options?.length)
-}

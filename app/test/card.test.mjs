@@ -6,14 +6,12 @@ import {
   UNDO_MS,
   answerAction,
   cardFor,
-  cardHeight,
   cardHint,
   cardKeyAction,
   cardView,
   doneAction,
   nextItem,
   hiddenKeys,
-  openHeight,
   openState,
   readKey,
 } from '../mods/herdr-agents/model.js'
@@ -24,16 +22,6 @@ const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', imp
 
 test('answerAction is the file the plugin takes', () => {
   assert.deepEqual(answerAction('D7', 'Cursor'), { action: 'answer', key: 'D7', answer: 'Cursor' })
-})
-
-test('cardHeight grows with the options of a decision, and each face has its own', () => {
-  assert.equal(cardHeight('ask', 2), 78 + 12 + 40 + 12 + 2 * 28 + 6)
-  assert.equal(cardHeight('ask', 3), cardHeight('ask', 2) + 34)
-  assert.equal(cardHeight('ask', 0), cardHeight('ask', 1), 'at least one row')
-  assert.equal(cardHeight('ask', 99), cardHeight('ask', 6), 'at most six rows')
-  assert.equal(cardHeight('do'), 170)
-  assert.equal(cardHeight('blocked'), 150)
-  assert.equal(cardHeight('resolved'), 118)
 })
 
 test('cardView: a decision shows its options and the recommended one', () => {
@@ -205,14 +193,12 @@ test('a second action for the same item is refused while the first waits', () =>
   assert.equal(t.timers.length, 3)
 })
 
-function state({ open = { session: 's', key: 'D7' } } = {}) {
-  const t = { runs: [], notes: [], sends: [], notified: 0, now: 1000 }
+function state() {
+  const t = { notes: [], sends: [], notified: 0, now: 1000 }
   const ctl = new CardState({
     send: async (session, action, id) => t.sends.push({ session, action, id }),
     notify: n => t.notes.push(n),
     handle: {},
-    run: (name, args) => t.runs.push([name, args]),
-    open,
   })
   ctl.outbox.now = () => t.now
   const jobs = []
@@ -225,9 +211,9 @@ function state({ open = { session: 's', key: 'D7' } } = {}) {
   return { t, ctl, cx }
 }
 
-test('a failed answer returns to the options and the card never resizes the terminal on the way', async () => {
+test('a failed answer returns to the options', async () => {
   const b = board()
-  const { t, ctl, cx } = state({ open: { session: b.session, key: 'D7' } })
+  const { t, ctl, cx } = state()
   const id = ctl.schedule(cx, b.session, answerAction('D7', 'Cursor'))
   assert.equal(cardFor([b], { session: b.session, key: 'D7' }, { queue: ctl.outbox.queue }).face, 'resolved')
   t.now += UNDO_MS + 50
@@ -243,19 +229,11 @@ test('a failed answer returns to the options and the card never resizes the term
     t.notes.map(n => [n.title, n.level]),
     [['Action failed', 'error']],
   )
-  assert.deepEqual(t.runs, [], 'no layout.resize, show or hide: only the owner changes the panel')
-  ctl.undo(ctl.schedule(cx, b.session, answerAction('D8', 'Light')))
-  assert.deepEqual(t.runs, [], 'nor does undo')
-})
-
-test('a card copy that starts with nothing open hides a panel left shown; with an item open it leaves the panel alone', () => {
-  assert.deepEqual(state({ open: null }).t.runs, [['layout.hide', { id: 'hrd-card' }]])
-  assert.deepEqual(state().t.runs, [])
 })
 
 test('every board change settles the card outbox, so a failed send shows (the parts main.js hands the boards to)', async () => {
   const b = board()
-  const { t, ctl, cx } = state({ open: { session: b.session, key: 'D7' } })
+  const { t, ctl, cx } = state()
   const id = ctl.schedule(cx, b.session, answerAction('D7', 'Cursor'))
   t.now += UNDO_MS + 50
   ctl.outbox.flush(cx)
@@ -274,12 +252,30 @@ test('every board change settles the card outbox, so a failed send shows (the pa
   assert.deepEqual(calls.at(-1), ['pin', 1])
 })
 
-test('openHeight does not count an old sent answer, so `next` sizes the panel for the options it draws', () => {
-  const b = board()
-  const entry = { id: 'a1', session: b.session, key: 'D7', action: answerAction('D7', 'Cursor'), at: 1000 }
-  const ask = cardHeight('ask', 2)
-  assert.equal(openHeight(b, 'D7', { sent: [entry], now: 1000 }), cardHeight('resolved'))
-  assert.equal(openHeight(b, 'D7', { sent: [entry], now: 1000 + SENT_HIDE_MS }), ask)
+test("D25's whole text and both options reach the card, and so do six long options with their impacts", () => {
+  const d25 = JSON.parse(readFileSync(new URL('../fixtures/d25.json', import.meta.url), 'utf8'))
+  const v = cardView(d25, 'D25', { now: 1790000000000 })
+  assert.equal(v.face, 'ask')
+  assert.match(v.text, /^The answer card is in your app\./)
+  assert.match(v.text, /leaves the terminal's size alone\.$/, 'the text is whole')
+  assert.deepEqual(v.options, ['Panel feels fine', 'Resize bothers me, float it'])
+  const long = cardView(d25, 'D26', { now: 1790000000000 })
+  assert.equal(long.options.length, 6)
+  assert.equal(long.impacts[0].length > 60, true)
+})
+
+test('the card never resizes, shows or hides a layout node: no layout.* call, no height rule', () => {
+  for (const f of ['card.js', 'cardctl.js', 'cardstate.js', 'model.js']) {
+    const src = readFileSync(new URL(`../mods/herdr-agents/${f}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(src, /layout\.(resize|show|hide)|cardHeight|openHeight/, f)
+  }
+})
+
+test('the card draws nothing when closed and a fixed-width root, no size_full, when open', () => {
+  const src = readFileSync(new URL('../mods/herdr-agents/card.js', import.meta.url), 'utf8')
+  assert.match(src, /if \(!view\) \{\n\s+ctl\.token = null\n\s+return div\(\)\n/)
+  assert.match(src, /\.id\('card'\)\.w\(CARD_W\)/)
+  assert.doesNotMatch(src, /size_full/)
 })
 
 test('every open bumps the counter in the state, so reopening the same item is a new open', () => {

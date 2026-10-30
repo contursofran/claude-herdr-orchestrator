@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "session": "0267bd20-d4c6-4d5e-8597-d593a18facea",
+  "cwd": "/work/shop",
+  "at": 1790000000000,
+  "coordinator": {
+    "terminal": "t4"
+  },
+  "stageNames": ["plan", "build", "rev", "CI", "you"],
+  "summary": {
+    "busy": 2,
+    "left": 4,
+    "target": 3,
+    "wrapUp": false,
+    "needs": 4,
+    "context": {
+      "tokens": 84000,
+      "limit": 200000
+    }
+  },
+  "workers": [
+    {
+      "name": "w-api",
+      "profile": "builder",
+      "state": "working",
+      "startedAt": 1789999100000,
+      "endedAt": null,
+      "note": null,
+      "repo": "acme/shop"
+    },
+    {
+      "name": "w-ui",
+      "profile": "builder",
+      "state": "working",
+      "startedAt": 1789999200000,
+      "endedAt": null,
+      "note": null,
+      "repo": "acme/shop"
+    },
+    {
+      "name": "w-ci",
+      "profile": "builder",
+      "state": "waiting",
+      "startedAt": 1789999400000,
+      "endedAt": null,
+      "note": null,
+      "repo": "acme/shop"
+    }
+  ],
+  "tasks": [
+    {
+      "key": "k1",
+      "label": "#601",
+      "title": "Task 1",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "done", "ask", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for your answer on D7",
+      "item": "D7",
+      "tab": "w-api",
+      "workers": ["w-api"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k2",
+      "label": "#602",
+      "title": "Task 2",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "run", "ask", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for your answer on D8",
+      "item": "D8",
+      "tab": "w-ui",
+      "workers": ["w-ui"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k3",
+      "label": "#603",
+      "title": "Task 3",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "done", "todo", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for you to finish T12",
+      "item": "T12",
+      "tab": "w-docs",
+      "workers": ["w-docs"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k4",
+      "label": "#604",
+      "title": "Task 4",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "todo", "none", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for you to finish T13",
+      "item": "T13",
+      "tab": null,
+      "workers": [],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k5",
+      "label": "#605",
+      "title": "Task 5",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "block", "none", "none", "none"],
+      "who": {
+        "text": "w-stuck",
+        "kind": "text"
+      },
+      "now": "w-stuck is stuck at a prompt",
+      "item": null,
+      "tab": "w-stuck",
+      "workers": ["w-stuck"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k6",
+      "label": "#606",
+      "title": "Task 6",
+      "repo": "acme/shop",
+      "pr": 612,
+      "url": "https://github.com/acme/shop/pull/612",
+      "stages": ["done", "done", "done", "wait", "none"],
+      "who": {
+        "text": "w-ci",
+        "kind": "dim"
+      },
+      "now": "Waiting for CI",
+      "item": null,
+      "tab": "w-ci",
+      "workers": ["w-ci"],
+      "isFinished": false,
+      "isMerged": false
+    }
+  ],
+  "needs": [
+    {
+      "key": "D25",
+      "kind": "ask",
+      "text": "The answer card is in your app. To try it, click this question's tab in the strip under the terminal and answer with key 1 or 2. Does the panel opening below the terminal feel OK? The terminal gets shorter while it's open. The other option is a floating card that covers the prompt and leaves the terminal's size alone.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Card feel",
+      "options": ["Panel feels fine", "Resize bothers me, float it"],
+      "recommended": 0
+    },
+    {
+      "key": "D26",
+      "kind": "ask",
+      "text": "The answer card is in your app. To try it, click this question's tab in the strip under the terminal and answer with key 1 or 2. Does the panel opening below the terminal feel OK? The terminal gets shorter while it's open. The other option is a floating card that covers the prompt and leaves the terminal's size alone. The answer card is in your app. To try it, click this question's tab in the strip under the terminal and answer with key 1 or 2. Does the panel opening below the terminal feel OK? The terminal gets shorter while it's open. The other option is a floating card that covers the prompt and leaves the terminal's size alone.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Longest text",
+      "options": [
+        "Panel feels fine and I would like to keep it exactly as it is today please",
+        "Resize bothers me, float it over the terminal and never touch its size again",
+        "Something quite different: make it a drawer on the right edge instead",
+        "Four",
+        "Five",
+        "Six with a very very long label that goes on and on and on and on"
+      ],
+      "recommended": 0,
+      "impacts": [
+        "Fewer moves. The terminal stays short while the card is open and that goes on for a long time.",
+        "Covers the prompt while open",
+        "a lot of work to redo the whole thing in a different way and to test it",
+        "",
+        "x",
+        "y"
+      ]
+    }
+  ],
+  "status": "4 waiting for you",
+  "actions": []
+}
