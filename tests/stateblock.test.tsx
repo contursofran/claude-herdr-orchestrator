@@ -1,8 +1,8 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import type { Job } from '../types'
 import { AUTO_END, AUTO_START, RECENT_REPORTS } from '../hooks/defaults'
 import { mergeBlock, renderBlock } from '../hooks/stateblock'
-import { spawn, start, stopAll } from './harness'
+import { spawn, start, stopAll, test } from './harness'
 
 // The state file's Workers block (stateblock.ts): the mod writes it from the coordinator's tick.
 
