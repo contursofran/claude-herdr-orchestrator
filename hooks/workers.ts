@@ -102,7 +102,16 @@ export function reportReminder(job: Job) {
 export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false, force = false) {
   const token = crypto.randomUUID().slice(0, 8)
   seenReport.delete(job.name)
-  const next: Job = { ...job, token, status: 'running', endedAt: undefined, tail: undefined }
+  // The last turn's report is not this turn's: it goes with the status it set.
+  const next: Job = {
+    ...job,
+    token,
+    status: 'running',
+    endedAt: undefined,
+    tail: undefined,
+    reportStatus: undefined,
+    reportFile: undefined,
+  }
   await saveJob($, next)
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
@@ -962,7 +971,7 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
       return { result: `Stopped ${e.worker} while it was starting.${await belowTarget($)}` }
     }
   }
-  await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now(), tail: undefined })
+  await patchJob($, job.name, { status: 'reported', reportStatus: 'stopped', endedAt: await $.clock.now(), tail: undefined })
   try {
     await closeTerminal($, job.name)
   } catch (err) {

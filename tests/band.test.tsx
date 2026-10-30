@@ -51,13 +51,13 @@ test('workers show one per row, two per line, the one that needs the person firs
   await clock.advance(3000)
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  // A blocked worker is reported at once, so it no longer counts as running; the header names the roles.
-  expect((await ui.find({ type: 'Text', text: /workers/ }))?.text).toBe('2/4 workers: 2 reviewers')
+  // A blocked worker has reported, but it waits for someone, so it still counts; the header names the roles.
+  expect((await ui.find({ type: 'Text', text: /workers/ }))?.text).toBe('3/4 workers: 3 reviewers')
   for (const name of names) expect(await row(ui, name)).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: /Reported/ }))?.text).toMatch(/^● w-stuck +reviewer +\S+ +Reported$/)
-  // Two lines: the working one first, then the one that is done, on the left; the reported one on the right.
-  expect((await ui.find({ key: 'col0' }))?.text).toMatch(/^● w-busy .*Working● w-done .*Done · report pending$/)
-  expect((await ui.find({ key: 'col1' }))?.text).toMatch(/^● w-stuck .*Reported$/)
+  expect((await ui.find({ type: 'Text', text: /Blocked/ }))?.text).toMatch(/^● w-stuck +reviewer +\S+ +Blocked · answer it in its tab$/)
+  // Two lines: the blocked one and the working one first, then the one that is done.
+  expect((await ui.find({ key: 'col0' }))?.text).toMatch(/^● w-stuck .*Blocked · answer it in its tab● w-busy .*Working$/)
+  expect((await ui.find({ key: 'col1' }))?.text).toMatch(/^● w-done .*Done · report pending$/)
   // Few workers: all show, and Details has nothing more.
   expect((await ui.find({ key: 'workers' }))?.text).toBe('Details')
   await ui.unmount()
@@ -177,10 +177,10 @@ test('a status a wait or the sweep sees reaches the band row, with no hc get', a
   await emit('w-x', 'done')
   await clock.advance(3000)
   expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Done · report pending$/)
-  // Set without emit, so no wait ends on it: the sweep sees it a minute on, reports the worker blocked, and the row reads Reported.
+  // Set without emit, so no wait ends on it: the sweep sees it a minute on and reports the worker blocked: the row reads Blocked, not Reported.
   status['w-x'] = 'blocked'
   await clock.advance(60_000)
-  expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Reported$/)
+  expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Blocked · answer it in its tab$/)
   expect(calls.filter(c => c[1] === 'get')).toEqual([])
   await stopAll($, clock, ['w-x'])
 })

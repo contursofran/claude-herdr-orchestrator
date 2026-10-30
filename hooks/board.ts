@@ -1,6 +1,6 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
-import type { Board, Links, Row } from '../types'
+import type { Board, Job, Links, Row } from '../types'
 import { config, target, wrappingUp } from './config'
 import { LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { elapsed } from './format'
@@ -49,6 +49,10 @@ async function learnRepos($: EngineInterface, cwds: string[]): Promise<Links> {
   return out
 }
 
+// A worker whose last report said blocked, or that waits at a question after its report, is
+// still waiting for someone: not finished, until it is answered (a prompt makes it running) or stopped.
+const waitsAfterReport = (j: Job) => j.status === 'reported' && !j.closed && (j.tail === 'blocked' || j.reportStatus === 'blocked')
+
 // Puts each shown worker's state into the band's atom. It makes no hc calls: a running
 // worker shows the state its wait or the sweep last saw (lastStatus), and a failed sweep
 // leaves that as it was, so one error never shows a worker as gone.
@@ -58,13 +62,14 @@ export async function refresh($: EngineInterface) {
   const { byCwd } = await learnRepos($, [session.cwd, ...Object.values(await jobs($)).map(j => j.cwd)])
   const asking = new Set((await openQuestions($)).map(d => d.from))
   const shown = Object.values(await jobs($)).filter(
-    j => active(j) || asking.has(j.name) || (j.endedAt !== undefined && now - j.endedAt < LINGER_MS),
+    j => active(j) || asking.has(j.name) || waitsAfterReport(j) || (j.endedAt !== undefined && now - j.endedAt < LINGER_MS),
   )
   const rows: Row[] = []
   for (const j of shown) {
     let state = 'reported'
     if (j.status === 'starting') state = 'starting'
     if (j.status === 'running') state = lastStatus.get(j.name) ?? 'working'
+    if (waitsAfterReport(j)) state = 'blocked'
     if (j.status === 'running' && j.wait && state !== 'blocked' && state !== 'gone') state = 'waiting'
     rows.push({
       name: j.name,
