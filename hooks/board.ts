@@ -29,7 +29,7 @@ const scanned = new Set<string>()
 
 // The GitHub repo (owner/name) of each folder not seen yet, from its git remotes, and the
 // config's `repos` (short name -> owner/name): what a #123 on the band links to.
-async function learnRepos($: EngineInterface, cwds: string[]): Promise<Links> {
+async function learnRepos($: EngineInterface, cwds: string[], extra: Record<string, string>): Promise<Links> {
   const found: Record<string, string> = {}
   for (const cwd of new Set(cwds)) {
     if (!cwd || scanned.has(cwd)) continue
@@ -40,7 +40,6 @@ async function learnRepos($: EngineInterface, cwds: string[]): Promise<Links> {
       if (slug) found[cwd] = slug
     } catch {}
   }
-  const extra: Record<string, string> = (await config($)).repos ?? {}
   const held = await read($, links)
   if (Object.keys(found).length === 0 && JSON.stringify(extra) === JSON.stringify(held.extra)) return held
   let out = held
@@ -58,7 +57,9 @@ const waitsAfterReport = (j: Job) => j.status === 'reported' && !j.closed && (j.
 export async function refresh($: EngineInterface) {
   const now = await $.clock.now()
   await pingQuiet($, d => now - d.at > QUIET_MAX_MS)
-  const { byCwd } = await learnRepos($, [session.cwd, ...Object.values(await jobs($)).map(j => j.cwd)])
+  // Every tick comes here, so the settings are read once.
+  const settings = await config($)
+  const { byCwd } = await learnRepos($, [session.cwd, ...Object.values(await jobs($)).map(j => j.cwd)], settings.repos ?? {})
   const asking = new Set((await openQuestions($)).map(d => d.from))
   const shown = Object.values(await jobs($)).filter(
     j => active(j) || asking.has(j.name) || waitsAfterReport(j) || (j.endedAt !== undefined && now - j.endedAt < LINGER_MS),
@@ -83,7 +84,7 @@ export async function refresh($: EngineInterface) {
   }
   const held = await read($, board)
   if (rows.length === 0 && held.rows.length === 0) return
-  const want = await target($)
-  const wrapUp = await wrappingUp($)
+  const want = await target($, settings)
+  const wrapUp = await wrappingUp($, settings)
   await update($, board, b => ({ ...b, now, rows, target: want, wrapUp }))
 }

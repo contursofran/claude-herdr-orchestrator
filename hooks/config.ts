@@ -144,8 +144,9 @@ export async function claimState($: EngineInterface, file: unknown) {
   if (file === shared) await $.store.set(STATE_OWNER, { path: shared, session: await $.session.id() })
 }
 
-export async function target($: EngineInterface): Promise<number> {
-  const c = await config($)
+// A caller that already read the settings passes them: each read is two file checks and a parse.
+export async function target($: EngineInterface, settings?: Settings): Promise<number> {
+  const c = settings ?? (await config($))
   return typeof c.target === 'number' ? c.target : TARGET
 }
 
@@ -154,9 +155,9 @@ export async function target($: EngineInterface): Promise<number> {
 // finish. The wrap-up command turns it on for the coordinators of this session's folder
 // (kept in $.store, so every session there sees it); `wrapUp: true` in the user's
 // settings turns it on everywhere. Wrap-up off clears both.
-export async function wrappingUp($: EngineInterface): Promise<boolean> {
+export async function wrappingUp($: EngineInterface, settings?: Settings): Promise<boolean> {
   const folders = ((await $.store.get(WRAP_UP)) ?? {}) as Record<string, boolean>
-  return folders[session.cwd] === true || (await config($)).wrapUp === true
+  return folders[session.cwd] === true || (settings ?? (await config($))).wrapUp === true
 }
 
 const whole = (v: unknown, fallback: number, min: number, max: number) =>
