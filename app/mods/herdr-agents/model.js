@@ -696,6 +696,10 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
 
+/** A window length in the px a mod writes: the app draws those, and the layout's rows and sidebars, `zoom` times as big,
+ *  while `viewport_size` is not scaled. */
+export const atZoom = (px, zoom) => Number(px) / (zoom > 0 ? zoom : 1)
+
 /** The card floats over the main block, so it is sized from the window: `CARD_W` at most, and clear of the sidebars
  *  (`SIDE` px each side) when the window is narrow; at most `CARD_MAX_H_PCT`% of the window's height, the rest scrolls.
  *  `viewport` is {width, height}; without one the card keeps its full width and a modest height. */
@@ -703,9 +707,9 @@ export const CARD_W = 560
 export const CARD_MIN_W = 220
 export const CARD_SIDE = 170
 export const CARD_MAX_H_PCT = 70
-export function cardSize(viewport) {
-  const vw = Number(viewport?.width)
-  const vh = Number(viewport?.height)
+export function cardSize(viewport, zoom = 1) {
+  const vw = atZoom(viewport?.width, zoom)
+  const vh = atZoom(viewport?.height, zoom)
   const w = vw > 0 ? Math.max(CARD_MIN_W, Math.min(CARD_W, Math.floor(vw - 2 * CARD_SIDE))) : CARD_W
   const maxH = vh > 0 ? Math.floor((vh * CARD_MAX_H_PCT) / 100) : 400
   return { w, maxH }

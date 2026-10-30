@@ -43,7 +43,7 @@ function makeElement() {
 }
 
 /** What the fake `herdr` module reads and records; a test sets these before it renders. */
-export const app = { props: null, store: {}, opened: [], closed: [], viewport: null, focused: null }
+export const app = { props: null, store: {}, opened: [], closed: [], viewport: null, focused: null, settings: { zoom: 1 } }
 
 globalThis.__fakeGpui = {
   div: makeElement,
@@ -56,6 +56,7 @@ globalThis.__fakeGpui = {
     return `o${app.opened.length}`
   },
   props: () => app.props,
+  settings: () => app.settings,
   setShared: (k, v) => {
     app.store[k] = v
   },
@@ -77,6 +78,7 @@ const names = {
     'props',
     'readTextFile',
     'run',
+    'settings',
     'setShared',
     'shared',
     'terminals',

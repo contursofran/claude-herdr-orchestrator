@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { exec, notify, readTextFile, run, setShared, shared } from 'herdr'
+import { exec, notify, readTextFile, run, settings, setShared, shared } from 'herdr'
 import { send } from './board.js'
 import { CardState, clearStaleSheet } from './cardstate.js'
 import { button, faceIcon, ghost, keyButton } from './card.js'
@@ -75,7 +75,7 @@ function pager(view, board, cx) {
     .child(arrow('sheet-next', '›', pos.next))
 }
 
-function header(view, board, close, cx) {
+function header(view, board, close, cx, showMeta) {
   return div()
     .flex()
     .items_center()
@@ -83,7 +83,7 @@ function header(view, board, close, cx) {
     .child(faceIcon(view.face === 'ask' ? 'ask' : view.face === 'resolved' || view.face === 'gone' ? view.face : 'do'))
     .child(div().flex_none().font_bold().text_color(color.text).child(view.id))
     .child(div().min_w_0().truncate().font_semibold().text_color(color.text).child(view.title))
-    .when(view.meta, el => el.child(div().flex_none().text_color(look.meta).child(view.meta)))
+    .when(showMeta && view.meta, el => el.child(div().flex_none().text_color(look.meta).child(view.meta)))
     .child(div().flex_1())
     .when(view.pos.n, el => el.child(pager(view, board, cx)))
     .child(ghost('sheet-esc', 'esc', close))
@@ -92,14 +92,14 @@ function header(view, board, close, cx) {
 /**
  * The floating sheet: the open item of "hrd.sheet", with its context. It draws nothing until opened (Herdr hides a
  * floating block that renders nothing) and nothing it does touches the terminal's size. It is `size.h` tall at most
- * 470 px, shorter in a short window, so the strip and the prompt stay in view. Its two columns scroll on their own; in a
+ * 470 px, shorter in a short window, so the prompt stays in view while there is room. Its two columns scroll on their own; in a
  * narrow window everything between the header and the last row is one scrolling column, options first.
  *   ctl    a SheetState
  *   boards all boards (the open item's board is found by session, so a change of focus does not blank it)
  * Only the owner's click or key opens or closes it; it takes the keyboard when opened.
  */
 export function sheetBlock(boards, ctl, cx) {
-  const size = sheetSize(typeof window !== 'undefined' ? window.viewport_size?.() : null)
+  const size = sheetSize(typeof window !== 'undefined' ? window.viewport_size?.() : null, settings()?.zoom)
   const open = shared('hrd.sheet')
   if (!open) {
     ctl.token = null
@@ -255,6 +255,7 @@ export function sheetBlock(boards, ctl, cx) {
         }),
       ),
     )
+  const gone = view.face === 'gone'
   const right = div()
     .flex_none()
     .when(!narrow, el => el.w(420).min_h_0())
@@ -304,9 +305,10 @@ export function sheetBlock(boards, ctl, cx) {
         .gap(12)
         .px(20)
         .py(14)
-        .child(header(view, board, close, cx))
-        .when(!narrow, el => el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)))
-        .when(narrow, el =>
+        .child(header(view, board, close, cx, size.meta))
+        .when(!narrow && !gone, el => el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)))
+        .when(gone, el => el.child(waiting).child(div().flex_1()))
+        .when(narrow && !gone, el =>
           el.child(
             div()
               .id('sheet-scroll')

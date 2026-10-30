@@ -1,5 +1,5 @@
 // The context sheet's logic (S9), with no gpui-kit or herdr imports so node can test it (app/test).
-import { ageText, answerAction, doneAction, liveSent, openNeeds, stripItems } from './model.js'
+import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, stripItems } from './model.js'
 
 const firstLine = text =>
   String(text ?? '')
@@ -11,26 +11,33 @@ const text = v => (typeof v === 'string' ? v : '')
 /** Whether a mod command name means "open or close the sheet" (`herdr-agents.sheet`). */
 export const isSheetCommand = name => /(?:^|\.)sheet$/.test(String(name))
 
-/** The sheet is at most this tall, as wide as the window allows, and keeps the strip and prompt clear. */
+/** The sheet is at most this tall, as wide as the window allows, and keeps the strip and prompt clear while the window has room. */
 export const SHEET_W = 1000
 export const SHEET_MIN_W = 300
 export const SHEET_SIDE = 170
 export const SHEET_MAX_H = 470
-export const SHEET_MIN_H = 140
+export const SHEET_MIN_H = 220
+export const SHEET_LEAST_H = 100
+// Under this width the header has no room for the meta: the id, the title's start, the pager and esc stay.
+export const SHEET_META_W = 420
 // The rows around the terminal (tabs, pin bar, strip, status bar) and a prompt's worth of room that stay visible.
 const SHEET_CLEAR = 42 + 38 + 34 + 28 + 118
+// The most it can have: the app cuts a floating block off at the bottom of the main block (those rows, the block's margins
+// and the frame's, as measured at zoom 1 and 1.2). A short window gives up the prompt first, so options stay in reach.
+const SHEET_ROWS = 42 + 38 + 34 + 28 + 40
 
 /**
  * The sheet's size from the window `viewport` ({width, height}): up to SHEET_W by SHEET_MAX_H, narrower when the window
  * is (clear of the sidebars, as the card is) and shorter when it is short, so the strip and the prompt stay visible
- * and the body scrolls. Without a viewport it keeps its full size.
+ * and the body scrolls. Without a viewport it keeps its full size. All of it is in the px the app scales by `zoom`.
  */
-export function sheetSize(viewport) {
-  const vw = Number(viewport?.width)
-  const vh = Number(viewport?.height)
+export function sheetSize(viewport, zoom = 1) {
+  const vw = atZoom(viewport?.width, zoom)
+  const vh = atZoom(viewport?.height, zoom)
   const w = vw > 0 ? Math.max(SHEET_MIN_W, Math.min(SHEET_W, Math.floor(vw - 2 * SHEET_SIDE))) : SHEET_W
-  const h = vh > 0 ? Math.max(SHEET_MIN_H, Math.min(SHEET_MAX_H, Math.floor(vh - SHEET_CLEAR))) : SHEET_MAX_H
-  return { w, h, narrow: w < 760 }
+  const least = Math.max(SHEET_LEAST_H, Math.min(SHEET_MIN_H, Math.floor(vh - SHEET_ROWS)))
+  const h = vh > 0 ? Math.max(least, Math.min(SHEET_MAX_H, Math.floor(vh - SHEET_CLEAR))) : SHEET_MAX_H
+  return { w, h, narrow: w < 760, meta: w >= SHEET_META_W }
 }
 
 /** The open items the sheet pages over: every open need, in board order. */

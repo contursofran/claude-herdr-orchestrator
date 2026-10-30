@@ -22,6 +22,7 @@ const isInside = (root, id, inner) => Boolean(findId(findId(root, id), inner))
 
 beforeEach(() => {
   app.store = {}
+  app.settings = { zoom: 1 }
 })
 
 test('the sheet draws once no item is open, the normal end of answering the last one', () => {
@@ -78,4 +79,34 @@ test('opening writes shared state once, so mods redraw once', () => {
   assert.equal(writes, 1)
   assert.equal(store['hrd.sheet'].key, 'D7')
   assert.ok(store['hrd.sheet'].seq > 0, 'a new open is told from the last')
+})
+
+test('the sheet takes its size from the zoom the app draws it at', () => {
+  const b = board()
+  app.settings = { zoom: 1.2 }
+  const el = draw([b], 'D7', TALL)
+  assert.deepEqual(el.node.calls.w, [726])
+  assert.ok(findId(el, 'sheet-scroll'), 'too narrow at this zoom for two columns')
+  app.settings = { zoom: 1 }
+  assert.deepEqual(draw([b], 'D7', TALL).node.calls.w, [940])
+})
+
+test('a sheet whose board has ended shows no empty Why or Options', () => {
+  for (const viewport of [SMALL, TALL]) {
+    const text = textOf(draw([], 'D7', viewport)).join(' ')
+    assert.match(text, /This board has ended/)
+    assert.doesNotMatch(text, /Options|No text to show|Why it asks/)
+  }
+})
+
+test('a sheet too narrow for the meta leaves it out, so esc stays inside', () => {
+  app.settings = { zoom: 1.2 }
+  assert.doesNotMatch(
+    textOf(findId(draw([board()], 'D7', SMALL), 'sheet-body'))
+      .slice(0, 4)
+      .join(' '),
+    /#601/,
+  )
+  app.settings = { zoom: 1 }
+  assert.match(textOf(draw([board()], 'D7', TALL)).join(' '), /#601 · w-api/)
 })

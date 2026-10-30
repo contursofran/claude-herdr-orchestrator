@@ -15,6 +15,7 @@ import {
   sheetKeyAction,
   sheetPage,
   sheetRefs,
+  SHEET_MIN_W,
   sheetSize,
   sheetTarget,
   sheetView,
@@ -272,14 +273,36 @@ test('sheetHint: only the keys that work', () => {
   assert.equal(sheetHint({}), 'esc closes')
 })
 
+test('sheetSize: the window is measured in the px the app scales by the zoom', () => {
+  assert.deepEqual(
+    sheetSize({ width: 1280, height: 820 }, 1.2),
+    { w: 726, h: 423, narrow: true, meta: true },
+    '726 px draw as 871 of the 1280',
+  )
+  assert.equal(sheetSize({ width: 760, height: 460 }, 1.2).w, SHEET_MIN_W, '760 / 1.2 - 340 is under the minimum')
+  assert.deepEqual(sheetSize({ width: 1280, height: 820 }, 1), sheetSize({ width: 1280, height: 820 }), 'zoom 1 changes nothing')
+  assert.equal(sheetSize({ width: 1280, height: 820 }, 0.5).w, SHEET_W, 'zoomed out, it stops at its largest')
+  assert.deepEqual(sheetSize({ width: 1280, height: 820 }, undefined), sheetSize({ width: 1280, height: 820 }), 'no zoom known')
+  assert.deepEqual(sheetSize({ width: 1280, height: 820 }, 0), sheetSize({ width: 1280, height: 820 }), 'a zero zoom is ignored')
+  assert.deepEqual(sheetSize(null, 1.2), sheetSize(null), 'no window size: the full size')
+})
+
 test('sheetSize: 470 px at most and shorter in a short window, so the strip and prompt stay visible; narrower in a narrow one', () => {
-  assert.deepEqual(sheetSize({ width: 1800, height: 1000 }), { w: SHEET_W, h: SHEET_MAX_H, narrow: false })
+  assert.deepEqual(sheetSize({ width: 1800, height: 1000 }), { w: SHEET_W, h: SHEET_MAX_H, narrow: false, meta: true })
   assert.equal(sheetSize({ width: 1800, height: 600 }).h, 600 - 260, 'a 600 px window leaves 260 px under the top of the terminal')
-  assert.equal(sheetSize({ width: 1800, height: 300 }).h, SHEET_MIN_H, 'never smaller than it can be read')
+  assert.equal(sheetSize({ width: 1800, height: 460 }).h, SHEET_MIN_H, 'options stay in reach, over the strip and prompt if it must')
+  assert.equal(
+    sheetSize({ width: 1800, height: 300 }).h,
+    300 - 182,
+    'a very short window: only what the main block has, or the app cuts it off',
+  )
+  assert.equal(sheetSize({ width: 1800, height: 200 }).h, 100, 'never smaller than it can be read')
+  assert.equal(sheetSize({ width: 760, height: 460 }, 1.2).h, Math.floor(460 / 1.2 - 182), 'its room is measured at the zoom')
+  assert.equal(sheetSize({ width: 760, height: 460 }, 1.2).meta, false, 'no meta where it pushes esc out of the frame')
   assert.equal(sheetSize({ width: 900, height: 1000 }).w, 560)
   assert.equal(sheetSize({ width: 900, height: 1000 }).narrow, true)
   assert.equal(sheetSize({ width: 200, height: 1000 }).w, 300)
-  assert.deepEqual(sheetSize(null), { w: SHEET_W, h: SHEET_MAX_H, narrow: false })
+  assert.deepEqual(sheetSize(null), { w: SHEET_W, h: SHEET_MAX_H, narrow: false, meta: true })
 })
 
 test('the pin bar goes slim at the same row while the sheet is open, and says how many are new; no flash starts', () => {

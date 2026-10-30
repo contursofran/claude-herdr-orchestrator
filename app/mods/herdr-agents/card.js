@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { exec, notify, run, setShared, shared, terminals } from 'herdr'
+import { exec, notify, run, settings, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
 import { CardState, clearStaleOpen } from './cardstate.js'
@@ -121,7 +121,7 @@ function header(view, onClose) {
  * The owner's click or key is the only thing that opens or closes it, and it takes the keyboard.
  */
 export function card(boards, ctl, cx) {
-  const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null)
+  const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null, settings()?.zoom)
   const root = div().id('card').w(size.w).max_h(size.maxH).flex().flex_col().text_size(font.size)
   const open = shared('hrd.open')
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
