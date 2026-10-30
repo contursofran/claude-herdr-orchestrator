@@ -2,17 +2,20 @@ import { View, div } from 'gpui-kit'
 import { focused, props, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
 import { Boards } from './board.js'
+import { card, makeCardState } from './card.js'
+import { onBoardsChanged } from './cardstate.js'
 import { resolveBoard } from './model.js'
 import { pinbar } from './pinbar.js'
 import { PinCtl } from './pinctl.js'
 import { StripState, strip } from './strip.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
-// Role `agents` is the agents list (agents.js), which keeps state of its own. Roles still to come (card, board,
+// Role `agents` is the agents list (agents.js), which keeps state of its own. Roles still to come (board,
 // sheet, pins) draw nothing. Each role takes what it needs from the same bag.
 const roles = {
   pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
   strip: (board, x) => strip(board, x.strip),
+  card: (_board, x) => card(x.strip.boards, x.card, x.cx),
 }
 
 export default class HerdrAgents extends View {
@@ -30,13 +33,13 @@ export default class HerdrAgents extends View {
     this.last = null
     this.pin = new PinCtl()
     const pinbarCopy = props()?.role === 'pinbar'
+    // The card has an Outbox of its own: it settles it here, or a failed send would never show.
+    this.card = props()?.role === 'card' ? makeCardState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
-    this.boards.start(cx, cx => {
-      if (pinbarCopy) this.pin.onBoards(this.boards.list())
-      this.part?.observe(cx, this.boards.list())
-      cx.notify()
-    })
+    this.boards.start(cx, cx =>
+      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx),
+    )
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
   }
@@ -51,6 +54,7 @@ export default class HerdrAgents extends View {
     if (this.part) this.part.board = found.board
     return draw(found.board, {
       pin: this.pin,
+      card: this.card,
       cx,
       strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
     })

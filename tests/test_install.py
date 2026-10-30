@@ -63,7 +63,8 @@ class Install(unittest.TestCase):
             self.assertEqual(json.load(f), main)
         with open(os.path.join(self.app, "layouts", "coordinator.json")) as f:
             work = json.load(f)["children"][0]["children"]
-        self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-strip"])
+        self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-card", "hrd-strip"])
+        self.assertTrue(next(c for c in work if c["id"] == "hrd-card")["hidden"])
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
 
     def test_a_missing_or_odd_main_layout_prints_a_message_and_the_install_carries_on(self):
