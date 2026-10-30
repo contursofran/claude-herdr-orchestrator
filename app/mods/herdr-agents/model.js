@@ -46,7 +46,9 @@ export function labelOf(terminal, key) {
   return v === undefined || v === null ? null : String(v)
 }
 
-const live = t => t && t.state === 'live' && t.program?.agent === true
+// A terminal the coordinator started as a worker is never a coordinator, whatever a leftover board says
+// (terminal ids may restart with the core); terminals() carries the label (seen in the app).
+const live = t => t && t.state === 'live' && t.program?.agent === true && labelOf(t, 'herdr-agents.role') !== 'worker'
 
 function choose(candidates, last) {
   if (candidates.length === 0) return null
@@ -73,10 +75,7 @@ export function resolveBoard(boards, terminals, focus, last = null) {
   const picks = last ?? {}
   const byAddress = new Map((terminals ?? []).map(t => [t.address, t]))
   // 1. A board counts only while its coordinator terminal is live and runs an agent; boards without the field are ignored.
-  const alive = (boards ?? []).filter(b => {
-    const address = b?.coordinator?.terminal
-    return typeof address === 'string' && live(byAddress.get(address))
-  })
+  const alive = aliveBoards(boards, terminals)
   const none = { board: null, via: null, pick: picks }
   if (!focus) return none
   const space = focus.space ?? null
@@ -120,6 +119,52 @@ export function openNeeds(board) {
 export function debugLine(board) {
   if (!board) return ''
   return `${board.cwd ?? ''} · ${openNeeds(board).length} open`
+}
+
+// --- S12: the agents list's Orchestrators section ---
+
+/** Rule 1 of the resolver: the boards whose coordinator terminal exists, is live and runs an agent
+ *  (boards without the field are ignored). `terminals` is terminals() from herdr. */
+export function aliveBoards(boards, terminals) {
+  const byAddress = new Map((terminals ?? []).map(t => [t.address, t]))
+  return (boards ?? []).filter(b => {
+    const address = b?.coordinator?.terminal
+    return typeof address === 'string' && live(byAddress.get(address))
+  })
+}
+
+/**
+ * Splits the agents list into the orchestrators (the first section) and the rest.
+ *   agents    agents() from herdr, in the order the list shows them
+ *   boards    every board read
+ *   terminals terminals() from herdr
+ * An agent is an orchestrator when its `address` equals `coordinator.terminal` of a board that passes rule 1.
+ * Both use the core's address form: `t4` for a local terminal, `machine/t4` for another machine's, so a board
+ * (written by a local session) matches local agents only. Order inside is the list's own, never by state.
+ * Returns {orchestrators}: the section's agents, in the order given.
+ */
+export function orchestratorSection(agents, boards, terminals) {
+  const coordinators = new Set(aliveBoards(boards, terminals).map(b => b.coordinator.terminal))
+  return { orchestrators: (agents ?? []).filter(a => coordinators.has(a.address)) }
+}
+
+/**
+ * The order the agents list draws and hands to setAgentOrder: orchestrators, then pinned, then the rest.
+ *   sorted    the agents in the sort view's order (the order of pinned and rest)
+ *   boards, terminals   as for orchestratorSection
+ *   pins      the pinned addresses, in pin order
+ *   natural   agents() order (space, tab, pane), the order of the orchestrators; defaults to `sorted`
+ * An orchestrator is in the first part only, pinned or not, always in `natural` order so rows don't jump when
+ * a state changes; pins that match no agent are skipped.
+ * Returns {orchestrators, pinned, rest, list}; `list` is the three joined.
+ */
+export function listOrder(sorted, boards, terminals, pins = [], natural = sorted) {
+  const { orchestrators } = orchestratorSection(natural, boards, terminals)
+  const orch = new Set(orchestrators.map(a => a.address))
+  const others = (sorted ?? []).filter(a => !orch.has(a.address))
+  const pinned = pins.map(p => others.find(a => a.address === p)).filter(Boolean)
+  const rest = others.filter(a => !pins.includes(a.address))
+  return { orchestrators, pinned, rest, list: [...orchestrators, ...pinned, ...rest] }
 }
 
 // ---- S3: the strip --------------------------------------------------------------------------------
