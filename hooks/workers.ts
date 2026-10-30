@@ -39,6 +39,7 @@ import { post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
+import { ensureOpencodePlugin } from './opencode'
 import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
 import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, validBranch, worktreePath } from './worktrees'
@@ -876,6 +877,7 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
       '--label',
       l,
     ])
+    if (p.kind === 'opencode') await ensureOpencodePlugin($, p.env)
     const argv = await workerArgv($, p.kind, p.args, env)
     const made = await hc<{ address: string }>($, ['run', '--bg', '--no-parent', '--name', worker, '--cwd', cwd, ...labels, '--', ...argv])
     const saved = await updateJob($, worker, j => (j.status === 'starting' ? { ...j, address: made.address } : undefined))

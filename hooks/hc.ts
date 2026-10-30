@@ -119,7 +119,7 @@ export async function acceptFolderTrust($: EngineInterface, worker: string, cwd:
 // other prompt throws. Out of tries it returns anyway: the prompt then goes in, and a CLI that
 // reports no status is caught by the quiet-screen rule if it hung.
 export async function waitReady($: EngineInterface, worker: string, cwd: string, kind: string) {
-  const tries = kind === 'claude' || kind === 'codex' ? 12 : 3
+  const tries = kind === 'claude' || kind === 'codex' || kind === 'opencode' ? 12 : 3
   let checkedTrust = false
   for (let i = 0; i < tries; i++) {
     const w = await hc<HcWait>($, ['wait', worker, '--timeout', '5'], 15_000)
