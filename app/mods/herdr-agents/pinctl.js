@@ -69,7 +69,7 @@ export class PinCtl {
       return view
     }
     // Keys act only on a pin the row shows: not behind the undo row.
-    this.shown = { mode: waiting.length ? 'undo' : view.mode, list, current: view.current }
+    this.shown = { mode: view.waiting.length ? 'undo' : view.mode, list, current: view.current }
     if (flashStart) {
       this.flashId = flashStart
       cx.timer.after(FLASH_MS, cx => {
