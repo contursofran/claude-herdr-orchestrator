@@ -7,6 +7,7 @@ const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
 const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
+const { releasePopup } = await import('../mods/herdr-agents/popup.js')
 
 const pin = (key, extra = {}) => ({
   id: `s:${key}`,
@@ -30,6 +31,7 @@ beforeEach(() => {
   app.closed = []
   app.ran = []
   app.focused = null
+  app.closeThrows = false
   globalThis.window = undefined
 })
 
@@ -128,40 +130,80 @@ const opened = extra => {
 
 test('the overlay tracks the handle it is given', () => {
   opened()
-  const handle = {}
-  assert.equal(pinsView(new Set(), handle).node.calls.track_focus[0], handle)
+  const ctl = { h: {} }
+  assert.equal(pinsView(new Set(), ctl).node.calls.track_focus[0], ctl.h)
 })
 
 for (const view of ['all', 'panel']) {
-  test(`Esc closes the ${view} overlay and gives the keyboard back to the terminal that had it`, () => {
+  test(`Esc closes the ${view} overlay and its close call gives the keyboard back`, () => {
     opened({ view, id: 's:K1' })
-    pressKey(pinsView(new Set(), {}), 'escape')
+    const ctl = {}
+    pressKey(pinsView(new Set(), ctl), 'escape')
     assert.deepEqual(app.closed, ['o1'])
     assert.equal(app.store['hrd.pins'], null)
+    assert.deepEqual(app.ran, [], 'only the close call hands it back, so it runs once')
+    releasePopup(ctl)
     assert.deepEqual(app.ran, [['pane.focus', { terminal: 't7' }]])
   })
 }
 
-test('another key does nothing', () => {
+test('another key and a held Esc do nothing', () => {
   opened()
-  pressKey(pinsView(new Set(), {}), 'a')
+  const root = pinsView(new Set(), {})
+  pressKey(root, 'a')
+  root.node.calls.on_key_down[0]({ keystroke: 'escape', is_held: true }, cx)
   assert.deepEqual(app.closed, [])
   assert.deepEqual(app.ran, [])
 })
 
-test('Esc leaves the keyboard alone when the owner has moved to another space', () => {
+test('Esc survives the app having closed the overlay first', () => {
   opened()
-  app.focused = { space: 'b', terminal: 't9' }
+  app.closeThrows = true
   pressKey(pinsView(new Set(), {}), 'escape')
+  assert.equal(app.store['hrd.pins'], null)
+})
+
+test('closing leaves the keyboard alone when the owner has moved to another space', () => {
+  opened()
+  const ctl = {}
+  app.focused = { space: 'b', terminal: 't9' }
+  pressKey(pinsView(new Set(), ctl), 'escape')
   assert.deepEqual(app.closed, ['o1'])
+  releasePopup(ctl)
+  assert.deepEqual(app.ran, [])
+})
+
+test('a click on another terminal keeps the keyboard there', () => {
+  opened()
+  app.focused = { space: 'a', terminal: 't9' }
+  releasePopup({})
   assert.deepEqual(app.ran, [])
 })
 
 test('Done in the panel also gives the keyboard back', () => {
   opened({ view: 'panel', id: 's:K1' })
-  down(pinsView(new Set(), {}), 'pin-panel-done')
+  const ctl = {}
+  down(pinsView(new Set(), ctl), 'pin-panel-done')
+  assert.deepEqual(app.closed, ['o1'])
+  releasePopup(ctl)
   assert.deepEqual(app.ran, [['pane.focus', { terminal: 't7' }]])
 })
+
+for (const [view, id, next] of [
+  ['panel', 'pin-panel-all', 'all'],
+  ['all', 'pin-open-K1', 'panel'],
+]) {
+  test(`${id} opens the next overlay, which keeps the terminal to hand back; closing this one does not take the keyboard`, () => {
+    opened({ view, id: 's:K1' })
+    app.focused = { space: 'a', terminal: null }
+    const ctl = {}
+    down(pinsView(new Set(), ctl), id)
+    assert.equal(app.opened[0].props.view, next)
+    assert.equal(app.opened[0].props.back, 't7')
+    releasePopup(ctl)
+    assert.deepEqual(app.ran, [])
+  })
+}
 
 test('openPins remembers the terminal and space that have the keyboard', () => {
   app.focused = { space: 'a', terminal: 't7' }

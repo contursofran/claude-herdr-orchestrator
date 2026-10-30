@@ -30,7 +30,7 @@ globalThis.__startFake = {
   theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
   closeOverlay: id => state.closed.push(id),
   focused: () => state.focused ?? null,
-  run: () => {},
+  run: (name, args) => state.ran?.push([name, args]),
   openOverlay: o => {
     state.opened = o
     return 'o4'
@@ -180,6 +180,18 @@ test('an overlay copy takes the keyboard after its first draw', async () => {
   assert.equal(handle.focused, 0)
   await tasks[0]({ sleep: async () => {}, notify() {} })
   assert.equal(handle.focused, 1)
+})
+
+test("a pins overlay closed by anything else (a click outside, the app's Esc) still hands the keyboard back", async () => {
+  state.props = { role: 'pins', back: 't7', space: 'a' }
+  state.focused = { terminal: null, space: 'a' }
+  state.ran = []
+  const copy = new HerdrAgents()
+  copy.init(state.props, cx)
+  await copy.close()
+  assert.deepEqual(state.ran, [['pane.focus', { terminal: 't7' }]])
+  state.focused = null
+  state.ran = null
 })
 
 const startVersion = async file => {

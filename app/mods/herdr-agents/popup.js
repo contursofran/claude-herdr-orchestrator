@@ -7,7 +7,7 @@ import { POPUP_ROW, POPUP_W, boardSpace, popupKeyAction, popupRefocus, projectNa
 import { color, font, icon, popup as look } from './tokens.js'
 
 /** A handle that takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal. */
-export function takeKeyboard(cx) {
+function takeKeyboard(cx) {
   const h = cx.focus_handle()
   cx.spawn(async cx => {
     await cx.sleep(60)
@@ -17,7 +17,7 @@ export function takeKeyboard(cx) {
   return h
 }
 
-/** This pop-up's keyboard, and whether a row already chose where it goes next. */
+/** This pop-up's or pins overlay's keyboard, and whether a row already chose where it goes next. */
 export const makePopupState = cx => ({ h: takeKeyboard(cx), leaving: false })
 
 /** The overlay is going, however it was closed (Esc, a click outside, a new pop-up): give the keyboard back. */

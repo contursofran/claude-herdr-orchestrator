@@ -19,9 +19,10 @@ export const closePopupOverlay = () => closeById('hrd.popup')
 
 /**
  * Open the drop panel (`view` 'panel', for pin `id`) or the all-pins popover ('all') under the pin bar. `list` is what it
- * shows (pins() of the board of `session`); `bar` is the bar's bounds when a click reported them. Only the owner's click calls this.
+ * shows (pins() of the board of `session`); `bar` is the bar's bounds when a click reported them; `back` is
+ * the terminal to hand the keyboard to, when the overlay being replaced holds it. Only the owner's click calls this.
  */
-export function openPins(session, list, view, { id = null, bar = null } = {}) {
+export function openPins(session, list, view, { id = null, bar = null, back = null } = {}) {
   if (!session) return
   const plan = overlayPlan('pins', {
     popup: Boolean(shared('hrd.popup')),
@@ -61,7 +62,7 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
       height,
       width: view === 'panel' ? spot.width : PINS_ALL_W,
       bar,
-      back: focused()?.terminal,
+      back: back ?? focused()?.terminal,
       space: focused()?.space,
     },
   })
