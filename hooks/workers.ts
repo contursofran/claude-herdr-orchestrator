@@ -18,6 +18,8 @@ import {
   QUIET_BUSY_MS,
   QUIET_MS,
   SEND_DEADLINE_MS,
+  STEP_WAIT_MS,
+  SWEEP_MS,
 } from './defaults'
 import {
   closeTerminal,
@@ -411,9 +413,13 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   }
   const byName = new Map<string, HcListed>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
+  // Each worker's step queues in its own chain, so one worker's long send delays only that worker's.
+  const steps: Promise<void>[] = []
   for (const job of Object.values(await jobs($))) {
     if (job.status !== 'running' && !job.tail && !(await carriesOn($, job)) && !(await tokenless($, job))) continue
-    await serial(job.name, async () => {
+    const step = serial(job.name, async () => {
+      // It waited behind a send for a whole sweep: this list is old, and a newer sweep judges the worker.
+      if ((await $.clock.now()) - now >= SWEEP_MS) return
       const current = (await jobs($))[job.name]
       if (!current) return
       const a = byName.get(job.name)
@@ -472,7 +478,9 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
       }
       if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, status, now - q.since)
     })
+    steps.push(step)
   }
+  await Promise.race([Promise.all(steps), $.clock.sleep(STEP_WAIT_MS)])
   if (closeMinutes > 0) await closeIdle($, closeMinutes, agents)
   void refresh($)
 }
@@ -1152,9 +1160,14 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // for that task resent, did not open it and asked its DECISION lines again.
   // In the job's own step, so it cannot land between a report and the prompt that follows it.
   let result: { result: string } | { deny: string } | undefined
-  await serial(job.name, async () => {
+  const step = serial(job.name, async () => {
     const latest = await latestJob($, job.name)
     if (!latest) return
+    // It may have waited here for a while, and a stopped or closed worker must not start again.
+    if (latest.closed || latest.stopped) {
+      result = { deny: `${e.worker}'s tab was closed before the message went in` }
+      return
+    }
     if (latest.status === 'running') {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
@@ -1195,7 +1208,20 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     )
     result = { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
   })
-  return result ?? { deny: `could not send to ${e.worker}; try again` }
+  const failed = () => (result && 'result' in result ? undefined : (result?.deny ?? `could not send to ${e.worker}`))
+  const ended = await Promise.race([step.then(() => true), $.clock.sleep(STEP_WAIT_MS).then(() => false)])
+  if (ended) return result ?? { deny: `could not send to ${e.worker}; try again` }
+  // The step goes on by itself. The tool call has returned, so a failure from here on reaches the coordinator
+  // as a notice. A prompt that is typed but never starts work is reported blocked by prompt itself.
+  void step
+    .then(async () => {
+      const why = failed()
+      if (why) await post($, `Your message to ${e.worker} did not go in: ${why}. It is saved in ${path}.`, false, { worker: e.worker })
+    })
+    .catch(() => {})
+  return {
+    result: `Queued for ${e.worker}, not delivered yet: its send has not gone through, as it may still be busy with an earlier step, so this call does not wait for it. The text is saved in ${path}. If it does not go in, you get a message saying so.`,
+  }
 }
 
 export async function stopWorker($: EngineInterface, e: { worker: string }) {

@@ -43,6 +43,9 @@ export const PROMPT_WAIT_MS = 90_000
 export const SEND_DEADLINE_MS = 6 * 60_000
 // How often hc is asked whether that work started.
 export const PROMPT_CHECK_MS = 5000
+// How long the sweep's close step and a `message` call wait for a worker's queued step before going on without
+// it. Longer than the 5 s hc itself waits for work to start, so a prompt that starts normally is not reported as queued.
+export const STEP_WAIT_MS = 10_000
 // How often the sweep reads hc for every running worker at once (one `hc ls`).
 export const SWEEP_MS = 60_000
 // How many sweeps in a row must miss a worker's tab before it is reported gone: one failed
