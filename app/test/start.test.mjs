@@ -30,6 +30,17 @@ globalThis.__startFake = {
   theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
   closeOverlay: id => state.closed.push(id),
   focused: () => state.focused ?? null,
+  terminals: () => {
+    if (state.drawThrows) throw new Error('boom')
+    return state.terminals ?? []
+  },
+  home: () => '/home',
+  settings: () => ({}),
+  exec: async () => ({ code: 0, stdout: '', stderr: '' }),
+  hc: async () => ({ code: 1, stdout: '' }),
+  writeTextFile: async (_path, text) => {
+    state.beats.push(JSON.parse(text))
+  },
   run: (name, args) => state.ran?.push([name, args]),
   openOverlay: o => {
     state.opened = o
@@ -100,6 +111,9 @@ const card = { session: 's', key: 'D1' }
 beforeEach(() => {
   state.store = {}
   state.closed = []
+  state.beats = []
+  state.drawThrows = false
+  state.terminals = []
   newRun()
 })
 
@@ -309,4 +323,102 @@ test('an open card, an open sheet and the pin bar redraw when the age they show 
     assert.equal(counts.notify, 1, `${role} past the minute`)
     clock -= 60_000
   }
+})
+
+// A draw that throws: the copy runs the spawned note like the app does, and writes counts the setShared calls.
+const failKey = role => `hrd.drawFailed.${role}`
+const drawCx = () => {
+  const pending = []
+  const c = { ...cx, sleep: async () => {}, spawn: f => pending.push(f(c)), notify() {} }
+  c.settle = async () => {
+    while (pending.length) await pending.shift()
+  }
+  return c
+}
+const drawCopy = role => {
+  state.props = { role }
+  const c = drawCx()
+  const copy = new HerdrAgents()
+  copy.init(state.props, cx) // the boards' and keys' own loops stay out of it
+  return { copy, c, draw: async () => (copy.render(c), await c.settle()) }
+}
+const live = () => {
+  state.terminals = [{ address: 't1', state: 'live', program: { agent: true } }]
+}
+
+for (const role of ['strip', 'card', 'pinbar']) {
+  test(`a ${role} that throws records it and draws nothing; a later good draw clears it`, async () => {
+    const { draw } = drawCopy(role)
+    state.drawThrows = true
+    await draw()
+    assert.equal(state.store[failKey(role)], 'boom')
+    state.drawThrows = false
+    await draw()
+    assert.equal(state.store[failKey(role)], null)
+  })
+}
+
+test('a part that keeps failing or keeps drawing writes nothing again, so it starts no redraws', async () => {
+  const { draw } = drawCopy('strip')
+  let writes = 0
+  const real = state.store
+  state.store = new Proxy(real, {
+    set(t, k, v) {
+      writes++
+      t[k] = v
+      return true
+    },
+  })
+  await draw()
+  await draw()
+  assert.equal(writes, 0, 'good draws are silent')
+  state.drawThrows = true
+  await draw()
+  await draw()
+  assert.equal(writes, 1, 'one write for the failure')
+})
+
+test('the sheet is not a band part: its throw stays the app’s', () => {
+  state.props = { role: 'sheet' }
+  const copy = new HerdrAgents()
+  copy.boards = { list: () => [] }
+  state.drawThrows = true
+  assert.throws(() => copy.render(drawCx()), /boom/)
+})
+
+test('the heartbeat lists no terminal while a part fails, at once, and lists again after a good draw', async () => {
+  live()
+  const boards = [{ session: 's', coordinator: { terminal: 't1' } }]
+  const bar = drawCopy('pinbar')
+  bar.copy.boards.list = () => boards
+  const listed = async () => {
+    await bar.c.settle()
+    return state.beats.at(-1)?.terminals
+  }
+  // Nothing failed: redraws write no beat of their own.
+  await bar.draw()
+  assert.equal(state.beats.length, 0)
+  // The strip's failure reaches the pin bar through shared; its redraw beats with no terminals.
+  state.store[failKey('strip')] = 'boom'
+  await bar.draw()
+  assert.deepEqual(await listed(), [])
+  const after = state.beats.length
+  await bar.draw()
+  assert.equal(state.beats.length, after, 'a failure that goes on writes no more beats between timer beats')
+  // A timer beat during the failure stays empty.
+  bar.copy.beat(bar.c)
+  assert.deepEqual(await listed(), [])
+  state.store[failKey('strip')] = null
+  await bar.draw()
+  assert.deepEqual(await listed(), ['t1'])
+})
+
+test('a new run forgets last run’s failures; a closing part forgets only its own', async () => {
+  state.store = { [failKey('card')]: 'old', [failKey('strip')]: 'old' }
+  const card = drawCopy('card')
+  await card.copy.close()
+  assert.equal(state.store[failKey('card')], null)
+  assert.equal(state.store[failKey('strip')], 'old')
+  startCopy('pinbar')
+  assert.equal(state.store[failKey('strip')], null)
 })

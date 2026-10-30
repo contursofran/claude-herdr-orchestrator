@@ -81,6 +81,25 @@ test('the band returns by itself once the heartbeat stops, and once the file is 
   await band.unmount()
 })
 
+// What the mod writes while a part fails to draw (app/test/start.test.mjs): the same file with no terminals.
+test('a heartbeat that stops listing this terminal brings the band back by itself, and listing it again hides it', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Merge server #77' })
+  await clock.advance(3000)
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const shows = async () => (await band.find({ type: 'Text', text: /Merge server/ })) !== undefined
+  files[FILE] = beat(clock.now())
+  await clock.advance(3000)
+  expect(await shows()).toBe(false)
+  files[FILE] = beat(clock.now(), [])
+  await clock.advance(3000)
+  expect(await shows()).toBe(true)
+  files[FILE] = beat(clock.now())
+  await clock.advance(3000)
+  expect(await shows()).toBe(false)
+  await band.unmount()
+})
+
 test('a heartbeat of another hc core does not hide the band; one with no core, or the same core, does', async ($, on) => {
   const { clock, files } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Merge server #77' })

@@ -997,9 +997,10 @@ export function localCoordinators(boards, terminals) {
 }
 
 /** The text of ~/.herdr-agents/app-mod.json. `core` is the hc core's id (`hc server status`), left out when unknown, so
- *  a second core on the same HOME (its own `t1`) is told apart from this one. */
-export function heartbeat(boards, terminals, now, core = '') {
-  return JSON.stringify({ at: now, terminals: localCoordinators(boards, terminals), ...(core ? { core } : {}) })
+ *  a second core on the same HOME (its own `t1`) is told apart from this one. With `drawing` false (a part failed to draw)
+ *  it lists no terminal, which every plugin version reads as "keep your band". */
+export function heartbeat(boards, terminals, now, core = '', drawing = true) {
+  return JSON.stringify({ at: now, terminals: drawing ? localCoordinators(boards, terminals) : [], ...(core ? { core } : {}) })
 }
 
 /** The core id out of `hc server status --json` output, or '' when it does not say. */
