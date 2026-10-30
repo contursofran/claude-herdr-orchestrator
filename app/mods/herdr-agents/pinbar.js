@@ -1,6 +1,6 @@
 import { div, svg } from 'gpui-kit'
 import { closeOverlay, props, setShared, shared } from 'herdr'
-import { ageText, markAllRead, markRead, orderPins, pins } from './model.js'
+import { ageText, markAllRead, markRead, orderPins } from './model.js'
 import { openPins } from './pinsctl.js'
 import { color, font, icon, pinsLook, row } from './tokens.js'
 
@@ -192,19 +192,19 @@ function requestDone(pin, session) {
 
 /**
  * The overlay's view. Its root has a fixed size (props() from pinsctl.js): a `size_full` root in a popup draws nothing.
- *   board  the board of props().session, or undefined while it loads
- *   gone   a Set of pin ids Done here, hidden until the board drops them (an undo shows them again on reopening)
+ * The pins come in props().list, as they were when it opened; only the read marks are read live (shared "hrd.read").
+ *   gone  a Set of pin ids Done here, hidden at once (an undo shows them again on reopening)
  */
-export function pinsView(board, gone) {
+export function pinsView(gone) {
   const p = props() ?? {}
   const read = shared('hrd.read') ?? {}
-  const list = board ? pins(board, read).filter(x => !gone.has(x.id)) : []
+  const list = (p.list ?? []).filter(x => !gone.has(x.id)).map(x => ({ ...x, unread: read[x.id] !== true }))
   const root = div().id('pins-overlay').w(Number(p.width)).h(Number(p.height)).flex_none().flex().flex_col().text_size(font.size)
-  if (!board) return root
+  const session = p.session
   const close = () => closeOverlay(p.overlay)
   const bar = () => p.bar
   const done = (pin, cx) => {
-    requestDone(pin, board.session)
+    requestDone(pin, session)
     gone.add(pin.id)
     cx.notify()
   }
@@ -244,7 +244,7 @@ export function pinsView(board, gone) {
           )
           .child(
             ghostDown('pin-panel-all', 'all pins', () => {
-              openPins(board, 'all', { bar: bar(), read: shared('hrd.read') ?? {} })
+              openPins(session, list, 'all', { bar: bar() })
             }),
           ),
       )
@@ -311,7 +311,7 @@ export function pinsView(board, gone) {
                   .on_mouse_down('left', () => {
                     const next = markRead(shared('hrd.read') ?? {}, pin.id)
                     setShared('hrd.read', next)
-                    openPins(board, 'panel', { id: pin.id, bar: bar(), read: next })
+                    openPins(session, list, 'panel', { id: pin.id, bar: bar() })
                   })
                   .child(
                     div()

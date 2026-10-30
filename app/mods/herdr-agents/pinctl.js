@@ -2,7 +2,7 @@ import { nextCommand, notify, setShared, shared } from 'herdr'
 import { openPins } from './pinsctl.js'
 import { send } from './board.js'
 import { Outbox } from './outbox.js'
-import { deriveBar, doneAction, keyStep, markRead, newBarState, newestPin, pinStepDir, pruneRead, takeDoneRequest } from './model.js'
+import { deriveBar, doneAction, keyStep, markRead, newBarState, newestPin, pinStepDir, pins, pruneRead, takeDoneRequest } from './model.js'
 
 const FLASH_MS = 2200 // 1.1 s, twice
 
@@ -102,11 +102,11 @@ export class PinCtl {
       onRead: (id, cx) => {
         pick(null)
         this.mark(id)
-        openPins(board, 'panel', { id, bar: this.bounds, read: shared('hrd.read') ?? {} })
+        openPins(board.session, pins(board, shared('hrd.read') ?? {}), 'panel', { id, bar: this.bounds })
         cx.notify()
       },
       onAll: cx => {
-        openPins(board, 'all', { bar: this.bounds, read: shared('hrd.read') ?? {} })
+        openPins(board.session, pins(board, shared('hrd.read') ?? {}), 'all', { bar: this.bounds })
         cx.notify()
       },
       onBounds: b => {

@@ -32,9 +32,9 @@ export default class HerdrAgents extends View {
     }
     this.boards = new Boards()
     if (props()?.role === 'pins') {
-      // The drop panel and the popover: a pop-up of this mod, over the boards; `gone` are the pins Done here, hidden at once.
+      // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
+      // `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
-      this.boards.start(cx, cx => cx.notify())
       return
     }
     if (props()?.role === 'board') {
@@ -80,11 +80,7 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
-    if (props()?.role === 'pins')
-      return pinsView(
-        this.boards.list().find(b => b.session === props().session),
-        this.gone,
-      )
+    if (props()?.role === 'pins') return pinsView(this.gone)
     if (props()?.role === 'board') return popupView(this.boards.list().find(b => b.session === props().session))
     const draw = roles[props()?.role]
     if (!draw) return div()
