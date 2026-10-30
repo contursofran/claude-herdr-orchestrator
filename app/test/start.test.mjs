@@ -31,6 +31,14 @@ globalThis.__startFake = {
   closeOverlay: id => state.closed.push(id),
   focused: () => state.focused ?? null,
   run: (name, args) => state.ran?.push([name, args]),
+  home: () => '/home',
+  exec: async (_cmd, args) => {
+    await state.boardsGate
+    return { code: 0, stdout: args[0] === '-1' ? state.listing : '', stderr: '' }
+  },
+  watchFolder: () => new Promise(() => {}),
+  nextCommand: () => state.commands.shift() ?? new Promise(() => {}),
+  terminals: () => state.terminals ?? [],
   openOverlay: o => {
     state.opened = o
     return 'o4'
@@ -84,7 +92,7 @@ registerHooks({
 
 const { AGE_TICK_MS } = await import('../mods/herdr-agents/model.js')
 const { default: HerdrAgents } = await import('../mods/herdr-agents/main.js')
-const { openBoardPopup } = await import('../mods/herdr-agents/strip.js')
+const { openBoardPopup, StripState } = await import('../mods/herdr-agents/strip.js')
 
 const newRun = () => {
   delete globalThis.__hrdStarted
@@ -309,4 +317,72 @@ test('an open card, an open sheet and the pin bar redraw when the age they show 
     assert.equal(counts.notify, 1, `${role} past the minute`)
     clock -= 60_000
   }
+})
+
+const settle = async () => {
+  for (let i = 0; i < 50; i++) await new Promise(resolve => setImmediate(resolve))
+}
+
+test('commands before the first board read wait for it: the last one then does its job, once', async () => {
+  globalThis.window = { viewport_size: () => ({ width: 1280, height: 820 }) }
+  let endRead
+  state.boardsGate = new Promise(resolve => (endRead = resolve))
+  state.props = { role: 'strip' }
+  state.opened = null
+  state.listing = 's.json'
+  state.commands = [Promise.resolve('herdr-agents.pick1'), Promise.resolve('herdr-agents.board')]
+  state.terminals = [{ address: 't1', state: 'live', program: { agent: true } }]
+  state.focused = { terminal: 't1', space: 'a' }
+  state.file = JSON.stringify({ session: 's', coordinator: { terminal: 't1' }, needs: [], tasks: [] })
+  const own = { notify() {}, sleep: async () => {}, timer: { every() {}, after() {} }, spawn: f => f(own) }
+  new HerdrAgents().init(state.props, own)
+  await settle()
+  assert.equal(state.opened, null, 'no board yet')
+  endRead()
+  await settle()
+  assert.equal(state.opened?.props?.session, 's', 'the pop-up opened on the board just read')
+  state.opened = null
+  await settle()
+  assert.equal(state.opened, null, 'once')
+  state.focused = null
+  state.boardsGate = null
+})
+
+test('later reads run nothing and leave the board to the draw; a command then runs at once', async () => {
+  globalThis.window = { viewport_size: () => ({ width: 1280, height: 820 }) }
+  state.opened = null
+  const own = { notify() {}, spawn: f => f(own) }
+  const part = new StripState()
+  part.onBoardsRead(own, () => ({ session: 's' }))
+  assert.equal(state.opened, null, 'nothing waited')
+  part.onBoardsRead(own, () => ({ session: 'other' }))
+  assert.equal(part.board.session, 's')
+  state.commands = [Promise.resolve('herdr-agents.board')]
+  part.listen(own)
+  await settle()
+  assert.equal(state.opened.props.session, 's')
+})
+
+test('a command with no board after the first read opens nothing', async () => {
+  state.opened = null
+  const own = { notify() {}, spawn: f => f(own) }
+  const part = new StripState()
+  part.waiting = 'herdr-agents.board'
+  part.onBoardsRead(own, () => null)
+  await settle()
+  assert.equal(state.opened, null)
+  assert.equal(part.waiting, null, 'it does not fire later, when a board appears')
+})
+
+test('the waiting command runs as its own task: its failure does not reach the board reader', async () => {
+  const tasks = []
+  const own = { notify() {}, spawn: f => tasks.push(f) }
+  const part = new StripState()
+  part.waiting = 'herdr-agents.board'
+  part.command = () => {
+    throw new Error('command failed')
+  }
+  assert.doesNotThrow(() => part.onBoardsRead(own, () => ({ session: 's' })))
+  assert.equal(tasks.length, 1)
+  await assert.rejects(tasks[0](own), /command failed/)
 })

@@ -72,6 +72,7 @@ export default class HerdrAgents extends View {
       onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx, () =>
         this.drawnChanged(),
       )
+      this.part?.onBoardsRead(cx, () => resolveBoard(this.boards.list(), terminals(), focused(), this.last).board)
       // The first read says which coordinators are live: tell the plugin now, not 30 s later.
       if (this.beating && !this.started) {
         this.started = true

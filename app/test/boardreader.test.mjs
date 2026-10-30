@@ -74,3 +74,23 @@ test('startOne: unchanged text and other files call nobody, a changed board does
   assert.equal(changes.count, 2)
   assert.equal(reader.list()[0].at, 2)
 })
+
+for (const failing of ['mkdir', 'ls']) {
+  test(`start: a failed ${failing} still ends the first read`, async () => {
+    const reader = new BoardReader({
+      dir: () => DIR,
+      exec: async cmd => {
+        if (cmd === failing) throw new Error('failed')
+        return { stdout: cmd === 'ls' ? 's.json' : DIR }
+      },
+      readTextFile: async () => text(1),
+      watchFolder: () => new Promise(() => {}),
+    })
+    let ended = 0
+    const cx = { spawn: f => void f(cx) }
+    reader.start(cx, () => ended++)
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(ended, 1)
+    assert.equal(reader.list().length, failing === 'ls' ? 0 : 1)
+  })
+}
