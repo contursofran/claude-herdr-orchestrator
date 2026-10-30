@@ -228,8 +228,8 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
 // A reported job whose turn was not over (see Job.tail), when hc's watch for it settles.
 async function settleTail($: EngineInterface, job: Job, status: string) {
   if (await fresh($, job)) return await deliver($, job, 'done')
-  if (status === 'blocked') {
-    if (job.tail === 'early') await blockedAfterReport($, job)
+  if (status === 'blocked' || status === 'error') {
+    if (status === 'blocked' && job.tail === 'early') await blockedAfterReport($, job)
     return
   }
   // It works again (the owner answered): its turn's end is the one to wait for next.
@@ -388,7 +388,7 @@ async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | unde
   const status = a.status ?? 'unknown'
   lastStatus.set(job.name, status)
   if (status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
-  if (status !== 'working' && status !== 'blocked') return await endTail($, job)
+  if (status !== 'working' && status !== 'blocked' && status !== 'error') return await endTail($, job)
   if (!armed.has(job.name)) arm($, job, status === 'working' ? 'finish' : 'resume')
 }
 
@@ -568,6 +568,8 @@ export async function deliver(
       'The worker is waiting at an approval or question in its herdr tab. Ask the person to answer it there; the message tool can answer a question, but not a permission request.'
     notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   } else {
+    // A CLI error, like a block, may pass: a report it writes after recovering is delivered too.
+    if (status === 'error') tail = 'blocked'
     let lines = ''
     try {
       lines = (await readScreen($, job.name, 40)).trim()
@@ -576,7 +578,7 @@ export async function deliver(
     await $.fs.write(screen, lines.slice(-4000))
     reportFile = screen
     await archive($, job.dir, screen.slice(job.dir.length + 1), lines.slice(-4000))
-    body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
+    body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. Its screen and 40 lines of history above it are in ${screen}.`
   }
 
   // Patch the job as it is now: a message queued or a stop during the awaits above must stay.
@@ -596,7 +598,7 @@ export async function deliver(
       : undefined,
   )
   if (!after) return
-  // A worker blocked at a question may carry on once the owner answers: its next turn is the one to watch.
+  // A worker blocked at a question, or whose CLI errored, may carry on: its next turn is the one to watch.
   if (tail === 'blocked') arm($, after, 'resume')
   // An early report leaves the turn's end to be waited on (a no-op while that wait is still armed).
   if (tail === 'early') arm($, after, 'finish')

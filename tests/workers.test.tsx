@@ -427,7 +427,7 @@ test('a sweep reads hc once for all workers', async ($, on) => {
   calls.length = 0
   await clock.advance(5 * 60_000)
   // One list per sweep, however many workers run, and no other hc call: the 3 s ticks read files only.
-  expect(calls.map(c => c.join(' '))).toEqual(Array(5).fill('hc ls --label herdr-agents.role=worker --json'))
+  expect(calls.map(c => c.join(' '))).toEqual(Array(5).fill('hc ls --json --label herdr-agents.role=worker'))
   await stopAll($, clock, names)
 })
 
@@ -538,7 +538,7 @@ test("a worker's own session sweeps the workers it started while they run, and d
   await kill('w-busy')
   calls.length = 0
   await clock.advance(60_000)
-  expect(calls.map(c => c.join(' '))).toContain('hc ls --label herdr-agents.role=worker --json')
+  expect(calls.map(c => c.join(' '))).toContain('hc ls --json --label herdr-agents.role=worker')
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files['/repo/wt/.herdr-agents/w-busy/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
   await clock.advance(2 * 3000 + BATCH_MS)
@@ -566,7 +566,7 @@ test("a worker's own session sweeps its restored running jobs at start-up, not a
   const { clock, calls } = await start($, on, {}, kept, { HERDR_AGENTS_ROLE: 'worker' })
   // No clock advance: the start-up sweep lists hc as soon as the session starts.
   await clock.settle()
-  expect(calls.map(c => c.join(' '))).toContain('hc ls --label herdr-agents.role=worker --json')
+  expect(calls.map(c => c.join(' '))).toContain('hc ls --json --label herdr-agents.role=worker')
   await stopAll($, clock, ['w-busy'])
 })
 
@@ -611,6 +611,31 @@ test("a worker's own session closes a nested tab once it has sat idle after its 
   expect(calls).toEqual([])
 })
 
+test('a reported job whose terminal finished has it removed once it has sat for closeIdleMinutes, and is marked closed', async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const { clock, calls, closed, removed, terms, addTerm, store } = await start($, on, { closeIdleMinutes: 1 }, kept)
+  addTerm('w-done', '/repo/wt', { 'herdr-agents.role': 'worker' })
+  terms.get('w-done')!.finished = true
+  await clock.advance(2 * 60_000)
+  expect(calls.map(c => c.join(' '))).toContain('hc rm --json w-done')
+  expect(calls.some(c => c[1] === 'kill')).toBe(false)
+  expect(removed).toEqual(['w-done'])
+  expect(closed).toEqual([])
+  expect(jobOf(store, 'w-done')).toMatchObject({ status: 'reported', closed: true })
+})
+
+test('a finished terminal that cannot be removed leaves its job marked closed all the same', async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const { clock, calls, runs, removed, terms, addTerm, store } = await start($, on, { closeIdleMinutes: 1 }, kept)
+  addTerm('w-done', '/repo/wt', { 'herdr-agents.role': 'worker' })
+  terms.get('w-done')!.finished = true
+  runs.set('hc rm --json w-done', [{ exitCode: 1, stderr: 'boom' }])
+  await clock.advance(2 * 60_000)
+  expect(calls.map(c => c.join(' '))).toContain('hc rm --json w-done')
+  expect(removed).toEqual([])
+  expect(jobOf(store, 'w-done')).toMatchObject({ status: 'reported', closed: true })
+})
+
 test('with closeIdleMinutes 0 a worker session with only reported jobs makes no hc call', async ($, on) => {
   const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
   const { clock, calls, closed } = await start($, on, { closeIdleMinutes: 0 }, kept, { HERDR_AGENTS_ROLE: 'worker' })
@@ -626,6 +651,7 @@ test("spawn runs the worker through the login shell, with HERDR_AGENTS_ROLE=work
   expect(calls.find(c => c[1] === 'run')).toEqual([
     'hc',
     'run',
+    '--json',
     '--bg',
     '--no-parent',
     '--name',
@@ -649,7 +675,6 @@ test("spawn runs the worker through the login shell, with HERDR_AGENTS_ROLE=work
     'claude',
     '--model',
     'm',
-    '--json',
   ])
   await stopAll($, clock, ['w-env'])
 })
@@ -663,14 +688,13 @@ const claudeX = { profiles: { x: { kind: 'claude', args: [] } } }
 test('a fish login shell runs the worker with exec $argv', async ($, on) => {
   const { clock, calls } = await start($, on, claudeX, {}, { SHELL: '/usr/bin/fish' })
   await spawnX($)
-  expect(calls.find(c => c[1] === 'run')?.slice(15)).toEqual([
+  expect(calls.find(c => c[1] === 'run')?.slice(16)).toEqual([
     '/usr/bin/fish',
     '-ilc',
     'exec $argv',
     '/usr/bin/env',
     'HERDR_AGENTS_ROLE=worker',
     'claude',
-    '--json',
   ])
   await stopAll($, clock, ['w-env'])
 })
@@ -678,7 +702,7 @@ test('a fish login shell runs the worker with exec $argv', async ($, on) => {
 test('a shell the mod does not know runs the worker directly', async ($, on) => {
   const { clock, calls } = await start($, on, claudeX, {}, { SHELL: '/bin/nu' })
   await spawnX($)
-  expect(calls.find(c => c[1] === 'run')?.slice(15)).toEqual(['/usr/bin/env', 'HERDR_AGENTS_ROLE=worker', 'claude', '--json'])
+  expect(calls.find(c => c[1] === 'run')?.slice(16)).toEqual(['/usr/bin/env', 'HERDR_AGENTS_ROLE=worker', 'claude'])
   await stopAll($, clock, ['w-env'])
 })
 
@@ -686,7 +710,7 @@ test('a codex worker gets --no-daemon', async ($, on) => {
   const { clock, calls } = await start($, on, { profiles: { x: { kind: 'codex', args: ['--model', 'm'] } } })
   await spawnX($)
   const argv = calls.find(c => c[1] === 'run') ?? []
-  expect(argv.slice(argv.indexOf('codex'))).toEqual(['codex', '--no-daemon', '--model', 'm', '--json'])
+  expect(argv.slice(argv.indexOf('codex'))).toEqual(['codex', '--no-daemon', '--model', 'm'])
   await stopAll($, clock, ['w-env'])
 })
 
@@ -694,7 +718,7 @@ test('a codex profile that already has --no-daemon gets it once', async ($, on) 
   const { clock, calls } = await start($, on, { profiles: { x: { kind: 'codex', args: ['--no-daemon'] } } })
   await spawnX($)
   const argv = calls.find(c => c[1] === 'run') ?? []
-  expect(argv.slice(argv.indexOf('codex'))).toEqual(['codex', '--no-daemon', '--json'])
+  expect(argv.slice(argv.indexOf('codex'))).toEqual(['codex', '--no-daemon'])
   await stopAll($, clock, ['w-env'])
 })
 
@@ -1133,6 +1157,22 @@ test('a worker blocked without a report is collected once the owner answers in i
   expect(jobOf(store, 'w-busy').tail).toBeUndefined()
 })
 
+test('a worker whose CLI errored is reported at once, and a report it writes after recovering is delivered too', async ($, on) => {
+  const { clock, submitted, typed, files, emit, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  await emit('w-busy', 'error')
+  await clock.advance(BATCH_MS)
+  expect(reportsOf(submitted)[0]).toMatch(/status="error">\nThe worker stopped \(its CLI reported an error\)/)
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', tail: 'blocked' })
+  await emit('w-busy', 'working')
+  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nRecovered, and done.`
+  await clock.advance(6000 + BATCH_MS)
+  const reports = reportsOf(submitted)
+  expect(reports).toHaveLength(2)
+  expect(reports[1]).toMatch(/status="done">\nRecovered, and done\./)
+})
+
 test('a worker blocked after its early report that ends its turn without a new report sends nothing more', async ($, on) => {
   const { clock, submitted, typed, files, emit, finish, store } = await start($, on)
   await spawnBusy($, 'builder')
@@ -1384,7 +1424,7 @@ test('spawn with a branch fetches, creates the worktree next to the repo and sta
   const fetch = shell.indexOf('git -C /repo fetch origin main')
   expect(fetch).toBeGreaterThan(-1)
   expect(shell.indexOf('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/main')).toBeGreaterThan(fetch)
-  expect(calls.some(c => c.join(' ').startsWith('hc run --bg --no-parent --name w-tree --cwd /repo-wt/fix-x'))).toBe(true)
+  expect(calls.some(c => c.join(' ').startsWith('hc run --json --bg --no-parent --name w-tree --cwd /repo-wt/fix-x'))).toBe(true)
   expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBe('Build it.')
 })
 

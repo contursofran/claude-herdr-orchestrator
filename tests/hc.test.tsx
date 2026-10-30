@@ -21,9 +21,9 @@ test('a session outside an hc terminal cannot spawn, and the denial says how to 
 
 test('a session whose hc cannot be reached cannot spawn; a missing hc is the same denial', async ($, on) => {
   const { runs } = await start($, on)
-  runs.set('hc get t1 --json', [{ exitCode: 1, stderr: JSON.stringify({ error: { kind: 'unavailable', message: 'no core', hint: '' } }) }])
+  runs.set('hc get --json t1', [{ exitCode: 1, stderr: JSON.stringify({ error: { kind: 'unavailable', message: 'no core', hint: '' } }) }])
   expect((await $.tool.call(spawnArgs)).deny).toBe(`cannot reach hc: hc get: no core. hc is herdr-core: ${LINK}`)
-  runs.set('hc get t1 --json', [{ exitCode: 0, reject: 'spawn hc ENOENT' }])
+  runs.set('hc get --json t1', [{ exitCode: 0, reject: 'spawn hc ENOENT' }])
   expect((await $.tool.call(spawnArgs)).deny).toMatch(/^cannot reach hc: .*ENOENT.*hc is herdr-core/)
 })
 
@@ -53,7 +53,7 @@ test('every hc call runs with no caller, so agents are not sent <hc from> text',
   expect(hcEnvs).toHaveLength(calls.length)
   // Only the guard's own `hc get t1` could carry the id, and it passes it as an argument, not in the environment.
   expect(hcEnvs.every(env => env?.HC_TERMINAL_ID === '')).toBe(true)
-  expect(calls.some(c => c.join(' ') === 'hc get t1 --json')).toBe(true)
+  expect(calls.some(c => c.join(' ') === 'hc get --json t1')).toBe(true)
   // The old herdr CLI is never called.
   expect(herdrCalls).toEqual([])
 })
@@ -106,7 +106,7 @@ test("a name hc already has live fails the start with hc's message", async ($, o
 
 test('a CLI that reports an error while it boots is a failed start', async ($, on) => {
   const { clock, submitted, waitReplies, closed } = await start($, on)
-  waitReplies['w-hc'] = [{ ended: false, reason: 'status', status: 'error' }]
+  waitReplies['w-hc'] = [{ ended: true, reason: 'status', status: 'error' }]
   await $.tool.call(spawnArgs)
   await settled()
   await clock.advance(BATCH_MS)
@@ -123,6 +123,26 @@ test('a trust prompt during boot is answered when the folder is trusted, and the
   expect(keyed).toEqual([['w-hc', 'down', 'enter']])
   expect(typed).toHaveLength(1)
   await stopAll($, clock, ['w-hc'])
+})
+
+test('a trust prompt that reads as idle is answered before the first prompt goes in', async ($, on) => {
+  const { clock, typed, keyed, screens, status } = await start($, on)
+  screens['w-hc'] = 'Do you trust /repo/wt?\n❯ 1. Yes, I trust this folder'
+  status['w-hc'] = 'idle'
+  await $.tool.call(spawnArgs)
+  await settled()
+  expect(keyed).toEqual([['w-hc', 'down', 'enter']])
+  expect(typed).toHaveLength(1)
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a CLI that reports a word and then exits is a failed start', async ($, on) => {
+  const { clock, submitted, waitReplies } = await start($, on)
+  waitReplies['w-hc'] = [{ ended: true, reason: 'exit', status: 'idle', exit_code: 1 }]
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/status="failed">\nThe worker did not start: the CLI exited \(code 1\)/)
 })
 
 test('a prompt other than the trust prompt during boot is a failed start', async ($, on) => {
@@ -267,8 +287,8 @@ test('stop kills the terminal before it removes it, and a terminal hc no longer 
   await spawn($, ['w-a', 'w-b'])
   const stopped = await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
   expect(JSON.stringify(stopped)).toContain('Stopped w-a and closed its tab.')
-  const ops = calls.map(c => c.join(' ')).filter(c => /^hc (kill|rm) w-a /.test(c))
-  expect(ops).toEqual(['hc kill w-a --json', 'hc rm w-a --json'])
+  const ops = calls.map(c => c.join(' ')).filter(c => /^hc (kill|rm) --json w-a$/.test(c))
+  expect(ops).toEqual(['hc kill --json w-a', 'hc rm --json w-a'])
 
   gone.add('w-b')
   const other = await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-b' })
@@ -416,14 +436,57 @@ test('prune keeps a worktree while a terminal of someone else works in it', asyn
   expect(closed).toEqual([])
 })
 
-test("prune closes only the mod's own workers in a merged worktree, and leaves an idle stranger running", async ($, on) => {
+const WORKER = { 'herdr-agents.role': 'worker' }
+const removes = (shell: string[]) => shell.some(c => c.includes('worktree remove'))
+
+test("prune closes the mod's own idle workers in a merged worktree", async ($, on) => {
   const { clock, closed, removed, addTerm, status, shell } = await prunable($, on)
-  addTerm('stranger', '/repo/wt', {})
-  status.stranger = 'idle'
+  addTerm('w-done', '/repo/wt', WORKER)
+  status['w-done'] = 'idle'
   await clock.settle()
   const out = await command($, 'hrd-prune')
   expect(shell).toContain('git --git-dir=/repo/.git worktree remove /repo/wt')
   expect(JSON.stringify(out)).toContain('app-client#12')
   expect(closed).toEqual(['w-done'])
   expect(removed).toEqual(['w-done'])
+})
+
+test('prune keeps a worktree where an unlabelled terminal sits idle', async ($, on) => {
+  const { clock, closed, addTerm, status, shell } = await prunable($, on)
+  addTerm('stranger', '/repo/wt', {})
+  status.stranger = 'idle'
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(removes(shell)).toBe(false)
+  expect(closed).toEqual([])
+})
+
+test('prune keeps a worktree where an unlabelled terminal reports no status', async ($, on) => {
+  const { clock, addTerm, noStatus, shell } = await prunable($, on)
+  addTerm('stranger', '/repo/wt', {})
+  noStatus.add('stranger')
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(removes(shell)).toBe(false)
+})
+
+test('prune keeps a worktree where a labelled worker reports no status', async ($, on) => {
+  const { clock, closed, addTerm, noStatus, shell } = await prunable($, on)
+  addTerm('w-done', '/repo/wt', WORKER)
+  noStatus.add('w-done')
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(removes(shell)).toBe(false)
+  expect(closed).toEqual([])
+})
+
+test('prune does nothing when either terminal list fails', async ($, on) => {
+  const { clock, runs, addTerm, status, shell } = await prunable($, on)
+  addTerm('w-done', '/repo/wt', WORKER)
+  status['w-done'] = 'idle'
+  runs.set('hc ls --json --label herdr-agents.role=worker', [{ exitCode: 1, stderr: 'no core' }])
+  await clock.settle()
+  const out = await command($, 'hrd-prune')
+  expect(removes(shell)).toBe(false)
+  expect(JSON.stringify(out)).not.toContain('app-client#12')
 })

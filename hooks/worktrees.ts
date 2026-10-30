@@ -31,12 +31,15 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
 
     // Every live terminal in a tree keeps it while it works, whoever started it; only the workers
     // this mod started (labelled) are closed.
-    let agents: HcListed[] = []
+    let agents: HcListed[]
     const mine = new Set<string>()
     try {
-      agents = (await listTerminals($)).filter(a => a.state === 'live')
+      agents = await listTerminals($)
       for (const w of await listTerminals($, ['herdr-agents.role=worker'])) mine.add(w.address)
-    } catch {}
+    } catch {
+      // Without both lists nothing is known about who is in a tree: no pass.
+      return done
+    }
     const inside = (wt: string) => agents.filter(a => a.cwd === wt || String(a.cwd ?? '').startsWith(`${wt}/`))
 
     for (const common of commons) {
@@ -52,7 +55,8 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
       for (const { path, branch } of trees) {
         if (!path || !branch || !(await $.fs.exists(path))) continue
         const here = inside(path)
-        if (here.some(a => a.status === 'working' || a.status === 'blocked')) continue
+        // Only a labelled worker that is idle, done or error is safe to close; any other terminal keeps the tree.
+        if (here.some(a => !mine.has(a.address) || !['idle', 'done', 'error'].includes(a.status ?? ''))) continue
         if ((await run(['git', '-C', path, 'status', '--porcelain'])) !== '') continue
         const remotes = (await run(['git', '-C', path, 'remote', '-v'])) ?? ''
         const slug = remotes.match(/github\.com[:/]([^/\s]+\/[^\s]+?)(?:\.git)?\s/)?.[1]

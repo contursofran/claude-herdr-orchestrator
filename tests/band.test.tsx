@@ -130,7 +130,7 @@ test(
     expect(calls.filter(c => c[1] === 'get')).toEqual([])
     expect(calls.length / (names.length * 10)).toBeLessThan(3)
     // Exactly the sweep's list each minute: the 3 s ticks, the band and the report check add no call.
-    expect(calls.map(c => c.join(' '))).toEqual(Array(10).fill('hc ls --label herdr-agents.role=worker --json'))
+    expect(calls.map(c => c.join(' '))).toEqual(Array(10).fill('hc ls --json --label herdr-agents.role=worker'))
 
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     const shown = [(await ui.find({ key: 'col0' }))?.text, (await ui.find({ key: 'col1' }))?.text].join('\n')

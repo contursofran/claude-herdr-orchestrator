@@ -28,11 +28,12 @@ export const lastStatus = new Map<string, string>()
 // receive with the caller's address (<hc from="t4">) and end every wait with the caller's message.
 const NO_CALLER = { HC_TERMINAL_ID: '' }
 
-// Runs the hc CLI and returns its JSON, typed by the caller (`T`); a non-zero exit throws with
+// Runs the hc CLI and returns its JSON (--json goes right after the subcommand, before any `--` that
+// starts a program's own arguments), typed by the caller (`T`); a non-zero exit throws with
 // hc's message, and its error `kind` (not_found, blocked, finished…) and `hint` on the error.
 // An hc that is not installed rejects in $.process.run, which callers treat as any CLI error.
 export async function hc<T = unknown>($: EngineInterface, args: string[], timeoutMs = 90_000): Promise<T> {
-  const ran = await $.process.run(['hc', ...args, '--json'], { timeoutMs, env: NO_CALLER })
+  const ran = await $.process.run(['hc', args[0]!, '--json', ...args.slice(1)], { timeoutMs, env: NO_CALLER })
   if (ran.exitCode !== 0) {
     let e: { kind?: string; message?: string; hint?: string } | undefined
     try {
@@ -46,17 +47,17 @@ export async function hc<T = unknown>($: EngineInterface, args: string[], timeou
 
 export const kindOf = (err: unknown) => (err as { kind?: string }).kind
 
-// Every terminal hc lists, live or finished, or only those with all of `labels` (key=value).
+// Every live terminal hc lists, or only those with all of `labels` (key=value).
 export async function listTerminals($: EngineInterface, labels: string[] = []) {
   return (await hc<{ terminals: HcListed[] }>($, ['ls', ...labels.flatMap(l => ['--label', l])])).terminals
 }
 
 // The live terminals of the workers this mod started. Throws when hc cannot answer.
 export async function listWorkers($: EngineInterface) {
-  return (await listTerminals($, ['herdr-agents.role=worker'])).filter(t => t.state === 'live')
+  return await listTerminals($, ['herdr-agents.role=worker'])
 }
 
-// A terminal's screen as hc reads it (the last `lines` lines when given). A finished terminal stays readable.
+// A terminal's screen as hc reads it, with `lines` lines of history above it when given. A finished terminal stays readable.
 export async function readScreen($: EngineInterface, name: string, lines?: number) {
   return (await hc<{ text: string }>($, ['read', name, ...(lines ? ['--lines', String(lines)] : [])])).text
 }
@@ -116,11 +117,19 @@ export async function acceptFolderTrust($: EngineInterface, worker: string, cwd:
 // reports no status is caught by the quiet-screen rule if it hung.
 export async function waitReady($: EngineInterface, worker: string, cwd: string, kind: string) {
   const tries = kind === 'claude' || kind === 'codex' ? 12 : 3
+  let checkedTrust = false
   for (let i = 0; i < tries; i++) {
     const w = await hc<HcWait>($, ['wait', worker, '--timeout', '5'], 15_000)
     // A program that exits during a pending wait can read as reason "status" with no status.
-    if (w.ended && !w.status) throw new Error(`the CLI exited (code ${w.exit_code ?? w.signal ?? 'unknown'})`)
-    if (w.status === 'idle' || w.status === 'done') return
+    if (w.ended && (!w.status || w.reason === 'exit')) throw new Error(`the CLI exited (code ${w.exit_code ?? w.signal ?? 'unknown'})`)
+    if (w.status === 'idle' || w.status === 'done') {
+      // A trust prompt can read as idle: answer it once before the first prompt goes in, and keep waiting if it was one.
+      if (!checkedTrust) {
+        checkedTrust = true
+        if (await acceptFolderTrust($, worker, cwd)) continue
+      }
+      return
+    }
     if (w.status === 'error') throw new Error('the CLI reported an error while it started')
     if ((w.status === 'blocked' || !w.ended) && (await acceptFolderTrust($, worker, cwd))) continue
     if (w.status === 'blocked') throw new Error('the CLI is blocked during startup')

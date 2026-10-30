@@ -308,11 +308,16 @@ export async function start(
       return exit(0, '{}')
     }
     if (cmd === 'hc') {
-      const { pos, flags, rest } = parseArgs(e.argv.slice(2).filter(a => a !== '--json'))
+      // --json counts only before a `--`: after it, it is the worker's own argument.
+      const dash = e.argv.indexOf('--')
+      const own = dash >= 0 ? e.argv.slice(0, dash) : e.argv
+      const json = own.includes('--json')
+      const { pos, flags, rest } = parseArgs([...own.slice(2).filter(a => a !== '--json'), ...(dash >= 0 ? e.argv.slice(dash) : [])])
       const ref = pos[0] ?? ''
       const t = known(ref)
       const unreachable = () => err('unavailable', 'hc cannot reach its core')
-      const ok = (result: unknown) => exit(0, JSON.stringify(result))
+      // Without --json hc prints text, which the mod cannot parse.
+      const ok = (result: unknown) => exit(0, json ? JSON.stringify(result) : 'ok')
       const missing = () => err('not_found', `no terminal ${ref}`)
       if (sub === 'run') {
         if (fail.start > 0) {
@@ -335,7 +340,7 @@ export async function start(
         }
         const wanted = (flags['--label'] ?? []).map(l => [l.split('=')[0]!, l.slice(l.indexOf('=') + 1)] as const)
         const terminals = [...terms.values()]
-          .filter(x => !x.removed && !gone.has(x.name) && wanted.every(([k, v]) => x.labels[k] === v))
+          .filter(x => !x.removed && !gone.has(x.name) && ('--all' in flags || !x.finished) && wanted.every(([k, v]) => x.labels[k] === v))
           .map(x => ({
             address: x.address,
             name: x.name,
@@ -395,6 +400,8 @@ export async function start(
       if (sub === 'keys') {
         if (!t) return missing()
         keyed.push([t.name, ...pos.slice(1)])
+        // The prompt the keys answer is gone from the screen.
+        screens[t.name] = ''
         if (onKeys[t.name]) status[t.name] = onKeys[t.name]!
         return ok({ status: status[t.name] ?? null, turn: 0 })
       }
