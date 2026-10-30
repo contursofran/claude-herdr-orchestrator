@@ -2,23 +2,37 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
+  FLASH_MS,
   SENT_HIDE_MS,
   UNDO_MS,
+  actionFile,
   ageText,
+  aliveBoards,
+  anyFlashing,
   applyFile,
   boardId,
+  boardIdIn,
   cancelAction,
+  counts,
   currentPin,
   debugLine,
   deriveBar,
   doneAction,
-  actionFile,
+  flashing,
   hiddenKeys,
+  isUnseen,
   labelOf,
+  listOrder,
   markRead,
   newBarState,
   newPinIds,
+  nextPick,
+  observeArrivals,
   openNeeds,
+  orchestratorSection,
+  otherCount,
+  pickAt,
+  pickNumber,
   pinbarMode,
   pins,
   pruneRead,
@@ -28,6 +42,7 @@ import {
   segments,
   settleSent,
   slimLine,
+  stripItems,
   takeDue,
 } from '../mods/herdr-agents/model.js'
 
@@ -215,6 +230,14 @@ test('boardId takes <session>.json in the board folder and nothing else', () => 
   assert.equal(boardId(dir, `${dir}/abc.actions/1-x.json`), null)
   assert.equal(boardId(dir, `${dir}/abc.actions`), null)
   assert.equal(boardId(dir, '/elsewhere/abc.json'), null)
+})
+
+test('boardIdIn: a path under the resolved folder (/tmp is /private/tmp) still gives the id', () => {
+  const dirs = ['/tmp/h/board', '/private/tmp/h/board']
+  assert.equal(boardIdIn(dirs, '/private/tmp/h/board/abc.json'), 'abc')
+  assert.equal(boardIdIn(dirs, '/tmp/h/board/abc.json'), 'abc')
+  assert.equal(boardIdIn(dirs, '/private/tmp/h/board/abc.actions/1-x.json'), null)
+  assert.equal(boardIdIn(dirs, '/elsewhere/abc.json'), null)
 })
 
 test('applyFile: a changed file replaces, a bad one keeps the last good copy, a removed one drops the board', () => {
@@ -470,4 +493,331 @@ test('deriveBar: the first draw of a board never resets by "new pins"; waiting t
   ])
   assert.equal(r.view.mode, 'empty', 'hidden pins are left out')
   assert.equal(bar(newBarState(), b, { now: 100 + 5 * 60000 }).view.meta, 'w-api · 5m')
+})
+
+// --- S12: the agents list's Orchestrators section ---
+
+const agent = (address, status = 'idle') => ({ address, status, seq: 1 })
+
+test("S12: an agent is an orchestrator when its address is a live board's coordinator terminal", () => {
+  const boards = [board('a', 't1'), board('b', 't3')]
+  const terminals = [term('t1'), term('t2'), term('t3', { state: 'exited' })]
+  const r = orchestratorSection([agent('t1'), agent('t2'), agent('t3')], boards, terminals)
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1'],
+  )
+})
+
+test('S12: workers of a board and boards without the field are not orchestrators', () => {
+  const boards = [board('a', 't1', { workers: [{ name: 'w-api' }] }), { session: 'old', at: 1 }]
+  const terminals = [term('t1'), term('t7', { name: 'w-api' })]
+  assert.deepEqual(
+    orchestratorSection([agent('t1'), agent('t7')], boards, terminals).orchestrators.map(a => a.address),
+    ['t1'],
+  )
+})
+
+test('S12: a state change keeps the row in the section and the order', () => {
+  const boards = [board('a', 't1'), board('b', 't2')]
+  const terminals = [term('t1'), term('t2')]
+  for (const status of ['idle', 'working', 'blocked', 'done']) {
+    const r = orchestratorSection(
+      [agent('t1', status), agent('t5', 'blocked'), agent('t2', status === 'idle' ? 'blocked' : 'idle')],
+      boards,
+      terminals,
+    )
+    assert.deepEqual(
+      r.orchestrators.map(a => a.address),
+      ['t1', 't2'],
+      status,
+    )
+  }
+})
+
+test('S12: orchestrators keep agents() order when the sort reverses them', () => {
+  const natural = [agent('t1', 'idle'), agent('t2', 'idle'), agent('t5', 'idle')]
+  const sorted = [natural[1], natural[2], natural[0]]
+  const boards = [board('a', 't1'), board('b', 't2')]
+  const terminals = ['t1', 't2', 't5'].map(a => term(a))
+  const r = listOrder(sorted, boards, terminals, [], natural)
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1', 't2'],
+  )
+  assert.deepEqual(
+    r.list.map(a => a.address),
+    ['t1', 't2', 't5'],
+  )
+})
+
+test('S12: a pinned orchestrator shows once, in the section', () => {
+  const sorted = [agent('t5'), agent('t1'), agent('t6')]
+  const r = listOrder(sorted, [board('a', 't1')], [term('t1'), term('t5'), term('t6')], ['t1', 't6'])
+  assert.deepEqual(
+    r.list.map(a => a.address),
+    ['t1', 't6', 't5'],
+  )
+  assert.deepEqual(
+    r.pinned.map(a => a.address),
+    ['t6'],
+  )
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1'],
+  )
+})
+
+test('S12: orchestrators, then pinned in pin order, then the rest in the given order; stale pins are skipped', () => {
+  const sorted = [agent('t5'), agent('t1'), agent('t6'), agent('t2')]
+  const boards = [board('a', 't1'), board('b', 't2')]
+  const terminals = ['t1', 't2', 't5', 't6'].map(a => term(a))
+  const r = listOrder(sorted, boards, terminals, ['t6', 'gone', 't5'])
+  assert.deepEqual(
+    r.list.map(a => a.address),
+    ['t1', 't2', 't6', 't5'],
+  )
+  assert.deepEqual(r.rest, [])
+  const none = listOrder(sorted, boards, terminals, [])
+  assert.deepEqual(
+    none.rest.map(a => a.address),
+    ['t5', 't6'],
+  )
+})
+
+test('S12: with no board the list matches the shipped order (pinned, then the rest)', () => {
+  const sorted = [agent('t1'), agent('t2', 'working'), agent('t3')]
+  const terminals = [term('t1'), term('t2'), term('t3')]
+  for (const boards of [[], undefined]) {
+    const r = listOrder(sorted, boards, terminals, ['t3'])
+    assert.deepEqual(r.orchestrators, [])
+    assert.deepEqual(
+      r.list.map(a => a.address),
+      ['t3', 't1', 't2'],
+    )
+    assert.deepEqual(listOrder(sorted, boards, terminals, []).list, sorted)
+  }
+  assert.deepEqual(listOrder(undefined, [], []).list, [])
+})
+
+test('S12: with no board the section is empty', () => {
+  const list = [agent('t1'), agent('t2', 'working')]
+  assert.deepEqual(orchestratorSection(list, [], [term('t1'), term('t2')]), { orchestrators: [] })
+  assert.deepEqual(orchestratorSection(list, undefined, undefined).orchestrators, [])
+})
+
+test("S12: a remote terminal's address carries its machine, so a local board does not match it", () => {
+  const r = orchestratorSection([agent('t1'), agent('vps/t1')], [board('a', 't1')], [term('t1'), term('vps/t1')])
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1'],
+  )
+  const remote = orchestratorSection([agent('vps/t1')], [board('a', 'vps/t1')], [term('vps/t1')])
+  assert.deepEqual(
+    remote.orchestrators.map(a => a.address),
+    ['vps/t1'],
+  )
+})
+
+test("S12: aliveBoards is the resolver's rule 1", () => {
+  const boards = [board('gone', 't9'), board('shell', 't3'), board('ok', 't1')]
+  const terminals = [term('t1'), term('t3', { program: { agent: false } })]
+  assert.deepEqual(
+    aliveBoards(boards, terminals).map(b => b.session),
+    ['ok'],
+  )
+})
+
+test('S12: a terminal labelled as a worker is never a coordinator, even with a leftover board', () => {
+  const boards = [board('old', 't1')]
+  const terminals = [term('t1', { labels: { 'herdr-agents.role': 'worker' } })]
+  assert.deepEqual(aliveBoards(boards, terminals), [])
+  assert.deepEqual(orchestratorSection([agent('t1')], boards, terminals).orchestrators, [])
+  assert.equal(resolveBoard(boards, terminals, focus('t1')).board, null)
+})
+
+// ---- S3: the strip ----
+
+const full = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
+
+test('stripItems: blocked workers, then open asks, then open dos, in board order; know items stay out', () => {
+  const items = stripItems(full())
+  assert.deepEqual(
+    items.map(i => [i.kind, i.id]),
+    [
+      ['blocked', 'w-stuck'],
+      ['ask', 'D7'],
+      ['ask', 'D8'],
+      ['do', 'T12'],
+      ['do', 'T13'],
+    ],
+  )
+  assert.equal(items[0].label, 'waiting at a permission prompt')
+  assert.equal(items[1].label, 'Pagination style')
+  assert.equal(new Set(items.map(i => i.key)).size, items.length)
+})
+
+test('stripItems: order does not follow the order in the file; closed needs and no board give nothing', () => {
+  const b = {
+    workers: [
+      { name: 'a', state: 'working' },
+      { name: 'b', state: 'blocked' },
+    ],
+    needs: [
+      { key: 'T1', kind: 'do', text: 'second line\nx', isOpen: true },
+      { key: 'D1', kind: 'ask', text: 'first\nmore', isOpen: true },
+      { key: 'D2', kind: 'ask', text: 'closed', isOpen: false },
+      { key: 'K1', kind: 'know', text: 'fyi', isOpen: true },
+    ],
+  }
+  const items = stripItems(b)
+  assert.deepEqual(
+    items.map(i => i.id),
+    ['b', 'D1', 'T1'],
+  )
+  assert.equal(items[0].label, 'stuck', 'a blocked worker with no note')
+  assert.equal(items[1].label, 'first', 'no title: the first line of the text')
+  assert.deepEqual(stripItems(null), [])
+  assert.deepEqual(stripItems({}), [])
+})
+
+test('counts: workers by state', () => {
+  assert.deepEqual(counts(full()), { working: 2, waiting: 1, blocked: 1 })
+  assert.deepEqual(counts(null), { working: 0, waiting: 0, blocked: 0 })
+})
+
+test('pickAt: keys 1 to 6 reach the first six; later tabs are reached by scrolling', () => {
+  const items = Array.from({ length: 8 }, (_, i) => ({ key: `k${i + 1}` }))
+  assert.equal(pickAt(items, 1).key, 'k1')
+  assert.equal(pickAt(items, 6).key, 'k6')
+  assert.equal(pickAt(items, 7), null)
+  assert.equal(pickAt(items, 0), null)
+  assert.equal(pickAt(items.slice(0, 2), 3), null)
+})
+
+test('otherCount: a terminal counts once, by its newest board; the shown terminal is not other', () => {
+  const withItems = (session, terminal, at, n) =>
+    board(session, terminal, { at, needs: Array.from({ length: n }, (_, i) => ({ key: `D${i}`, kind: 'ask', text: 'q', isOpen: true })) })
+  const here = withItems('here', 't1', 5, 1)
+  const terminals = [term('t1'), term('t2'), term('t3'), term('t4', { state: 'exited' }), term('t5', { program: { agent: false } })]
+  const boards = [
+    here,
+    withItems('a', 't2', 10, 2),
+    withItems('b', 't3', 20, 3),
+    withItems('gone', 't4', 30, 9),
+    withItems('shell', 't5', 40, 9),
+    withItems('stray', 't1', 60, 4),
+  ]
+  assert.deepEqual(otherCount(boards, terminals, here), { count: 5, terminal: 't2' })
+  assert.deepEqual(otherCount([here], terminals, here), { count: 0, terminal: null })
+  assert.deepEqual(
+    otherCount(boards, terminals, null),
+    { count: 9, terminal: 't1' },
+    'with no board shown, every live terminal is other, and t1 counts its newest board',
+  )
+  // After a /clear elsewhere two files point at t2: only the newest counts.
+  const cleared = [here, withItems('new', 't2', 20, 1), withItems('old', 't2', 10, 3)]
+  assert.equal(otherCount(cleared, terminals, here).count, 1)
+  // The newest board decides, even when it is empty.
+  assert.deepEqual(otherCount([here, withItems('old', 't3', 10, 3), withItems('new', 't3', 20, 0)], terminals, here), {
+    count: 0,
+    terminal: null,
+  })
+  // Equal times go by session id.
+  assert.equal(otherCount([here, withItems('b', 't2', 10, 5), withItems('a', 't2', 10, 2)], terminals, here).count, 2)
+})
+
+test('otherCount: the terminal cycles through every other board, in address order, wrapping', () => {
+  const one = (session, terminal) => board(session, terminal, { needs: [{ key: 'D1', kind: 'ask', text: 'q', isOpen: true }] })
+  const terminals = ['t1', 't2', 't3', 't4'].map(a => term(a))
+  const boards = ['t1', 't2', 't3', 't4'].map(t => one(`s-${t}`, t))
+  const next = from =>
+    otherCount(
+      boards,
+      terminals,
+      boards.find(b => b.coordinator.terminal === from),
+    ).terminal
+  assert.equal(next('t1'), 't2')
+  assert.equal(next('t2'), 't3')
+  assert.equal(next('t3'), 't4')
+  assert.equal(next('t4'), 't1', 'wraps')
+  // Walking from board to board visits all of them.
+  const seen = []
+  for (let at = 't1', i = 0; i < 4; i++) seen.push(at), (at = next(at))
+  assert.deepEqual(seen, ['t1', 't2', 't3', 't4'])
+  // A shown board with no place in the order still gets the first one after it.
+  const withGap = otherCount(boards, terminals, board('x', 't25'))
+  assert.equal(withGap.terminal, 't3')
+  // Boards with nothing open are skipped.
+  const quiet = [boards[0], board('s-t2', 't2'), boards[2]]
+  assert.equal(otherCount(quiet, terminals, boards[0]).terminal, 't3')
+})
+
+test('flashing: for 0.9 s x 4 after the first sighting, never for what was there at the start', () => {
+  assert.equal(FLASH_MS, 3600)
+  assert.equal(flashing('s:D7', 1000, 1000), true)
+  assert.equal(flashing('s:D7', 1000, 1000 + FLASH_MS - 1), true)
+  assert.equal(flashing('s:D7', 1000, 1000 + FLASH_MS), false)
+  assert.equal(flashing('s:D7', 1000, 999), false, 'a clock that went back')
+  assert.equal(flashing('s:D7', 0, 1790000000000), false, 'stamped 0 = there at the start')
+  assert.equal(flashing('s:D7', undefined, 1000), false)
+  assert.equal(flashing('', 1000, 1000), false)
+})
+
+test('observeArrivals: the first load is silent, later arrivals are stamped, gone items are dropped', () => {
+  const b = full()
+  const first = observeArrivals(null, [b], 5000)
+  assert.ok(Object.keys(first).length === 5 && Object.values(first).every(at => at === 0))
+  const added = { ...b, workers: [...b.workers, { name: 'w-new', state: 'blocked', note: 'stuck' }] }
+  const key = `${b.session}:w:w-new`
+  const second = observeArrivals(first, [added], 9000)
+  assert.equal(second[key], 9000)
+  assert.equal(second[`${b.session}:D7`], 0, 'a known item keeps its stamp')
+  const third = observeArrivals(second, [b], 9500)
+  assert.equal(key in third, false)
+  assert.equal(flashing('x', second[key], 9500), true)
+})
+
+test('isUnseen: a late arrival stays unseen until selected; what was there at the start never is', () => {
+  const known = { a: 9000, b: 0 }
+  assert.equal(isUnseen('a', known, new Set()), true)
+  assert.equal(isUnseen('a', known, new Set(['a'])), false)
+  assert.equal(isUnseen('b', known, new Set()), false)
+  assert.equal(isUnseen('c', known, new Set()), false)
+})
+
+test('observeArrivals: only a new blocked worker flashes; asks and dos arriving later do not', () => {
+  const b = full()
+  const first = observeArrivals(null, [b], 5000)
+  const added = {
+    ...b,
+    workers: [...b.workers, { name: 'w-new', state: 'blocked', note: 'stuck' }],
+    needs: [...b.needs, { key: 'D9', kind: 'ask', text: 'new', isOpen: true }, { key: 'T9', kind: 'do', text: 'new', isOpen: true }],
+  }
+  const next = observeArrivals(first, [added], 9000)
+  assert.equal(next[`${b.session}:w:w-new`], 9000)
+  assert.equal(next[`${b.session}:D9`], 0)
+  assert.equal(next[`${b.session}:T9`], 0)
+  assert.equal(anyFlashing(next, 9500), true)
+  assert.equal(anyFlashing({ a: 0, b: 0 }, 9500), false)
+  assert.equal(isUnseen(`${b.session}:D9`, next, new Set()), false)
+  assert.equal(isUnseen(`${b.session}:w:w-new`, next, new Set()), true)
+})
+
+test('pickNumber: pick1..6 by command name, nothing else', () => {
+  assert.equal(pickNumber('herdr-agents.pick3'), 3)
+  assert.equal(pickNumber('pick6'), 6)
+  assert.equal(pickNumber('herdr-agents.pick7'), null)
+  assert.equal(pickNumber('herdr-agents.pick0'), null)
+  assert.equal(pickNumber('herdr-agents.sheet'), null)
+  assert.equal(pickNumber(undefined), null)
+})
+
+test('nextPick: a click on the selected tab deselects, a key never does', () => {
+  const now = { session: 's', key: 'D7' }
+  assert.deepEqual(nextPick(null, 's', 'D7', true), now)
+  assert.equal(nextPick(now, 's', 'D7', true), null)
+  assert.deepEqual(nextPick(now, 's', 'D7', false), now, 'a key keeps it selected')
+  assert.deepEqual(nextPick(now, 's', 'D8', true), { session: 's', key: 'D8' })
+  assert.deepEqual(nextPick(now, 'other', 'D7', true), { session: 'other', key: 'D7' }, 'same key on another board is another tab')
 })

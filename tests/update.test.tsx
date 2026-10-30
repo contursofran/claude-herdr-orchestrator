@@ -1,5 +1,5 @@
-import { expect, test } from 'claude-code/testing'
-import { command, start, type Answer } from './harness'
+import { expect } from 'claude-code/testing'
+import { type Answer, command, start, test } from './harness'
 
 // /hrd-update: switches the clone install.sh recorded to main, pulls it, runs its install.sh, and answers in one line.
 

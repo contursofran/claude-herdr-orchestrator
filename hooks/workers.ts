@@ -14,8 +14,10 @@ import {
   NAME,
   PROMPT_CHECK_MS,
   PROMPT_TRIES,
+  PROMPT_WAIT_MS,
   QUIET_BUSY_MS,
   QUIET_MS,
+  SEND_DEADLINE_MS,
 } from './defaults'
 import {
   closeTerminal,
@@ -102,7 +104,16 @@ export function reportReminder(job: Job) {
 export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false, force = false) {
   const token = crypto.randomUUID().slice(0, 8)
   seenReport.delete(job.name)
-  const next: Job = { ...job, token, status: 'running', endedAt: undefined, tail: undefined }
+  // The last turn's report is not this turn's: it goes with the status it set.
+  const next: Job = {
+    ...job,
+    token,
+    status: 'running',
+    endedAt: undefined,
+    tail: undefined,
+    reportStatus: undefined,
+    reportFile: undefined,
+  }
   await saveJob($, next)
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
@@ -119,28 +130,57 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
     arm($, next, 'finish')
   } else {
     // A prompt that never arrived is reported after a while: a tool call can't submit one.
-    void $.clock.sleep(LOST_REPORT_MS).then(() => serial(next.name, () => deliver($, next, 'blocked', QUIET_MS, lost)))
+    void $.clock
+      .sleep(LOST_REPORT_MS)
+      .then(() => serial(next.name, () => deliver($, next, 'blocked', QUIET_MS, lost)))
+      .catch(() => {})
   }
 }
 
-// hc types a prompt and reports whether work started within a few seconds, but a CLI still busy
-// with its own startup (many terminals starting at once) can drop it, leaving the worker at an empty
-// input box. When no work starts, text still in the input box is submitted, else the prompt is typed
-// again. Returns why it was not delivered, or undefined once work started. A statusless CLI
-// (started: null) counts as delivered; the quiet-screen rule catches it if it never works.
+// hc types a prompt and reports whether work started within 5 s, which does not tell a lost prompt from a
+// slow one. A CLI still busy with its own startup (many terminals starting at once) can drop a prompt, leaving
+// the worker at an empty input box. It can also have taken it and still report idle: Claude does not start a
+// turn until its session.start hooks are done, and a second copy typed meanwhile runs when the first ends. So
+// each try gets PROMPT_WAIT_MS to start work. Then a prompt the screen shows (in the input box, or as a CLI's
+// paste placeholder) is submitted, and only one the screen does not show is typed again. Returns why it was
+// not delivered, or undefined once work started. A statusless CLI (started: null) counts as delivered; the
+// quiet-screen rule catches it if it never works. The whole call has a deadline, SEND_DEADLINE_MS: the waits add
+// up to 3 x 90 s, the sends and reads to some 20 s more, and slow `hc get` calls would stretch that without it.
 async function send($: EngineInterface, name: string, text: string, force = false): Promise<string | undefined> {
+  const deadline = (await $.clock.now()) + SEND_DEADLINE_MS
+  const late = async () => (await $.clock.now()) >= deadline
   const typeIt = () => hc<HcSend>($, ['send', name, text, ...(force ? ['--force'] : [])], 30_000)
-  const working = async () => {
-    const state = (await hc<HcTerminal>($, ['get', name])).status?.state
-    return state === 'working' || state === 'blocked'
+  let turn = 0
+  // A short turn can start and end between two looks: only the turn count shows it then.
+  const started = async () => {
+    const t = await hc<HcTerminal>($, ['get', name])
+    return t.status?.state === 'working' || t.status?.state === 'blocked' || (t.turn ?? 0) > turn
+  }
+  const startsInTime = async () => {
+    for (let waited = 0; waited < PROMPT_WAIT_MS; waited += PROMPT_CHECK_MS) {
+      if (await started()) return true
+      if (await late()) return false
+      await $.clock.sleep(PROMPT_CHECK_MS)
+    }
+    return await started()
+  }
+  // The visible screen only: `hc read --lines` scrolls a full-screen CLI, and took 25 s on one that had not started its turn.
+  const onScreen = async () => {
+    const screen = await readScreen($, name)
+    // The placeholder counts only in the input box at the bottom: the transcript above may show an earlier prompt's.
+    return screen.includes(text.slice(0, 40)) || /\[Pasted /i.test(screen.split('\n').slice(-8).join('\n'))
   }
   for (let i = 0; i < PROMPT_TRIES; i++) {
+    if (i > 0 && (await late())) return `its prompt was not delivered: no work started within ${SEND_DEADLINE_MS / 60_000} minutes`
     try {
-      if (i > 0 && (await readScreen($, name, 40)).includes(text.slice(0, 40))) {
+      if (i > 0 && (await onScreen())) {
         await hc($, ['keys', name, 'enter'])
-        await $.clock.sleep(PROMPT_CHECK_MS)
-      } else if ((await typeIt()).started !== false) return undefined
-      if (await working()) return undefined
+      } else {
+        const sent = await typeIt()
+        if (sent.started !== false) return undefined
+        turn = sent.turn
+      }
+      if (await startsInTime()) return undefined
     } catch (err) {
       const kind = kindOf(err)
       if (kind === 'blocked') return 'it waits at an approval or question, so the text was not typed'
@@ -232,9 +272,20 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
     if (status === 'blocked' && job.tail === 'early') await blockedAfterReport($, job)
     return
   }
-  // It works again (the owner answered): its turn's end is the one to wait for next.
-  if (status === 'working') return arm($, job, 'finish')
+  // It works again (the owner answered): it is no longer blocked, and its turn's end is the one to wait for next.
+  if (status === 'working') return arm($, await answered($, job), 'finish')
   await endTail($, job)
+}
+
+// A blocked report (tail 'blocked') whose worker works again was answered in its tab: it is no longer
+// blocked (its turn is still on, so the watch stays as an early report's). A job with tail 'early' is left
+// as it is: its worker working means the turn it reported in is still on, not that anyone answered it.
+// Returns the job as it is now.
+async function answered($: EngineInterface, job: Job) {
+  const { after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && j.tail === 'blocked' ? { ...j, tail: 'early', headerStatus: undefined } : undefined,
+  )
+  return after ?? job
 }
 
 // A worker that reported early, then waits at an approval or question: the coordinator is told once.
@@ -389,6 +440,7 @@ async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | unde
   lastStatus.set(job.name, status)
   if (status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
   if (status !== 'working' && status !== 'blocked' && status !== 'error') return await endTail($, job)
+  if (status === 'working') job = await answered($, job)
   if (!armed.has(job.name)) arm($, job, status === 'working' ? 'finish' : 'resume')
 }
 
@@ -594,6 +646,7 @@ export async function deliver(
           tail,
           reportFile,
           reportStatus: status,
+          headerStatus: header?.status,
         }
       : undefined,
   )
@@ -962,7 +1015,15 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
       return { result: `Stopped ${e.worker} while it was starting.${await belowTarget($)}` }
     }
   }
-  await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now(), tail: undefined })
+  // A worker that delivered a report keeps its status and file; one that did not is stopped.
+  // Either way it leaves Blocked at once.
+  await patchJob($, job.name, {
+    status: 'reported',
+    ...(job.status === 'running' || !job.reportFile ? { reportStatus: 'stopped' } : {}),
+    headerStatus: undefined,
+    endedAt: await $.clock.now(),
+    tail: undefined,
+  })
   try {
     await closeTerminal($, job.name)
   } catch (err) {

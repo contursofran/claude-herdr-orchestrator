@@ -17,7 +17,26 @@ const block = (id, px, role) => ({
   content: { mod: 'herdr-agents', props: { role } },
 })
 
-/** `main` with (`version` is the app's, for `cloned_from`) the pin bar after `tabs` and the strip after `work-body`, both in the `work` column. Throws if main has another shape. */
+const agentsList = { mod: 'herdr-agents', props: { role: 'agents' } }
+
+/** Points the `agents` block (Herdr's agents list) at this mod's copy, which has the Orchestrators section.
+ *  Edits `layout` in place; true if it changed anything. Only a block that still shows Herdr's own `agents` mod is touched. */
+export function repointAgents(layout) {
+  const find = node => {
+    if (node?.id === 'agents' && node.content?.mod === 'agents') return node
+    for (const child of node?.children ?? []) {
+      const found = find(child)
+      if (found) return found
+    }
+    return null
+  }
+  const node = find(layout)
+  if (!node) return false
+  node.content = { ...node.content, ...structuredClone(agentsList), props: { ...node.content.props, ...agentsList.props } }
+  return true
+}
+
+/** `main` with (`version` is the app's, for `cloned_from`) the pin bar after `tabs` and the strip after `work-body`, both in the `work` column, and the `agents` block on this mod's list. Throws if main has another shape. */
 export function coordinatorLayout(main, version) {
   const layout = structuredClone(main)
   const find = (node, id) => {
@@ -36,14 +55,27 @@ export function coordinatorLayout(main, version) {
   if (find(layout, 'hrd-pins') || find(layout, 'hrd-strip')) throw new Error('layouts/main.json already has the pin bar or strip')
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
+  repointAgents(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
 
-/** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written' or 'exists'. */
+/** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written' or 'exists'. A file that exists keeps
+ *  everything but one thing: an `agents` block still on Herdr's own mod is repointed (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
-  if (existsSync(target)) return 'exists'
+  if (existsSync(target)) {
+    let layout
+    try {
+      layout = JSON.parse(readFileSync(target, 'utf8'))
+    } catch {
+      return 'exists'
+    }
+    if (!repointAgents(layout)) return 'exists'
+    writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
+    renameSync(`${target}.tmp`, target)
+    return 'updated'
+  }
   const main = JSON.parse(readFileSync(join(home, 'layouts', 'main.json'), 'utf8'))
   let version
   try {
@@ -64,7 +96,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
-        : 'Layout "coordinator" exists; left as it is.',
+        : result === 'updated'
+          ? 'Layout "coordinator" exists; only its agents list now uses the Orchestrators copy.'
+          : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {
     // Not fatal: the install carries on without the layout.

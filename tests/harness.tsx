@@ -1,4 +1,4 @@
-import { mock } from 'claude-code/testing'
+import { mock, test as kitTest } from 'claude-code/testing'
 import type { CommandRunInput, On } from 'claude-code'
 import type { Engine, MockClock, Mounted } from 'claude-code/testing'
 import type { Settings } from '../types'
@@ -6,11 +6,25 @@ import type { Settings } from '../types'
 // What the tests share: the band's render props, and start(), which stands in for the
 // engine beneath the mod (hc, git, the file system) and starts a session in /repo.
 
+// The kit gives a test 5 s unless it names timeoutMs, and the runner has no setting for it. These tests
+// run on real timers, so a busy machine can pass 5 s with nothing wrong. Import test from here: the same
+// test, with 60 s, or the test's own timeoutMs when that is longer.
+const TIMEOUT_MS = 60_000
+export const test: typeof kitTest = ((name: string, ...rest: unknown[]) => {
+  const [first] = rest
+  const opts = typeof first === 'function' ? undefined : (first as { timeoutMs?: number })
+  const tail = typeof first === 'function' ? rest : rest.slice(1)
+  return (kitTest as (...a: unknown[]) => unknown)(name, { ...opts, timeoutMs: Math.max(opts?.timeoutMs ?? 0, TIMEOUT_MS) }, ...tail)
+}) as typeof kitTest
+
 export const BAND = {
   plugin: 'herdr-agents',
   component: 'AbovePrompt',
   props: { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 140, scroll: { offset: 0, bodyRows: 29 }, view: {} },
 } as const
+
+// What the engine's tool registrations wait for, if a test sets it before start(): a real one waits 8 s for its tool.
+export const registering: { until?: Promise<void>; fail?: string } = {}
 
 // The clock of the session start() began last: tests run one at a time.
 let latest: MockClock | undefined
@@ -81,6 +95,11 @@ export async function start(
   const prs: Record<string, unknown> = {}
   // How many more `hc send` calls report started: false, by worker; the test sets it.
   const stalls: Record<string, number> = {}
+  // Workers whose CLI sits on what it is sent, as Claude does until its session.start hooks are done: hc says idle
+  // and started: false, the screen shows a paste placeholder, and each copy runs in turn once the test lets the turn start.
+  const holds = new Set<string>()
+  // The turn count hc reports per worker.
+  const turns: Record<string, number> = {}
   // How many more prompts this session refuses (its `$.prompt.submit` throws); the test sets it.
   const refuse = { next: 0 }
   // Every hc call the mod makes, in order: the CLI's process.run argv (with the --json the wrapper adds)
@@ -177,7 +196,9 @@ export async function start(
   // The spec of each tool the mod registered, and how often.
   const tools: Record<string, { description: string }> = {}
   const toolCalls: string[] = []
-  on('tool.register', (_, e) => {
+  on('tool.register', async (_, e) => {
+    await registering.until
+    if (registering.fail) throw new Error(registering.fail)
     tools[e.name] = e
     toolCalls.push(e.name)
     return { value: { tool: e.name } }
@@ -257,6 +278,7 @@ export async function start(
       name: t.name,
       cwd: t.cwd,
       state: t.finished ? 'finished' : 'live',
+      turn: turns[t.name] ?? 0,
       status:
         !word || noStatus.has(t.name) || t.finished
           ? null
@@ -390,12 +412,17 @@ export async function start(
           status[t.name] = STATUS[t.name] ?? status[t.name]!
         }
         sends.push({ name: t.name, text, force })
+        if (holds.has(t.name)) {
+          screens[t.name] = '❯ [Pasted text #1]\n✻ Shimmying… (4s)\n❯'
+          status[t.name] = 'idle'
+          return ok({ started: false, status: 'idle', turn: turns[t.name] ?? 0 })
+        }
         const word = noStatus.has(t.name) ? null : (status[t.name] ?? null)
         if (stalls[t.name]) {
           stalls[t.name]! -= 1
-          return ok({ started: false, status: word, turn: 0 })
+          return ok({ started: false, status: word, turn: turns[t.name] ?? 0 })
         }
-        return ok({ started: word === null ? null : true, status: word, turn: 0 })
+        return ok({ started: word === null ? null : true, status: word, turn: turns[t.name] ?? 0 })
       }
       if (sub === 'keys') {
         if (!t) return missing()
@@ -522,6 +549,8 @@ export async function start(
     prs,
     panes,
     stalls,
+    holds,
+    turns,
     refuse,
     store,
     calls,

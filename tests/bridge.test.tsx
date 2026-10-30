@@ -1,6 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
-import { spawn, start, stopAll } from './harness'
+import { spawn, start, stopAll, test } from './harness'
 
 // The board for apps outside Claude Code: a snapshot file per session, and action files
 // that press the sidebar's buttons.

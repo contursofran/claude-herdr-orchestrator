@@ -33,7 +33,12 @@ export const QUIET_MS = 5 * 60_000
 export const QUIET_BUSY_MS = 60 * 60_000
 // How often a prompt is sent or submitted again when hc sees no work start after it.
 export const PROMPT_TRIES = 3
-// How long to wait after pressing Enter on a prompt left in the input box before checking that work started.
+// How long a prompt gets to start work before it is submitted or typed again. Longer than the 56 s a
+// Claude session has been seen to sit on a first prompt while it starts.
+export const PROMPT_WAIT_MS = 90_000
+// The most a prompt's delivery may take in all, however slow hc is: 3 tries of 90 s, and room for the calls between.
+export const SEND_DEADLINE_MS = 6 * 60_000
+// How often hc is asked whether that work started.
 export const PROMPT_CHECK_MS = 5000
 // How often the sweep reads hc for every running worker at once (one `hc ls`).
 export const SWEEP_MS = 60_000

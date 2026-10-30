@@ -1,5 +1,5 @@
-import { expect, test } from 'claude-code/testing'
-import { BAND, command, start } from './harness'
+import { expect } from 'claude-code/testing'
+import { BAND, command, start, test } from './harness'
 
 // The spawn tool's description lists the profiles in the config; it is rebuilt when they change.
 
