@@ -697,6 +697,16 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
 
+/** Which terminal gets the keyboard when the pop-up goes (`from`: {back, space} saved at open), or null. Null when a row
+ *  already chose (`leaving`), in another space, or when the owner clicked another terminal to dismiss it. */
+export function popupRefocus(from, now, leaving) {
+  if (leaving || !canRefocus(from, now?.space)) return null
+  return now?.terminal && now.terminal !== from.back ? null : from.back
+}
+
+/** The pop-up's keys: Esc closes; a key held down and every other key do nothing. */
+export const popupKeyAction = (key, held) => (!held && String(key ?? '').toLowerCase() === 'escape' ? 'close' : 'ignore')
+
 /** A window length in the px a mod writes: the app draws those, and the layout's rows and sidebars, `zoom` times as big,
  *  while `viewport_size` is not scaled. */
 export const atZoom = (px, zoom) => Number(px) / (zoom > 0 ? zoom : 1)
@@ -942,4 +952,14 @@ export function coreIdOf(text) {
   } catch {
     return ''
   }
+}
+
+/** The strip's context line for `board.summary.context`, with the band's text and thresholds: `warning` from 80% of the
+ *  limit, `error` from 95%. null without usable data. */
+export function contextLine(board) {
+  const { tokens, limit } = board?.summary?.context ?? {}
+  if (!Number.isFinite(tokens) || !Number.isFinite(limit) || limit <= 0) return null
+  const level = tokens >= limit * 0.95 ? 'error' : tokens >= limit * 0.8 ? 'warning' : null
+  const text = `ctx ${Math.round(tokens / 1000)}k / ${Math.round(limit / 1000)}k${level === 'error' ? ' · resets soon' : ''}`
+  return { text, level }
 }

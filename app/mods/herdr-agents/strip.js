@@ -1,8 +1,9 @@
 import { div, svg } from 'gpui-kit'
-import { nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
+import { focused, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
+  contextLine,
   counts,
   flashing,
   isBoardCommand,
@@ -143,6 +144,9 @@ export function openBoardPopup(board) {
     pins: Boolean(shared('hrd.pins')),
     sheet: Boolean(shared('hrd.sheet')),
   })
+  // The terminal to hand back; if the card holds the keyboard, the one the card will hand back. Read before anything closes.
+  const back = shared('hrd.open')?.back ?? focused()?.terminal ?? null
+  const space = focused()?.space ?? null
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
@@ -156,7 +160,7 @@ export function openBoardPopup(board) {
     width: POPUP_W,
     height,
     at: popupSpot(view.width, view.height, height),
-    props: { role: 'board', session: board.session, height, board },
+    props: { role: 'board', session: board.session, height, board, back, space },
   })
   setShared('hrd.popup', overlay)
 }
@@ -254,6 +258,17 @@ function count(name, n) {
     .child(String(n))
 }
 
+/** `ctx 145k / 250k`: quiet until it nears the limit, as in the band. */
+function contextText(line) {
+  const shade = line.level === 'error' ? look.ctxError : line.level === 'warning' ? look.ctxWarning : look.muted
+  return div()
+    .id('strip-context')
+    .flex_none()
+    .text_color(shade)
+    .when(line.level === 'error', el => el.font_bold())
+    .child(line.text)
+}
+
 /** `⌘J`: opens or closes the context sheet. */
 const sheetPill = board =>
   div()
@@ -322,6 +337,8 @@ export function strip(board, ctx = {}) {
         .child(`${other.count} in other ›`),
     )
   }
+  const context = contextLine(board)
+  if (context) right.child(contextText(context))
   right
     .child(
       div()

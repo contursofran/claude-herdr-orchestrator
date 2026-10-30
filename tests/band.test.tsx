@@ -25,6 +25,7 @@ test('a pinned to-do shows at the top, and Done unpins it and tells the coordina
   expect(await ui.find({ type: 'Text', text: /Merge client/ })).toBeUndefined()
   await clock.advance(BATCH_MS)
   expect(submitted.at(-1)).toMatch(/<herdr-owner-done id="T1" from="app-client#541">\nThe owner ticked off: Merge client #565/)
+  expect(submitted.at(-1)).not.toContain('state file')
 
   // A news item is dismissed without a prompt.
   const before = submitted.length

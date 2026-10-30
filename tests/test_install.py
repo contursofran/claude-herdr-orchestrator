@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -68,6 +69,77 @@ class Install(unittest.TestCase):
         self.assertEqual([c["id"] for c in card], ["hrd-card", "hrd-sheet"])
         self.assertEqual((card[0]["edge"], card[0]["align"]), ("bottom", "center"))
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
+
+    def version_file(self):
+        return os.path.join(self.app, "mods", "herdr-agents", "version.json")
+
+    def plugin_version(self):
+        with open(os.path.join(CLONE, ".claude-plugin", "plugin.json")) as f:
+            return json.load(f)["version"]
+
+    def test_with_the_app_the_install_writes_the_version_and_commit_into_the_installed_mod_only(self):
+        os.makedirs(self.app)
+        self.install()
+        commit = subprocess.run(["git", "-C", CLONE, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        with open(self.version_file()) as f:
+            self.assertEqual(json.load(f), {"version": self.plugin_version(), "commit": commit})
+        self.assertFalse(os.path.exists(os.path.join(CLONE, "app", "mods", "herdr-agents", "version.json")))
+
+    def test_a_second_install_leaves_an_unchanged_version_file_alone(self):
+        # Any file written in a mod folder reloads every copy of the mod.
+        os.makedirs(self.app)
+        self.install()
+        before = os.stat(self.version_file())
+        self.install()
+        after = os.stat(self.version_file())
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+
+    def test_a_stale_version_file_is_replaced(self):
+        os.makedirs(os.path.join(self.app, "mods", "herdr-agents"))
+        with open(self.version_file(), "w") as f:
+            f.write('{"version":"0.0.0"}')
+        self.install()
+        with open(self.version_file()) as f:
+            self.assertEqual(json.load(f)["version"], self.plugin_version())
+
+    def test_without_git_the_version_file_has_no_commit(self):
+        os.makedirs(self.app)
+        copy = os.path.join(self.config, "clone")
+        shutil.copytree(CLONE, copy, ignore=shutil.ignore_patterns(".git", "node_modules", ".herdr-agents"))
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app)
+        subprocess.run([os.path.join(copy, "install.sh")], capture_output=True, text=True, env=env, check=True)
+        with open(self.version_file()) as f:
+            self.assertEqual(json.load(f), {"version": self.plugin_version()})
+
+    def test_an_install_from_a_checkout_dated_differently_writes_no_mod_file(self):
+        # The app hot-reloads the mod on any write there, so a file that did not change must stay untouched (#158).
+        os.makedirs(self.app)
+        self.install()
+        mod = os.path.join(self.app, "mods", "herdr-agents")
+        main = os.path.join(mod, "main.js")
+        os.utime(main, (1000000000, 1000000000))
+        before = os.stat(main)
+        time.sleep(1.1)  # st_ctime has whole seconds here
+        self.install()
+        after = os.stat(main)
+        # ctime too: a chmod to the same mode (rsync -p) changes nothing else, and still wakes the app's watcher.
+        self.assertEqual((after.st_ino, after.st_mtime, after.st_ctime), (before.st_ino, before.st_mtime, before.st_ctime))
+
+    def test_an_install_writes_a_mod_file_that_changed_and_removes_one_that_went(self):
+        os.makedirs(self.app)
+        self.install()
+        mod = os.path.join(self.app, "mods", "herdr-agents")
+        main = os.path.join(mod, "main.js")
+        with open(main, encoding="utf-8") as f:
+            shipped = f.read()
+        with open(main, "w", encoding="utf-8") as f:
+            f.write("// an older version\n")
+        with open(os.path.join(mod, "gone.js"), "w", encoding="utf-8") as f:
+            f.write("// no longer shipped\n")
+        self.install()
+        with open(main, encoding="utf-8") as f:
+            self.assertEqual(f.read(), shipped)
+        self.assertFalse(os.path.exists(os.path.join(mod, "gone.js")))
 
     def test_a_missing_or_odd_main_layout_prints_a_message_and_the_install_carries_on(self):
         os.makedirs(os.path.join(self.app, "layouts"))
