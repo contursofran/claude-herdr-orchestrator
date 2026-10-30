@@ -3,7 +3,7 @@ import { target, wrappingUp } from './config'
 import { notify } from './hc'
 import { notesFolder, notesInstructions } from './notes'
 import { cmd } from './session'
-import { active, jobs } from './state'
+import { active, jobs, working } from './state'
 
 // The line the coordinator gets with a prompt that follows a report or a stop: while wrapping up,
 // how many workers are still out; otherwise, when fewer work than the target, how many to start.
@@ -20,7 +20,8 @@ export async function belowTarget($: EngineInterface) {
     return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand.${notes}Then stop. The owner ends it with ${cmd('wrap-up')} off.]`
   }
   const want = await target($)
-  const running = all.filter(j => active(j) && !j.wait).length
+  const now = await $.clock.now()
+  const running = all.filter(j => working(j, now)).length
   if (running >= want) return ''
   return `\n\n[${running} of ${want} workers working (waiting ones don't count). Start ${want - running} more now from the Ready list in the state file; if it has fewer than 3 items, also start a planner on the next backlog issue.]`
 }

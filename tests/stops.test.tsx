@@ -1,6 +1,6 @@
 import { expect } from 'claude-code/testing'
-import { BATCH_MS } from '../hooks/defaults'
-import { active } from '../hooks/state'
+import { BATCH_MS, BLOCKED_COUNTS_MS } from '../hooks/defaults'
+import { working } from '../hooks/state'
 import type { Job } from '../types'
 import { start, stopAll, test } from './harness'
 import { W, turnEnd, check, codex, spawnBusy, jobOf, spawnArgs, reportW } from './workerkit'
@@ -530,42 +530,85 @@ test('the idle close is not a stop: it marks the tab closed and nothing more', a
 
 // #191: a worker that leaves a prompt with no report written is a running worker again.
 // The count as belowTarget (hooks/target.ts) takes it.
-const counted = (store: Map<string, unknown>) =>
-  Object.values((store.get('jobs:session-1234') as { jobs: Record<string, Job> }).jobs).filter(j => active(j) && !j.wait).length
+const counted = (store: Map<string, unknown>, clock: { now: () => number }) =>
+  Object.values((store.get('jobs:session-1234') as { jobs: Record<string, Job> }).jobs).filter(j => working(j, clock.now())).length
 
-test('a worker blocked without a report counts as working once it leaves the prompt', async ($, on) => {
+test('a blocked worker counts for 3 minutes, then not, and again once it leaves the prompt', async ($, on) => {
   const { clock, submitted, emit, store } = await start($, on)
   await spawnBusy($, 'builder')
   await emit('w-busy', 'blocked')
   await clock.advance(BATCH_MS)
-  expect(counted(store)).toBe(0)
+  // The report sent as it blocks asks for no replacement of it.
+  expect(reportsOf(submitted).at(-1)).toMatch(/status="blocked"/)
+  expect(submitted.at(-1)).toMatch(/\[1 of 4 workers working/)
+  await clock.advance(BLOCKED_COUNTS_MS - BATCH_MS - 1)
+  expect(counted(store, clock)).toBe(1)
+  await clock.advance(1)
+  expect(counted(store, clock)).toBe(0)
   await emit('w-busy', 'working')
   await clock.advance(60_000)
   expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'running' })
   expect(jobOf(store, 'w-busy').tail).toBeUndefined()
-  expect(counted(store)).toBe(1)
-  // The line the coordinator gets counts it: a second worker's stop adds its own count to the result.
-  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-other', profile: 'builder', cwd: '/repo/other', task: 'Other.' })
-  await clock.advance(BATCH_MS)
-  const stop = await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-other' })
-  expect(JSON.stringify(stop)).toMatch(/\[1 of \d+ workers working/)
-  // Blocked again: it is reported again, and stops counting.
+  expect(counted(store, clock)).toBe(1)
+  // Blocked again: it is reported again, and its 3 minutes start over.
   await emit('w-busy', 'blocked')
   await clock.advance(BATCH_MS)
   expect(reportsOf(submitted).filter(r => r.includes('status="blocked"'))).toHaveLength(2)
-  expect(counted(store)).toBe(0)
+  expect(counted(store, clock)).toBe(1)
+  await clock.advance(BLOCKED_COUNTS_MS)
+  expect(counted(store, clock)).toBe(0)
 })
 
-test('a worker whose CLI error passes counts as working again', async ($, on) => {
+test('a blocked worker parked on a WAIT.json does not count', async ($, on) => {
+  const { clock, files, emit, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":30,"max":60}'
+  await emit('w-busy', 'idle')
+  await clock.advance(1000)
+  expect(jobOf(store, 'w-busy').wait).toBeDefined()
+  expect(counted(store, clock)).toBe(0)
+})
+
+test('a worker whose CLI errors does not count, and counts again once the error passes', async ($, on) => {
   const { clock, emit, store } = await start($, on)
   await spawnBusy($, 'builder')
   await emit('w-busy', 'error')
   await clock.advance(BATCH_MS)
-  expect(counted(store)).toBe(0)
+  expect(counted(store, clock)).toBe(0)
   await emit('w-busy', 'working')
   await clock.advance(60_000)
   expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'running' })
-  expect(counted(store)).toBe(1)
+  expect(counted(store, clock)).toBe(1)
+})
+
+test('a CLI that keeps erroring is reported once for its prompt, and still returns to running', async ($, on) => {
+  const { clock, submitted, emit, store, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  const screen = () => Object.keys(files).filter(f => f.startsWith(`${W}/SCREEN-`))
+  for (let flip = 0; flip < 3; flip++) {
+    await emit('w-busy', 'error')
+    await clock.advance(BATCH_MS)
+    expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', tail: 'blocked' })
+    if (flip === 0) for (const f of screen()) files[f] = 'first'
+    await emit('w-busy', 'working')
+    await clock.advance(60_000)
+    expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'running' })
+  }
+  expect(reportsOf(submitted).filter(r => r.includes('status="error"'))).toHaveLength(1)
+  expect(screen()).toHaveLength(1)
+  expect(files[screen()[0]!]).toBe('first')
+})
+
+test('a new prompt can report a CLI error again', async ($, on) => {
+  const { clock, submitted, emit } = await start($, on)
+  await spawnBusy($, 'builder')
+  await emit('w-busy', 'error')
+  await clock.advance(BATCH_MS)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Try again.' })
+  await clock.advance(BATCH_MS)
+  await emit('w-busy', 'error')
+  await clock.advance(BATCH_MS)
+  expect(reportsOf(submitted).filter(r => r.includes('status="error"'))).toHaveLength(2)
 })
 
 test('a worker that left a prompt and ends its turn with no report is reported by the quiet rule', async ($, on) => {
@@ -581,63 +624,19 @@ test('a worker that left a prompt and ends its turn with no report is reported b
 })
 
 test('a worker that left a prompt after its report stays out of the count: the report is out', async ($, on) => {
-  const { clock, typed, files, emit, store } = await start($, on)
+  const { clock, submitted, typed, files, emit, store } = await start($, on)
   await spawnBusy($, 'builder')
   const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
   await clock.advance(6000 + BATCH_MS)
   await emit('w-busy', 'blocked')
   await clock.advance(BATCH_MS)
+  expect(counted(store, clock)).toBe(0)
   await emit('w-busy', 'working')
   await clock.advance(60_000)
   expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'reported', tail: 'early' })
-  expect(counted(store)).toBe(0)
-})
-
-const REFUSES = '⏵ Dangerous rm operation\n│ Auto mode will automatically │\n│ block this request in 2 min │\n'
-
-test('the blocked report says when the prompt refuses itself, and does not ping the person', async ($, on) => {
-  const { clock, submitted, toasts, emit, screens } = await start($, on)
-  await spawnBusy($, 'builder')
-  screens['w-busy'] = REFUSES
-  await emit('w-busy', 'blocked')
-  await clock.advance(BATCH_MS)
-  const report = reportsOf(submitted).at(-1)
-  expect(report).toMatch(/refuses itself/)
-  expect(report).not.toMatch(/Ask the person/)
-  expect(toasts.filter(t => t.includes('w-busy is blocked'))).toHaveLength(0)
-})
-
-test('a block after an early report says the same when the prompt refuses itself', async ($, on) => {
-  const { clock, submitted, typed, files, toasts, emit, screens } = await start($, on)
-  await spawnBusy($, 'builder')
-  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
-  files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone for now.`
+  expect(counted(store, clock)).toBe(0)
+  // Its report is out once: going back to running would match RESULT.md again and send it twice.
   await clock.advance(6000 + BATCH_MS)
-  screens['w-busy'] = REFUSES
-  await emit('w-busy', 'blocked')
-  await clock.advance(BATCH_MS)
-  const report = reportsOf(submitted).at(-1)
-  expect(report).toMatch(/After its report.*refuses itself/)
-  expect(report).not.toMatch(/Ask the person/)
-  expect(toasts.filter(t => t.includes('w-busy is blocked'))).toHaveLength(0)
-})
-
-test('words higher up the screen are only a quote: the blocked report still asks the person', async ($, on) => {
-  const { clock, submitted, toasts, emit, screens } = await start($, on)
-  await spawnBusy($, 'builder')
-  screens['w-busy'] = `Issue says it will automatically block this request.\n${'line\n'.repeat(25)}Allow this command?`
-  await emit('w-busy', 'blocked')
-  await clock.advance(BATCH_MS)
-  expect(reportsOf(submitted).at(-1)).toMatch(/Ask the person to answer it there/)
-  expect(toasts.filter(t => t.includes('w-busy is blocked'))).toHaveLength(1)
-})
-
-test('a screen that cannot be read leaves the blocked report as it was', async ($, on) => {
-  const { clock, submitted, emit, fail } = await start($, on)
-  await spawnBusy($, 'builder')
-  fail.pane = 1
-  await emit('w-busy', 'blocked')
-  await clock.advance(BATCH_MS)
-  expect(reportsOf(submitted).at(-1)).toMatch(/Ask the person to answer it there/)
+  expect(reportsOf(submitted).filter(r => r.includes('Done for now.'))).toHaveLength(1)
 })

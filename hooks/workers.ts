@@ -320,7 +320,7 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
   await endTail($, job)
 }
 
-// A blocked report (tail 'blocked') whose worker works again was answered in its tab, or its prompt refused
+// A blocked report (tail 'blocked') whose worker works again was answered in its tab, or its prompt passed by
 // itself: it is no longer blocked. With no report written (the block or CLI error was all that went out) the
 // worker is simply running again, so it counts and its report or quiet end is delivered as any worker's. After
 // a real report its turn is still on, as an early report's. A job with tail 'early' is left as it is: its
@@ -335,35 +335,17 @@ async function answered($: EngineInterface, job: Job) {
   return after ?? job
 }
 
-const SELF_REFUSE_LINES = 20
-
-// A prompt Claude Code's auto mode refuses by itself after a while, read from the bottom of the worker's screen
-// (the prompt sits there; a line higher up may only quote these words). Wrapped lines and box borders are joined
-// first. Any failure reads as an ordinary prompt, which is what the report said before.
-async function refusesItself($: EngineInterface, name: string) {
-  try {
-    const bottom = (await readScreen($, name)).trimEnd().split('\n').slice(-SELF_REFUSE_LINES).join(' ')
-    return /will automatically block this request/i.test(bottom.replace(/[\s│|]+/g, ' '))
-  } catch {
-    return false
-  }
-}
-
-const SELF_REFUSED =
-  'Its screen shows a prompt that refuses itself ("will automatically block this request"), so nobody needs to answer: the worker should go on by itself within about two minutes. Don\'t send the person to its tab unless it stays blocked.'
-
 // A worker that reported early, then waits at an approval or question: the coordinator is told once.
 async function blockedAfterReport($: EngineInterface, job: Job) {
   const { after } = await updateJob($, job.name, j =>
     j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked' } : undefined,
   )
   if (!after) return
-  const passes = await refusesItself($, job.name)
-  if (!passes) notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
+  notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   arm($, after, 'resume')
   await post(
     $,
-    `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\nAfter its report, the worker waits at an approval or question in its herdr tab. ${passes ? SELF_REFUSED : 'Ask the person to answer it there; the message tool can answer a question, but not a permission request.'} Its report above still stands; a new RESULT.md from this turn is delivered as a further report.\n</herdr-agent>`,
+    `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\nAfter its report, the worker waits at an approval or question in its herdr tab. Ask the person to answer it there; the message tool can answer a question, but not a permission request. Its report above still stands; a new RESULT.md from this turn is delivered as a further report.\n</herdr-agent>`,
     true,
     { worker: job.name },
   )
@@ -733,6 +715,7 @@ export async function deliver(
   // The file this report was kept in, for the state file's block.
   let reportFile: string | undefined
   let tail: Job['tail']
+  let errorToken: string | undefined
   if (await reported($, current)) {
     if (status === 'done' && opts.early) tail = 'early'
     body = reportBody(await $.fs.read(resultPath))
@@ -805,12 +788,30 @@ export async function deliver(
       body += `\n\n[Pinned for the owner as ${ids.join(', ')}. The owner is pinged when this turn ends. Settle any that is not theirs (not a product rule, design choice or approval) now, with decided and your answer; the band shows them what you chose.]`
   } else if (status === 'blocked' && !why) {
     tail = 'blocked'
-    const passes = await refusesItself($, job.name)
-    body = `The worker is waiting at an approval or question in its herdr tab. ${passes ? SELF_REFUSED : 'Ask the person to answer it there; the message tool can answer a question, but not a permission request.'}`
-    if (!passes) notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
+    body =
+      'The worker is waiting at an approval or question in its herdr tab. Ask the person to answer it there; the message tool can answer a question, but not a permission request.'
+    notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   } else {
     // A CLI error, like a block, may pass: a report it writes after recovering is delivered too.
-    if (status === 'error') tail = 'blocked'
+    if (status === 'error') {
+      // Already told about this prompt's errors: a retrying CLI must not nudge the coordinator, or rewrite the
+      // screen file, each time. The job waits as after the first one; messages held for it stay held.
+      if (current.token && current.errorToken === current.token) {
+        const endedAt = await $.clock.now()
+        const { after } = await updateJob($, job.name, j =>
+          j.token === current.token && !j.stopped && !stoppedSince(j, current)
+            ? { ...j, status: 'reported', wait: undefined, endedAt, tail: 'blocked', reportStatus: status, headerStatus: undefined }
+            : undefined,
+        )
+        if (!after) return
+        arm($, after, 'resume')
+        misses.delete(job.name)
+        quiet.delete(job.name)
+        return
+      }
+      tail = 'blocked'
+      errorToken = current.token
+    }
     let lines = ''
     try {
       lines = (await readScreen($, job.name, 40)).trim()
@@ -836,6 +837,7 @@ export async function deliver(
           reportFile,
           reportStatus: status,
           headerStatus: header?.status,
+          ...(errorToken ? { errorToken } : {}),
         }
       : undefined,
   )
