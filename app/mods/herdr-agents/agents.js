@@ -237,11 +237,17 @@ export class AgentsList {
     list = ordered;
     setAgentOrder(list.map((a) => a.address));
 
+    // A worker parked on WAIT.json is idle to Herdr, like a finished one: a dim line under its row says what it waits for.
+    const parkedOf = (a) => (a.status === "idle" ? parkedNote(boards.list(), all, a.address) : null);
     const withKids = (a, i) => {
       const subs = collapsed ? [] : this.tree(all, a.address);
       const r = row(a, i, subs);
-      if (this.folded.has(a.address)) return [r];
-      return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
+      const parked = collapsed ? null : parkedOf(a);
+      const note = parked
+        ? [h_flex().id(`ag-wait-${a.address}`).px(8).pb(4).flex_none().text_size(11).text_color(t.dim).child(div().flex_1().min_w(0).truncate().child(`\u23f8 ${parked}`))]
+        : [];
+      if (this.folded.has(a.address)) return [r, ...note];
+      return [r, ...note, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
     };
 
     // The fold chevron; folded, the count too, colored by the most urgent one.
@@ -304,8 +310,7 @@ export class AgentsList {
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = this.since(a);
-      // A worker parked on WAIT.json is idle to Herdr, like a finished one: say what it waits for.
-      const parked = a.status === "idle" ? parkedNote(boards.list(), all, a.address) : null;
+      const parked = parkedOf(a);
       const idle = a.status === "idle" && !a.focused && !parked;
       const isPinned = this.pins.includes(a.address);
       const pin = div()
@@ -355,8 +360,7 @@ export class AgentsList {
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().flex_none().max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
-          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`)))
-          .when(Boolean(parked), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u23f8 ${parked}`))))
+          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address && !isOrch, el => el.child(pin))

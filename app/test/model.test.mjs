@@ -1027,7 +1027,7 @@ test('parkedNote: a worker parked on WAIT.json shows what it waits for; finished
   const boards = [
     {
       workers: [
-        { name: 'w-park', state: 'waiting', note: '3m · PR checks\nmore' },
+        { name: 'w-park', state: 'waiting', note: '02:13 · PR checks\nmore' },
         { name: 'w-done', state: 'reported', note: 'x' },
         { name: 'w-stuck', state: 'blocked', note: 'x' },
         { name: 'w-bare', state: 'waiting' },
@@ -1040,7 +1040,7 @@ test('parkedNote: a worker parked on WAIT.json shows what it waits for; finished
     { address: 't3', name: 'w-stuck' },
     { address: 't4', name: 'w-bare' },
   ]
-  assert.equal(parkedNote(boards, terminals, 't1'), '3m · PR checks')
+  assert.equal(parkedNote(boards, terminals, 't1'), 'PR checks')
   assert.equal(parkedNote(boards, terminals, 't2'), null)
   assert.equal(parkedNote(boards, terminals, 't3'), null)
   assert.equal(parkedNote(boards, terminals, 't4'), 'waiting')

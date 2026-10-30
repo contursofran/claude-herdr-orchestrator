@@ -422,7 +422,7 @@ export function listOrder(sorted, boards, terminals, pins = [], natural = sorted
 }
 
 /**
- * What a worker parked on WAIT.json waits for, for the agents list: the board row's note ("3m · PR checks"), or null.
+ * What a worker parked on WAIT.json waits for, for the agents list: what the board row's note says after the elapsed time ("02:13 · PR checks" gives "PR checks"), or null.
  * `address` is the agent's terminal; the worker is found by its terminal's name on any live board. Only a row whose
  * state is `waiting` counts, so a finished or blocked worker shows nothing here.
  */
@@ -435,7 +435,8 @@ export function parkedNote(boards, terminals, address) {
       return (
         String(w.note ?? '')
           .split('\n')[0]
-          .trim() || 'waiting'
+          .trim()
+          .replace(/^(\d{1,2}:\d{2}|\d+h\d{2}) · /, '') || 'waiting'
       )
   }
   return null
