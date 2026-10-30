@@ -97,10 +97,10 @@ test('an opencode worker is waited on for 12 tries before its first prompt, othe
 })
 
 // Loads the plugin with a fake `fs`: what it writes in place of /dev/tty is recorded.
-async function load(env: Record<string, string | undefined>) {
+async function load(env: Record<string, string | undefined>, proc: any = {}, run: any = null) {
   const written: { path: string; text: string }[] = []
   const fs = { appendFileSync: (path: string, text: string) => void written.push({ path, text }) }
-  const hooks = await hcStatusPlugin(fs, env)()
+  const hooks = await hcStatusPlugin(fs, env, proc, run)()
   const states = () =>
     written.map(w => {
       const m = w.text.match(/^\x1b\]7501;state=(.+):app=opencode\x1b\\$/)
@@ -189,9 +189,33 @@ test('the plugin writes to /dev/tty unless HC_STATUS_TTY says otherwise', async 
   expect((await load({ HC_TERMINAL_ID: 't9', HC_STATUS_TTY: '/x' })).written.map(w => w.path)).toEqual(['/x'])
 })
 
+const hcGet = (pid: unknown) => () => JSON.stringify({ address: 't9', pid })
+
+test("a nested opencode (not the terminal's own program) reports nothing and adds no hooks", async () => {
+  const { hooks, written } = await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 150 }, hcGet(100))
+  expect(hooks).toEqual({})
+  expect(written).toEqual([])
+})
+
+test("opencode reports when hc says it is the terminal's program, or its launcher is", async () => {
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 100, ppid: 1 }, hcGet(100))).states()).toEqual(['idle'])
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, hcGet(100))).states()).toEqual(['idle'])
+})
+
+test('when hc cannot tell, opencode still starts and reports', async () => {
+  const boom = () => {
+    throw new Error('no hc')
+  }
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 2, ppid: 1 }, boom)).states()).toEqual(['idle'])
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 2, ppid: 1 }, () => 'not json')).states()).toEqual(['idle'])
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 2, ppid: 1 }, () => '{}')).states()).toEqual(['idle'])
+})
+
 test('the file written for opencode is plain JavaScript made from the plugin function', () => {
   expect(OPENCODE_PLUGIN).toContain(hcStatusPlugin.toString())
   expect(OPENCODE_PLUGIN).not.toMatch(/: any\b/)
-  expect(OPENCODE_PLUGIN).toMatch(/export const HcStatusPlugin = hcStatusPlugin\(fs, process\.env\)/)
+  expect(OPENCODE_PLUGIN).toMatch(
+    /export const HcStatusPlugin = hcStatusPlugin\(fs, process\.env, \{ pid: process\.pid, ppid: process\.ppid \}, /,
+  )
   expect(OPENCODE_PLUGIN).toContain(']7501;state=')
 })

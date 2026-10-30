@@ -6,8 +6,12 @@ import type { EngineInterface } from 'claude-code'
 // Like Herdr's own opencode plugin it ignores the events of child sessions (subagents), except a question or
 // permission they ask, which blocks the worker. HC_STATUS_TTY replaces /dev/tty (for tests).
 // The plugin's logic is this function; the file written for opencode is its source text (it stands alone, with no
-// types), so tests call it directly. `fs` and `env` are node:fs and process.env.
-export function hcStatusPlugin(fs: any, env: any) {
+// types), so tests call it directly. `fs` and `env` are node:fs and process.env; `proc` is {pid, ppid} of this
+// process and `run(cmd, args)` returns a command's stdout (node:child_process execFileSync).
+// A nested opencode (started by another program in the same terminal, e.g. a claude worker) inherits
+// HC_TERMINAL_ID, so it reports only when it is the terminal's own program: hc's `pid` for the terminal is this
+// process or its parent (a launcher). If hc can't tell, it reports.
+export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = null) {
   const STATES = new Map([
     ['permission.asked', 'blocked:kind=permission'],
     ['question.asked', 'blocked:kind=question'],
@@ -34,6 +38,10 @@ export function hcStatusPlugin(fs: any, env: any) {
 
   return async () => {
     if (!env.HC_TERMINAL_ID) return {}
+    try {
+      const root = run ? JSON.parse(run('hc', ['get', env.HC_TERMINAL_ID, '--json'])).pid : undefined
+      if (typeof root === 'number' && root !== proc.pid && root !== proc.ppid) return {}
+    } catch (e) {}
     const tty = env.HC_STATUS_TTY || '/dev/tty'
     const report = (state: any) => {
       try {
@@ -76,10 +84,11 @@ export function hcStatusPlugin(fs: any, env: any) {
 
 export const OPENCODE_PLUGIN = `// installed by herdr-agents; rewritten when it differs, so do not edit it.
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 
 ${hcStatusPlugin.toString()}
 
-export const HcStatusPlugin = hcStatusPlugin(fs, process.env);
+export const HcStatusPlugin = hcStatusPlugin(fs, process.env, { pid: process.pid, ppid: process.ppid }, (cmd, args) => execFileSync(cmd, args, { encoding: "utf8", timeout: 3000 }));
 
 export default { id: "hc.status", server: HcStatusPlugin };
 `
