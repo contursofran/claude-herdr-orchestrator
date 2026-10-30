@@ -109,15 +109,16 @@ export function pinbar(board, ui) {
           .on_click((_e, cx) => ui.onRead(pin.id, cx))
           .child(
             div()
-              .flex_none()
-              .max_w(260)
+              // Beside a summary the title stops at 260; with none it has the whole row.
+              .when(pin.summary, el => el.flex_none().max_w(260))
+              .when(!pin.summary, el => el.flex_1().min_w_0())
               .truncate()
               .text_color(pin.unread ? color.text : color.soft)
               .when(pin.unread, el => el.font_bold())
               .when(!pin.unread, el => el.font_semibold())
               .child(pin.title),
           )
-          .child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(pin.summary)),
+          .when(pin.summary, el => el.child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(pin.summary))),
       )
       .child(div().flex_none().text_color(color.dim).child(ui.meta))
       .child(segmentsRow(ui.segments, ui))
