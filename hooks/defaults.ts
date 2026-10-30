@@ -98,6 +98,8 @@ export const BRIDGE_DIR = '.herdr-agents/board'
 export const APP_MOD_FILE = '.herdr-agents/app-mod.json'
 export const APP_MOD_FRESH_MS = 90_000
 export const BRIDGE_ACTIONS_KEPT = 10
+// With nothing else changed the board is still written this often: `at` tells a live board from a leftover, and a deleted file comes back.
+export const BRIDGE_REWRITE_MS = 60_000
 
 // The block of the state file the mod keeps current (see stateblock.ts): how many recent reports it
 // lists, and the markers that fence it.

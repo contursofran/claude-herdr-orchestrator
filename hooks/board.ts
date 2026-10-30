@@ -3,7 +3,6 @@ import type { EngineInterface } from 'claude-code'
 import type { Board, Job, Links, Row } from '../types'
 import { config, target, wrappingUp } from './config'
 import { LINGER_MS, QUIET_MAX_MS } from './defaults'
-import { elapsed } from './format'
 import { lastStatus } from './hc'
 import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
@@ -77,7 +76,8 @@ export async function refresh($: EngineInterface) {
       state,
       startedAt: j.startedAt,
       endedAt: j.endedAt,
-      ...(j.status === 'running' && j.wait ? { note: `${elapsed(now - j.wait.since)} · ${j.wait.for}` } : {}),
+      // The start time, not a clock: a ticking note would rewrite the board file on every tick (#151). The band works the clock out.
+      ...(j.status === 'running' && j.wait ? { note: j.wait.for, since: j.wait.since } : {}),
       ...(byCwd[j.cwd] ? { repo: byCwd[j.cwd] } : {}),
     })
   }
