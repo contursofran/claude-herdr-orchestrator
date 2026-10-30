@@ -41,6 +41,7 @@ export default class HerdrAgents extends View {
       onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx),
     )
     this.part?.listen(cx)
+    if (pinbarCopy) this.pin.listen(cx)
   }
 
   render(cx) {

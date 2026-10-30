@@ -48,6 +48,7 @@ function segmentsRow(segments, ui) {
           .flex()
           .items_center()
           .cursor_pointer()
+          .tooltip(s.title)
           .on_click((_e, cx) => ui.onPick(s.id, cx))
           .child(div().h(3).w_full().rounded(2).bg(fill[s.kind])),
       ),
@@ -57,8 +58,8 @@ function segmentsRow(segments, ui) {
 /**
  * The pin bar's row: always there at its height so nothing resizes the terminal.
  *   board  the resolved board, or null (the row draws empty)
- *   ui     what main.js worked out: {mode, current, segments, slim, meta, waiting, flash} and the handlers
- *          onPick(id, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
+ *   ui     what main.js worked out: {mode, current, many, empty, segments, slim, meta, waiting, flash} and the handlers
+ *          onPick(id, cx), onStep(dir, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
  * The caret and `all pins` belong to S8 (the drop panel and popover) and are not drawn here.
  */
 export function pinbar(board, ui) {
@@ -73,7 +74,12 @@ export function pinbar(board, ui) {
       .child(ghost('pin-undo', 'undo', (_e, cx) => ui.onUndo(w.id, cx)))
   }
 
-  if (ui.mode === 'empty') return base()
+  if (ui.mode === 'empty') {
+    // Quiet, so the row keeps its height and says why it is empty; with no board (above) it stays blank.
+    return base()
+      .child(svg(icon('pin')).size(14).text_color(color.dim).flex_none())
+      .child(div().flex_1().min_w_0().truncate().text_color(color.dim).child(ui.empty))
+  }
 
   if (ui.mode === 'slim') {
     return base()
@@ -121,10 +127,13 @@ export function pinbar(board, ui) {
           .when(pin.summary, el => el.child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(pin.summary))),
       )
       .child(div().flex_none().text_color(color.dim).child(ui.meta))
+      .when(ui.many, el => el.child(ghost('pin-prev', '‹', (_e, cx) => ui.onStep(-1, cx)).tooltip('Previous pin')))
       .child(segmentsRow(ui.segments, ui))
+      .when(ui.many, el => el.child(ghost('pin-next', '›', (_e, cx) => ui.onStep(1, cx)).tooltip('Next pin')))
       .child(
         div()
           .id('pin-done')
+          .tooltip('Done')
           .flex_none()
           .size(28)
           .flex()

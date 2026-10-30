@@ -1,13 +1,13 @@
-import { notify, setShared, shared } from 'herdr'
+import { nextCommand, notify, setShared, shared } from 'herdr'
 import { send } from './board.js'
 import { Outbox } from './outbox.js'
-import { deriveBar, doneAction, markRead, newBarState, newestPin, pruneRead } from './model.js'
+import { deriveBar, doneAction, keyStep, markRead, newBarState, newestPin, pinStepDir, pruneRead } from './model.js'
 
 const FLASH_MS = 2200 // 1.1 s, twice
 
 /**
  * What the pin bar remembers between draws: which pin the owner picked, the actions waiting out their undo time, the flash.
- * The read marks live in shared("hrd.read") and are written only on a click (R9), never on a board update.
+ * The read marks live in shared("hrd.read") and are written only on a click or a pin step (R9), never on a board update.
  */
 export class PinCtl {
   constructor() {
@@ -15,6 +15,27 @@ export class PinCtl {
     this.bar = newBarState() // see deriveBar()
     this.flashId = null
     this.pruned = false
+    this.shown = null // {mode, list, current} of the last draw, for the keys; null with no board
+  }
+
+  /** Keys: ctrl-cmd-[ and ctrl-cmd-] in layout:coordinator send herdr-agents.prevpin / nextpin here. */
+  listen(cx) {
+    cx.spawn(async cx => {
+      for (;;) {
+        const dir = pinStepDir(String(await nextCommand()))
+        if (dir) this.step(dir, cx)
+        cx.notify()
+      }
+    })
+  }
+
+  /** Move to the previous or next pin of the row, wrapping, and mark it read (as a click on its segment does). */
+  step(dir, cx) {
+    const r = keyStep(this.shown, dir, id => this.mark(id))
+    if (!r) return
+    this.bar = { ...this.bar, sel: r.sel }
+    this.shown = r.shown
+    cx?.notify()
   }
 
   /** Called with the boards after each change. Drops read marks of boards that are gone, once; settles sent actions. */
@@ -43,7 +64,12 @@ export class PinCtl {
       now: Date.now(),
     })
     this.bar = state
-    if (!board) return view
+    if (!board) {
+      this.shown = null
+      return view
+    }
+    // Keys act only on a pin the row shows: not behind the undo row.
+    this.shown = { mode: view.waiting.length ? 'undo' : view.mode, list, current: view.current }
     if (flashStart) {
       this.flashId = flashStart
       cx.timer.after(FLASH_MS, cx => {
@@ -64,6 +90,7 @@ export class PinCtl {
         this.mark(id)
         cx.notify()
       },
+      onStep: (dir, cx) => this.step(dir, cx),
       onRead: (id, cx) => {
         pick(null)
         this.mark(id)

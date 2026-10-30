@@ -243,7 +243,10 @@ export async function start(
       ? recorded.clone
       : (files[e.path] ?? (e.path.endsWith('/.claude-plugin/plugin.json') ? recorded.modPlugin : '')),
   }))
+  // Paths whose write fails (a read-only folder); the test sets it.
+  const unwritable = new Set<string>()
   on('fs.write', async (_, e) => {
+    if (unwritable.has(e.path)) throw new Error('read-only file system')
     const hold = gates.find(g => !g.used && g.match(['fs.write', e.path]))
     if (hold) {
       hold.used = true
@@ -546,6 +549,7 @@ export async function start(
     removed,
     screens,
     files,
+    unwritable,
     prs,
     panes,
     stalls,
