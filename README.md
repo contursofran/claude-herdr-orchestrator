@@ -50,9 +50,9 @@ The sidebar's background is Claude Code's `composerSidebarBackground` theme colo
 
 Rows never move on their own. An answered or finished row stays in its slot, struck through, until you press clear done. A new one takes the next free slot. Answering swaps the box's contents in place, and the box stays on the answer until you press next. While the sidebar shows, the panel above the prompt steps aside. To start every session with the sidebar instead of the panel, set Show workers in to the sidebar in `/hrd-config` (`"view": "side"`).
 
-### Auto-compact at 200k
+### Auto-compact at 250k
 
-The panel shows the coordinator's context (`ctx 75k / 200k`); the sidebar shows it as a share of that limit (`ctx 75k 38%`). Past `resetAt` (200k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
+The panel shows the coordinator's context (`ctx 75k / 250k`); the sidebar shows it as a share of that limit (`ctx 75k 30%`). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
 
 ### A playbook that keeps workers busy
 
@@ -148,7 +148,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `target` | `4` | Workers the coordinator keeps busy. |
-| `resetAt` | `200000` | Context tokens past which a coordinator saves its state and is compacted. |
+| `resetAt` | `250000` | Context tokens past which a coordinator saves its state and is compacted. |
 | `statePath` | `COORDINATOR-STATE.md` | The state file, relative to the folder (or absolute, or `~/…`). |
 | `trustRoots` | the folder and its parent | Folders where a worker's first-run "trust this folder?" prompt is answered for it. |
 | `commandPrefix` | `hrd-` | What every slash command starts with. Read when the session starts. |
