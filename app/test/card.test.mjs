@@ -13,6 +13,7 @@ import {
   doneAction,
   nextItem,
   hiddenKeys,
+  openHeight,
   openState,
   readKey,
 } from '../mods/herdr-agents/model.js'
@@ -137,9 +138,9 @@ test('cardView: a sent answer with no outcome stops counting after SENT_HIDE_MS,
 })
 
 test('openState keeps the terminal to give back while a card is already open', () => {
-  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1' })
-  assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), { session: 's', key: 'D8', back: 't1' })
-  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null })
+  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', seq: 0 })
+  assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), { session: 's', key: 'D8', back: 't1', seq: 0 })
+  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, seq: 0 })
 })
 
 function outbox() {
@@ -271,4 +272,27 @@ test('every board change settles the card outbox, so a failed send shows (the pa
   )
   onBoardsChanged({ pinbar: true, pin, card: null, strip: null }, [failed], cx)
   assert.deepEqual(calls.at(-1), ['pin', 1])
+})
+
+test('openHeight does not count an old sent answer, so `next` sizes the panel for the options it draws', () => {
+  const b = board()
+  const entry = { id: 'a1', session: b.session, key: 'D7', action: answerAction('D7', 'Cursor'), at: 1000 }
+  const ask = cardHeight('ask', 2)
+  assert.equal(openHeight(b, 'D7', { sent: [entry], now: 1000 }), cardHeight('resolved'))
+  assert.equal(openHeight(b, 'D7', { sent: [entry], now: 1000 + SENT_HIDE_MS }), ask)
+})
+
+test('every open bumps the counter in the state, so reopening the same item is a new open', () => {
+  const first = openState(null, 's', 'D7', 't1', 1)
+  const again = openState(null, 's', 'D7', 't1', 2)
+  assert.notEqual(first.seq, again.seq)
+  assert.equal(openState(first, 's', 'D8', 't2', 2).back, 't1', 'the terminal to give back is kept')
+  const src = readFileSync(new URL('../mods/herdr-agents/card.js', import.meta.url), 'utf8')
+  assert.match(src, /open\.seq/, 'the keyboard token follows the counter, not a hidden copy drawing')
+})
+
+test('a key held down is ignored, so an answer is not followed by a close', () => {
+  assert.equal(cardKeyAction('ask', '1', { options: 2, held: true }).type, 'ignore')
+  assert.equal(cardKeyAction('ask', 'escape', { options: 2, held: true }).type, 'ignore')
+  assert.equal(cardKeyAction('ask', '1', { options: 2 }).type, 'answer')
 })

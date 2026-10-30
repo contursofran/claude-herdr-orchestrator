@@ -125,7 +125,7 @@ export function card(boards, ctl, cx) {
   const board = (boards ?? []).find(b => b.session === open.session)
 
   // The first draw after an open: take the keyboard. (A cx of this render is fine to spawn from; handlers use their own.)
-  const token = `${open.session}:${open.key}`
+  const token = `${open.session}:${open.key}:${open.seq ?? 0}`
   if (ctl.token !== token) {
     ctl.token = token
     cx.spawn(async cx => {
@@ -239,7 +239,11 @@ export function card(boards, ctl, cx) {
       .id('card-body')
       .track_focus(ctl.h)
       .on_key_down((e, cx) => {
-        const act = cardKeyAction(view.face, e.keystroke ?? e.key, { options: view.options?.length ?? 0, url: Boolean(view.url) })
+        const act = cardKeyAction(view.face, e.keystroke ?? e.key, {
+          options: view.options?.length ?? 0,
+          url: Boolean(view.url),
+          held: e.is_held,
+        })
         if (act.type === 'ignore') return
         if (act.type === 'answer') answer(act.index, cx)
         else if (act.type === 'done') done(null, cx)

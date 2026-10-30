@@ -11,7 +11,9 @@ import { Outbox } from './outbox.js'
  *   open          shared("hrd.open") as it was when this copy started
  * The card never resizes by itself: a failed answer comes back to the options in the panel it already has. Only the
  * owner's click or key (cardctl.js) opens, closes or resizes it. The one exception is the start of this copy: a panel
- * left shown by an earlier run (the app restarted; "hrd.open" is in memory only) with nothing open is hidden.
+ * left shown with nothing open is hidden. "hrd.open" is saved in shared.json like any shared value, so after a restart
+ * a card that was open is still open. Whether its panel is still shown is Herdr's to keep; either way the owner's next
+ * click on an item shows it, and Esc or the esc button closes it.
  */
 export class CardState {
   constructor({ send, notify, handle, run, open }) {

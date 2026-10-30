@@ -607,11 +607,13 @@ export function nextItem(board, key, hidden = new Set()) {
 const MODIFIER_KEYS = new Set(['shift', 'control', 'ctrl', 'alt', 'option', 'cmd', 'meta', 'super', 'fn', 'capslock'])
 
 /**
- * What a key does while the card has the keyboard (`keystroke` is the event's whole chord, e.g. `1` or `ctrl-1`). `1`-`3` answer (a decision) or press Done / Open link (a to-do),
- * Esc closes, a modifier alone is ignored, and any other key closes the card and is lost.
+ * What a key does while the card has the keyboard (`keystroke` is the event's whole chord, e.g. `1` or `ctrl-1`).
+ * `1`-`3` answer (a decision) or press Done / Open link (a to-do), Esc closes, a modifier alone is ignored, and any
+ * other key closes the card and is lost. A key held down (`held`) is ignored, so an answer is not followed by a close.
  * Returns {type: 'answer', index} | {type: 'done'} | {type: 'link'} | {type: 'close'} | {type: 'ignore'}.
  */
-export function cardKeyAction(face, keystroke, { options = 0, url = false } = {}) {
+export function cardKeyAction(face, keystroke, { options = 0, url = false, held = false } = {}) {
+  if (held) return { type: 'ignore' }
   // The whole chord (`keystroke`), not the bare key: ctrl-1 or alt-1 is not `1`.
   const k = String(keystroke ?? '').toLowerCase()
   if (MODIFIER_KEYS.has(k)) return { type: 'ignore' }
@@ -623,5 +625,14 @@ export function cardKeyAction(face, keystroke, { options = 0, url = false } = {}
   return { type: 'close' }
 }
 
-/** The shared("hrd.open") value after opening `key` on `session`: keeps the terminal to give back, else takes `back`. */
-export const openState = (current, session, key, back) => ({ session, key, back: current?.back ?? back ?? null })
+/**
+ * The shared("hrd.open") value after opening `key` on `session`: keeps the terminal to give back, else takes `back`.
+ * `seq` is a counter bumped on every open, so the card takes the keyboard on each open, even of the same item.
+ */
+export const openState = (current, session, key, back, seq = 0) => ({ session, key, back: current?.back ?? back ?? null, seq })
+
+/** The height the panel needs to show `key` of `board` right now (`now` as for cardView: an old sent answer is not counted). */
+export function openHeight(board, key, ctx) {
+  const view = cardView(board, key, ctx)
+  return cardHeight(view?.face, view?.options?.length)
+}
