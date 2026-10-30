@@ -606,6 +606,14 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   return true
 }
 
+// Whether a stop (stopWorker) landed on a job since `was` was read: it is no longer running, or its
+// end time moved or its tab closed. A delivery that began before the stop must not report it.
+const stoppedSince = (j: Job, was: Job) => (was.status === 'running' ? j.status !== 'running' : !!j.closed || j.endedAt !== was.endedAt)
+async function stopped($: EngineInterface, was: Job) {
+  const j = (await jobs($))[was.name]
+  return !j || j.token !== was.token || stoppedSince(j, was)
+}
+
 // `why` says why a worker stopped when hc's status alone doesn't (a prompt that never arrived).
 // `opts.early`: the worker may still be in its turn, so its job stays watched (Job.tail).
 export async function deliver(
@@ -654,6 +662,8 @@ export async function deliver(
     await $.fs.write(full, body)
     reportFile = full
     await archive($, job.dir, full.slice(job.dir.length + 1), body)
+    // A stop that landed during the awaits above: nothing more is pinned or sent for the stopped worker.
+    if (await stopped($, current)) return
     const lines = body.split('\n').filter(l => l.trim())
     const ids: string[] = []
     // A header report shows each pinned question inline, as the coordinator can settle it from there.
@@ -666,7 +676,9 @@ export async function deliver(
       const found = parts.findIndex(o => marked.test(o))
       const recommended = found >= 0 ? found : undefined
       const options = parts.map(o => o.replace(marked, ' ').trim()).filter(Boolean)
-      const id = await ask($, job.name, question, options, recommended, titled?.[1], true)
+      // A rewritten report repeats its DECISION lines: one still open is not pinned again.
+      const open = (await openQuestions($)).find(d => d.from === job.name && d.question === question)
+      const id = open?.id ?? (await ask($, job.name, question, options, recommended, titled?.[1], true))
       ids.push(`D${id}`)
       const shown = options.map((o, i) => (i === recommended ? `${o} (recommended)` : o))
       pinnedLines.push(`D${id} ${titled ? `[${titled[1]}] ` : ''}${question}${shown.length ? ` | ${shown.join(' | ')}` : ''}`)
@@ -700,7 +712,7 @@ export async function deliver(
   // Patch the job as it is now: a message queued or a stop during the awaits above must stay.
   const endedAt = await $.clock.now()
   const { before, after } = await updateJob($, job.name, j =>
-    j.token === current.token
+    j.token === current.token && !stoppedSince(j, current)
       ? {
           ...prs.reduce((x, n) => withPr(x, n), j),
           status: 'reported',

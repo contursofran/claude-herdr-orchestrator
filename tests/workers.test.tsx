@@ -1790,3 +1790,78 @@ test('a blocked reported worker with a WAIT.json is not woken', async ($, on) =>
   expect(`${W}/WAIT.json` in s.files).toBe(true)
   await stopAll($, s.clock, ['w-busy'])
 })
+
+// #117: a report rewritten around a delivery, and a stop that lands during one.
+
+test('a stop while a report is being delivered sends nothing for the stopped worker', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nOlder draft.`
+  const release = s.gate(argv => argv[0] === 'fs.write' && argv[1] === `${W}/RESULT-${token}.md`)
+  await s.finish('w-busy')
+  await s.clock.settle()
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  release()
+  await s.clock.settle()
+  await s.clock.advance(BATCH_MS)
+  await s.clock.advance(3 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))).toHaveLength(0)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported', reportStatus: 'stopped', closed: true })
+})
+
+test('a report rewritten while it is being delivered reaches the coordinator once, newest text last', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nOlder draft.`
+  const release = s.gate(argv => argv[0] === 'fs.write' && argv[1] === `${W}/RESULT-${token}.md`)
+  await s.finish('w-busy')
+  await s.clock.settle()
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nNewest text.`
+  release()
+  await s.clock.settle()
+  await s.clock.advance(BATCH_MS)
+  await s.clock.advance(3 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  await s.clock.advance(3 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  const sent = s.submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))
+  expect(sent.join('\n')).toContain('Newest text.')
+  expect(sent.join('\n').lastIndexOf('Newest text.')).toBeGreaterThan(sent.join('\n').lastIndexOf('Older draft.'))
+  expect(sent.filter(t => t.includes('Newest text.'))).toHaveLength(1)
+})
+
+test('a report rewritten without its token line after delivery is not delivered again', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First draft.')
+  s.files[`${W}/RESULT.md`] = 'Rewritten, no token.'
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => t.includes('<herdr-agent name="w-busy"'))).toHaveLength(1)
+  expect(token).toBeTruthy()
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a stop after a report sends nothing for a rewrite of it', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First draft.')
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nRewritten after stop.`
+  await s.clock.advance(5 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => t.includes('Rewritten after stop.'))).toHaveLength(0)
+})
+
+test('a rewritten report with the same DECISION line pins it once', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First.\nDECISION: [Pick] Which one? | A | B')
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nSecond.\nDECISION: [Pick] Which one? | A | B`
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  const sent = s.submitted.filter(t => t.includes('Second.'))
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toContain('Pinned for the owner as D1.')
+  await stopAll($, s.clock, ['w-busy'])
+})
