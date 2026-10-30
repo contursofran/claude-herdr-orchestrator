@@ -17,7 +17,7 @@ export type Job = {
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
   // set while a reported job's turn is not over, so it is still watched: 'early' = reported before its
-  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report
+  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report; a 'blocked' worker with no report that works again goes back to 'running'
   tail?: 'early' | 'blocked'
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
