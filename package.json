@@ -7,7 +7,7 @@
     "types": "scripts/types.sh",
     "typecheck": "tsc -p . && tsc -p view",
     "validate": "claude plugin validate . && claude plugin validate view",
-    "test": "claude plugin test .",
+    "test": "nice -n 10 claude plugin test .",
     "test:file": "scripts/test-file.sh",
     "test:app": "node --test \"app/test/*.test.mjs\"",
     "format": "prettier --write .",
