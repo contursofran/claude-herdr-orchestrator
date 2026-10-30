@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
+import { focused, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -144,6 +144,9 @@ export function openBoardPopup(board) {
     pins: Boolean(shared('hrd.pins')),
     sheet: Boolean(shared('hrd.sheet')),
   })
+  // The terminal to hand back; if the card holds the keyboard, the one the card will hand back. Read before anything closes.
+  const back = shared('hrd.open')?.back ?? focused()?.terminal ?? null
+  const space = focused()?.space ?? null
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
@@ -157,7 +160,7 @@ export function openBoardPopup(board) {
     width: POPUP_W,
     height,
     at: popupSpot(view.width, view.height, height),
-    props: { role: 'board', session: board.session, height, board },
+    props: { role: 'board', session: board.session, height, board, back, space },
   })
   setShared('hrd.popup', overlay)
 }

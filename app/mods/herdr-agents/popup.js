@@ -1,10 +1,31 @@
 // The board pop-up: the work table of the one board the strip shows, opened from `board ▴` (or ctrl-cmd-b).
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, notify, props, run, terminals } from 'herdr'
+import { closeOverlay, focused, notify, props, run, terminals } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { POPUP_ROW, POPUP_W, boardSpace, projectName, rowAction, workRows, wrapUpButton } from './model.js'
+import { POPUP_ROW, POPUP_W, boardSpace, popupKeyAction, popupRefocus, projectName, rowAction, workRows, wrapUpButton } from './model.js'
 import { color, font, icon, popup as look } from './tokens.js'
+
+/** A handle that takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal. */
+export function takeKeyboard(cx) {
+  const h = cx.focus_handle()
+  cx.spawn(async cx => {
+    await cx.sleep(60)
+    h.focus()
+    cx.notify()
+  })
+  return h
+}
+
+/** This pop-up's keyboard, and whether a row already chose where it goes next. */
+export const makePopupState = cx => ({ h: takeKeyboard(cx), leaving: false })
+
+/** The overlay is going, however it was closed (Esc, a click outside, a new pop-up): give the keyboard back. */
+export function releasePopup(ctl) {
+  const p = props()
+  const terminal = popupRefocus({ back: p?.back, space: p?.space }, focused(), ctl?.leaving)
+  if (terminal) run('pane.focus', { terminal })
+}
 
 const whoColor = kind => (kind === 'you' ? color.text : kind === 'text' ? color.soft : color.dim)
 
@@ -30,7 +51,7 @@ function cell(name) {
   return box.child(name === 'working' ? glyph.spin(1400) : glyph)
 }
 
-function row(r, board) {
+function row(r, board, ctl) {
   return div()
     .id(`work-${r.key}`)
     .h(POPUP_ROW)
@@ -45,6 +66,8 @@ function row(r, board) {
     .on_mouse_down('left', () => {
       const act = rowAction(r, terminals(), boardSpace(board, terminals()))
       if (!act) return
+      // The row says where the keyboard goes next, so closing must not hand it back.
+      ctl.leaving = true
       closeOverlay(props().overlay)
       if (act.type === 'focus') run('pane.focus', { terminal: act.terminal })
       // One overlay at a time, so the pop-up went first.
@@ -57,10 +80,17 @@ function row(r, board) {
 }
 
 /** The pop-up. Its root has a fixed size (props().height from the strip): a `size_full` root in a popup draws nothing. */
-export function popupView(board) {
+export function popupView(board, ctl) {
   const height = Number(props()?.height) || 0
   const root = div()
     .id('board-popup')
+    .track_focus(ctl.h)
+    .on_key_down(e => {
+      if (popupKeyAction(e.keystroke ?? e.key, e.is_held) !== 'close') return
+      try {
+        closeOverlay(props().overlay)
+      } catch {} // the app's own Esc may have closed it first
+    })
     .w(POPUP_W)
     .h(height)
     .flex_none()
@@ -115,6 +145,6 @@ export function popupView(board) {
       .flex()
       .flex_col()
       .overflow_y_scroll()
-      .children(rows.map(r => row(r, board))),
+      .children(rows.map(r => row(r, board, ctl))),
   )
 }

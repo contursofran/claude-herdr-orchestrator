@@ -69,8 +69,10 @@ app_home=${HERDR_APP_HOME:-$HOME/.config/herdr-app}
 if [[ -d $app_home ]]; then
   mkdir -p "$app_home/mods/herdr-agents"
   # The app writes jsconfig.json and gpui-kit.d.ts into mod folders.
+  # By content, keeping no times or modes: `-a` rewrites every file a checkout dated differently and `-p` chmods them all.
+  # Either wakes the app's watcher, each hot reload leaves the window slower until it restarts (#158), so an unchanged file must see no event.
   # version.json stays through the rsync: rewriting it each time would reload every copy of the mod.
-  rsync -a --delete --exclude jsconfig.json --exclude gpui-kit.d.ts --exclude version.json "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
+  rsync -rlc --delete --exclude jsconfig.json --exclude gpui-kit.d.ts --exclude version.json "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
   # What the status bar shows: the plugin's version, and the short commit if git can give it (the app mod is sometimes
   # delivered between releases). Written beside it and renamed, and only when it changed.
   commit=$(git -C "$here" rev-parse --short HEAD 2>/dev/null || true)
