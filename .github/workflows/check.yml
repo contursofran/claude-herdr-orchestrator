@@ -7,14 +7,14 @@ on:
   push:
     branches: [main]
 jobs:
-  check:
+  mod:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No npm cache: it saves under a second here, and when GitHub refuses the download the step hangs for 10 minutes.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm ci
       - name: Install Claude Code
         run: |
@@ -25,5 +25,20 @@ jobs:
       - run: npm test
       - name: Herdr app mod tests
         run: npm run test:app
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Python script tests (hrd-metrics, hrd-eval)
         run: python3 -m unittest discover -s tests -p 'test_*.py'
+  # The status main's ruleset requires. A skipped required check counts as passed, so this always runs and looks at both.
+  check:
+    needs: [mod, python]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both jobs passed
+        run: test "${{ needs.mod.result }}" = success && test "${{ needs.python.result }}" = success
