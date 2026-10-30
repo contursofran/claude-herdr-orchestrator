@@ -6,6 +6,7 @@ import { app, findId, textOf } from './fake-gpui.mjs'
 // After the fake is registered: these import `gpui-kit` and `herdr`.
 const { sheetBlock, SheetState } = await import('../mods/herdr-agents/sheet.js')
 const { openSheet } = await import('../mods/herdr-agents/sheetctl.js')
+const { card } = await import('../mods/herdr-agents/card.js')
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url)))
 const cx = { notify() {}, spawn() {} }
@@ -109,4 +110,16 @@ test('a sheet too narrow for the meta leaves it out, so esc stays inside', () =>
   )
   app.settings = { zoom: 1 }
   assert.match(textOf(draw([board()], 'D7', TALL)).join(' '), /#601 · w-api/)
+})
+
+test('the card takes its size from the zoom the app draws it at', () => {
+  const b = board()
+  globalThis.window = { viewport_size: () => ({ width: 1000, height: 800 }) }
+  app.store['hrd.open'] = { session: b.session, key: 'D7', seq: 1 }
+  const width = zoom => {
+    app.settings = { zoom }
+    return findId(card([b], ctl(), cx), 'card').node.calls.w[0]
+  }
+  assert.equal(width(1), 560)
+  assert.equal(width(1.2), 493)
 })
