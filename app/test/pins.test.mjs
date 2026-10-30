@@ -103,7 +103,7 @@ test('pinContext: who, age and tag, leaving out what the pin does not have', () 
 test('panelHeight grows with the lines of the text, up to a cap; allPinsHeight with the pins, up to four rows', () => {
   assert.ok(panelHeight('x'.repeat(2000), 900) > panelHeight('x', 900))
   assert.equal(panelHeight('a\nb\nc', 900) - panelHeight('a', 900), 40)
-  assert.equal(panelHeight('a', 900), 1 + 14 + 20 + 12 + 18 + 12 + 28 + 14, 'room for the context line')
+  assert.equal(panelHeight('a', 900), 1 + 14 + 20 + 36 + 12 + 18 + 12 + 28 + 14, 'room for the Copy row and the context line')
   assert.equal(panelHeight('x'.repeat(100000), 900), panelHeight('x'.repeat(200000), 900))
   assert.ok(panelHeight('x'.repeat(200), 400) > panelHeight('x'.repeat(200), 1200), 'narrower wraps more')
   assert.ok(allPinsHeight(2) > allPinsHeight(1))

@@ -40,8 +40,8 @@ beforeEach(() => {
 test('the drop panel draws: text, then who, age and tag, with a line height the app can use', () => {
   app.props = { view: 'panel', session: 's', id: 's:K2', list, width: 900, height: 200, overlay: 'o1' }
   const root = pinsView(new Set(), {})
-  assert.deepEqual(textOf(findId(root, 'pin-full')), ['K2 full text'])
-  assert.deepEqual(textOf(findId(root, 'pin-context')), ['builder · 2m · PR'])
+  assert.deepEqual(textOf(findId(root, 'pin-full')), ['K2 full text', 'Copy'])
+  assert.deepEqual(textOf(findId(root, 'pin-context')), ['builder · 2m · PR · c copies'])
 })
 
 test('the popover draws with read and unread pins: only an unread one has a dot colour', () => {
@@ -468,4 +468,57 @@ test('a to-do pin uses the do icon, a note the pin icon', () => {
   assert.ok(icons(ctl.ui(todoBoard(), cx)).some(p => String(p).endsWith('do.svg')))
   const note = { session: 's', needs: [todoBoard().needs[1]] }
   assert.ok(!icons(ctl.ui(note, cx)).some(p => String(p).endsWith('do.svg')))
+})
+
+// ---- #205: marking a pin read takes `mark read` away; `done` slides under the cursor, so it is held too ----
+
+test('after mark read, a press where done slid to is ignored until the row settles, even though the order is unchanged', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const gone = new Set()
+  const ctl = {}
+  const before = pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  down(before, 'pin-read-K3')
+  assert.deepEqual(app.store['hrd.read'], { 's:K3': true })
+  // K3 was the last row and stays it: only its button row changed.
+  const after = pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  assert.equal(findId(after, 'pin-read-K3'), null)
+  down(after, 'pin-done-K3')
+  assert.deepEqual([...gone], [], 'the second press of a double click on mark read')
+  t.mock.timers.tick(ROWS_SETTLE_MS)
+  down(after, 'pin-done-K3')
+  assert.deepEqual([...gone], ['s:K3'])
+})
+
+// ---- #211: the bar's × belongs to the pin it was drawn for ----
+
+const barUi = (current, onDone) => ({
+  mode: 'full',
+  current,
+  many: false,
+  empty: '',
+  segments: [],
+  slim: '',
+  meta: '',
+  waiting: [],
+  flash: false,
+  onBounds() {},
+  onDone,
+})
+
+test("the bar's Done × has an id per pin, so a press on one pin's × is no click on the pin that replaced it", () => {
+  const done = []
+  const first = pinbar(
+    {},
+    barUi(pin('K1'), p => done.push(p.key)),
+  )
+  const second = pinbar(
+    {},
+    barUi(pin('K2'), p => done.push(p.key)),
+  )
+  assert.ok(findId(first, 'pin-done-K1'))
+  assert.equal(findId(first, 'pin-done-K2'), null)
+  assert.equal(findId(second, 'pin-done-K1'), null)
+  findId(second, 'pin-done-K2').node.calls.on_click[0]({}, cx)
+  assert.deepEqual(done, ['K2'])
 })

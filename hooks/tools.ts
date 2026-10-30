@@ -141,7 +141,7 @@ export async function registerTools($: EngineInterface) {
         text: {
           type: 'string',
           description:
-            'One short line with all it takes to act: what, where (URL, PR) and why, e.g. "Test client #526 at http://localhost:5173: drag an item between two bags".',
+            'One short line with all it takes to act: what, where (URL, PR) and why, e.g. "Test client #526 at http://localhost:5173: drag an item between two bags". Put a command to run in backticks, e.g. "Run `npm run deploy` on the PC": the board gives each one a Copy button with that exact text.',
         },
         kind: { type: 'string', enum: ['do', 'know'], description: '"do" (the default) for an action, "know" for news.' },
         from: { type: 'string', description: 'The worker, issue or PR it is about.' },

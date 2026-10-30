@@ -1,4 +1,5 @@
 // The mod's logic, with no gpui-kit or herdr imports so node can test it (app/test).
+import { copyTargets } from './copystate.js'
 
 /** True when the watcher's `paths` include the board file of `session` (either spelling of the folder: /tmp may be
  *  reported as /private/tmp, so only the file name is compared). Files in <session>.actions/ and .tmp files do not count. */
@@ -726,10 +727,12 @@ export function cardFor(boards, open, ctx = {}) {
 }
 
 /** The line under the keys: which keys answer, and that any other one closes the card and is lost. */
-export function cardHint(face, { options = 0, url = false } = {}) {
+export function cardHint(face, { options = 0, url = false, copy = false } = {}) {
   const n = Math.min(Math.max(Number(options) || 0, 0), 3)
-  if (face === 'ask' && n) return `${n === 1 ? '1' : `1-${n}`} answers · esc or any other key closes, and that key is lost`
-  if (face === 'do') return `${url ? '1 done · 2 opens the link' : '1 done'} · esc or any other key closes, and that key is lost`
+  const c = copy ? ' · c copies' : ''
+  if (face === 'ask' && n) return `${n === 1 ? '1' : `1-${n}`} answers${c} · esc or any other key closes, and that key is lost`
+  if (face === 'do') return `${url ? '1 done · 2 opens the link' : '1 done'}${c} · esc or any other key closes, and that key is lost`
+  if (copy) return 'c copies · esc or any other key closes, and that key is lost'
   return 'esc or any key closes'
 }
 
@@ -750,12 +753,13 @@ const MODIFIER_KEYS = new Set(['shift', 'control', 'ctrl', 'alt', 'option', 'cmd
  * other key closes the card and is lost. A key held down (`held`) is ignored, so an answer is not followed by a close.
  * Returns {type: 'answer', index} | {type: 'done'} | {type: 'link'} | {type: 'close'} | {type: 'ignore'}.
  */
-export function cardKeyAction(face, keystroke, { options = 0, url = false, held = false } = {}) {
+export function cardKeyAction(face, keystroke, { options = 0, url = false, held = false, copy = null } = {}) {
   if (held) return { type: 'ignore' }
   // The whole chord (`keystroke`), not the bare key: ctrl-1 or alt-1 is not `1`.
   const k = String(keystroke ?? '').toLowerCase()
   if (MODIFIER_KEYS.has(k)) return { type: 'ignore' }
   if (k === 'escape') return { type: 'close' }
+  if (copy) return { type: 'copy', chord: copy }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
   if (face === 'ask' && n && n <= options) return { type: 'answer', index: n - 1 }
   if (face === 'do' && n === 1) return { type: 'done' }
@@ -778,6 +782,39 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
 /** Whether closing the card may hand the keyboard to `open.back`: only while the owner is still in the space it was
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
+
+/** How long a note of a dismissing press stays good, in ms. One press reaches its button at once; this only outlives a slow draw. */
+export const DISMISS_MS = 500
+
+/** Is `press` the one that left `note` (outside.js)? Same place and button, and the same click count, so a quick second click
+ *  on the same spot is a press of its own. */
+export function samePress(note, press, now) {
+  const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1
+  return (
+    Boolean(note && press?.position) &&
+    now - note.at >= 0 &&
+    now - note.at < DISMISS_MS &&
+    close(note.x, press.position.x) &&
+    close(note.y, press.position.y) &&
+    note.button === press.button &&
+    note.clicks === press.click_count
+  )
+}
+
+/** Herdr's frame around a floating block, in window px past the mod's root: 5 above and below (its docs give no side
+ *  padding), plus its 1 px border. */
+export const FLOAT_FRAME = 6
+
+/** on_mouse_down_out also fires on the frame Herdr draws around a floating block, which is still the surface. True when the
+ *  press is past the frame; true too when the event has no place for it.
+ *  Only above and below: the sides have none. The frame is window px, so it is divided by the zoom as the other sizes are. */
+export function pastFrame(press, zoom = 1) {
+  const at = press?.local_position
+  const box = press?.bounds
+  if (!at || !box) return true
+  const frame = atZoom(FLOAT_FRAME, zoom)
+  return at.x < 0 || at.y < -frame || at.x > box.width || at.y > box.height + frame
+}
 
 /** Which terminal gets the keyboard when the pop-up goes (`from`: {back, space} saved at open), or null. Null when a row
  *  already chose (`leaving`), in another space, or when the owner clicked another terminal to dismiss it. */
@@ -951,6 +988,8 @@ const PINS_ALL_ROWS = 4 // more than this scroll
 const PINS_ALL_CHROME = 2 + 20 + 24 + 4 // border, padding, header, gap
 const PANEL_CHAR_W = 7.8 // a 13 px mono character
 const PANEL_MAX_LINES = 12
+const PANEL_COPY_ROW = 36 // a Copy row: 30 high (the panel's 20 px line, padding, border) and a 6 gap above it
+const PANEL_MAX_COPY_ROWS = 3 // more scroll
 const PANEL_FALLBACK_TOP = 80 // tabs 42 + pin bar 38, when the bar's own bounds are not known
 const PANEL_FALLBACK_SIDE = CARD_SIDE
 const PINS_MIN_H = 120 // an overlay never gets smaller than this, however small the window
@@ -986,7 +1025,8 @@ export function panelHeight(text, width) {
   const lines = String(text ?? '')
     .split('\n')
     .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / per)), 0)
-  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + 12 + 18 + 12 + 28 + 14
+  const rows = Math.min(copyTargets(text).length, PANEL_MAX_COPY_ROWS)
+  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + rows * PANEL_COPY_ROW + 12 + 18 + 12 + 28 + 14
 }
 
 /** The drop panel's context line: who, age and tag, as far as the pin has them. */

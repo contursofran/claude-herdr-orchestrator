@@ -3,9 +3,10 @@
 import { focused, run, setShared, shared } from 'herdr'
 import { canRefocus, openState } from './model.js'
 
-/** Open the sheet on `key` of `board`; remembers the terminal to hand back. */
-export function openSheet(board, key) {
-  const cur = shared('hrd.sheet')
+/** Open the sheet on `key` of `board`; remembers the terminal to hand back, or the one `from` (a surface this press just
+ *  closed) would have. */
+export function openSheet(board, key, from = null) {
+  const cur = shared('hrd.sheet') ?? from
   // One write, so every mod redraws once: the time tells this open from the last one, without the shared counter.
   setShared('hrd.sheet', openState(cur, board.session, key, focused()?.terminal, Date.now(), focused()?.space))
 }

@@ -1,10 +1,14 @@
 import { div, svg } from 'gpui-kit'
 import { exec, notify, readTextFile, run, settings, setShared, shared } from 'herdr'
 import { send } from './board.js'
+import { copyableText } from './copy.js'
+import { copyKey } from './copystate.js'
 import { CardState, clearStaleSheet, firstThisRun } from './cardstate.js'
 import { button, faceIcon, ghost, keyButton } from './card.js'
 import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, pageSheet } from './sheetctl.js'
+import { noteDismissed } from './outside.js'
+import { pastFrame } from './model.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
 /** The sheet's state for this copy (main.js, role `sheet`): the card's (an Outbox for the undo window, the focus handle),
@@ -130,6 +134,7 @@ export function sheetBlock(boards, ctl, cx) {
   // The first draw after an open: take the keyboard, so Esc works.
   if (ctl.token !== token) {
     ctl.token = token
+    ctl.copy.selected = false
     cx.spawn(async cx => {
       await cx.sleep(60)
       ctl.h.focus()
@@ -167,7 +172,8 @@ export function sheetBlock(boards, ctl, cx) {
     .flex_col()
     .gap(2)
     .text_color(color.soft)
-  if (view.why) for (const line of whyLines(view.why)) why.child(div().child(line === '' ? ' ' : line))
+  if (view.pinText) why.child(copyableText(`sheet-copy-${open.key}`, view.pinText, ctl.copy))
+  else if (view.why) for (const line of whyLines(view.why)) why.child(div().child(line === '' ? ' ' : line))
   else
     why.child(
       div()
@@ -288,7 +294,12 @@ export function sheetBlock(boards, ctl, cx) {
     .text_color(sheetLook.waiting)
     .child(svg(icon('waiting')).size(12).flex_none())
     .child(div().min_w_0().truncate().child(view.waitingOn))
-  const hint = sheetHint({ options: resolved ? 0 : view.options.length, paged: view.pos.n > 1, more: sheetMore(view, size) })
+  const hint = sheetHint({
+    options: resolved ? 0 : view.options.length,
+    paged: view.pos.n > 1,
+    more: sheetMore(view, size),
+    copy: Boolean(view.pinText),
+  })
 
   return div()
     .id('sheet')
@@ -297,13 +308,26 @@ export function sheetBlock(boards, ctl, cx) {
     .flex()
     .flex_col()
     .text_size(font.size)
+    .on_mouse_down_out((e, cx) => {
+      // As the card: the keyboard stays on what was pressed, and any button dismisses.
+      if (!pastFrame(e, settings()?.zoom)) return
+      noteDismissed('sheet', e, open)
+      closeSheet(false)
+      cx.notify()
+    })
     .child(
       div()
         .id('sheet-body')
         .track_focus(ctl.h)
         .on_key_down((e, cx) => {
-          const act = sheetKeyAction(e.keystroke ?? e.key, { options: resolved ? 0 : view.options.length, held: e.is_held })
+          const keystroke = e.keystroke ?? e.key
+          const act = sheetKeyAction(keystroke, {
+            options: resolved ? 0 : view.options.length,
+            held: e.is_held,
+            copy: view.pinText ? copyKey(keystroke) : null,
+          })
           if (act.type === 'ignore') return
+          if (act.type === 'copy') return ctl.copy.key(cx, act.chord, `sheet-copy-${open.key}`, view.pinText)
           if (act.type === 'close') close(null, cx)
           else if (act.type === 'prev' || act.type === 'next') {
             const key = act.type === 'prev' ? view.pos.prev : view.pos.next

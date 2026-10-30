@@ -1,4 +1,5 @@
 // What the card keeps between draws. No `herdr` import: everything outside comes in as an argument, so it can be tested.
+import { CopyState } from './copystate.js'
 import { Outbox } from './outbox.js'
 
 /**
@@ -14,6 +15,7 @@ export class CardState {
     this.outbox = new Outbox({ send, notify })
     this.h = handle
     this.token = null
+    this.copy = new CopyState()
   }
 
   /** Called with the boards after each change; true when something was settled (redraw). */
@@ -64,7 +66,7 @@ export function clearStaleSheet(get, set) {
 /** At app start: forget what the last run left in shared. Overlay ids restart with each run, so an old one could name another
  *  overlay; a Done request left behind was never undoable and is not sent now. */
 export function clearStaleOverlays(get, set) {
-  for (const key of ['hrd.pins', 'hrd.popup', 'hrd.doneReq']) if (get(key)) set(key, null)
+  for (const key of ['hrd.pins', 'hrd.popup', 'hrd.doneReq', 'hrd.dismissed']) if (get(key)) set(key, null)
 }
 
 /**

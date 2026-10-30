@@ -1,5 +1,7 @@
 import { div, svg } from 'gpui-kit'
 import { closeOverlay, props, setShared, shared } from 'herdr'
+import { copyableText } from './copy.js'
+import { CopyState, copyKey, copyTargets } from './copystate.js'
 import {
   PINS_ALL_ROW_TEXT,
   ageText,
@@ -80,7 +82,7 @@ function segmentsRow(segments, ui) {
  *   board  the resolved board, or null (the row draws empty)
  *   ui     what main.js worked out: {mode, current, many, empty, segments, slim, meta, waiting, flash} and the handlers
  *          onPick(id, cx), onStep(dir, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
- * The caret and `all pins` open the drop panel and the popover (S8, pinsView below); onBounds(b) keeps the bar's place.
+ * The caret and `all pins` open the drop panel and the popover (S8, pinsView below); onPress(e) keeps the bar's place.
  */
 export function pinbar(board, ui) {
   if (!board) return base()
@@ -115,7 +117,7 @@ export function pinbar(board, ui) {
   return (
     base()
       // Where the drop panel and the popover go: the bar's own bounds, from the press that opens them.
-      .on_mouse_down('left', e => ui.onBounds(e?.bounds))
+      .on_mouse_down('left', e => ui.onPress(e))
       // The unread flash: a layer behind the content fades in and out, 1.1 s a time; main.js removes it after two.
       .when(ui.flash, el =>
         el.child(div().absolute().top(0).left(0).size_full().bg(color.flash).loop('opacity', { from: 0, to: 1, period: 1100 })),
@@ -162,7 +164,8 @@ export function pinbar(board, ui) {
       .child(ghost('pin-all', 'all pins', (_e, cx) => ui.onAll(cx)))
       .child(
         div()
-          .id('pin-done')
+          // One id per pin: a press on this pin's × is no click on the pin that replaced it (#211).
+          .id(`pin-done-${pin.key}`)
           .tooltip('Done')
           .flex_none()
           .size(28)
@@ -228,6 +231,7 @@ export function pinsView(gone, ctl, board = null) {
     .filter(x => !gone.has(x.id))
     .map(x => ({ ...x, unread: read[x.id] !== true }))
   const close = closePinsOverlay
+  const copy = (ctl.copy ??= new CopyState())
   // The next overlay takes the keyboard, and hands it back to the terminal this one would have.
   const openNext = (view, opts) => {
     ctl.leaving = true
@@ -236,8 +240,11 @@ export function pinsView(gone, ctl, board = null) {
   const root = div()
     .id('pins-overlay')
     .track_focus(ctl.h)
-    .on_key_down(e => {
-      if (popupKeyAction(e.keystroke ?? e.key, e.is_held) === 'close') close()
+    .on_key_down((e, cx) => {
+      const keystroke = e.keystroke ?? e.key
+      const chord = p.view === 'panel' && !e.is_held ? copyKey(keystroke) : null
+      if (chord) copy.key(cx, chord, 'pin-copy', list.find(x => x.id === p.id)?.text)
+      else if (popupKeyAction(keystroke, e.is_held) === 'close') close()
     })
     .w(Number(p.width))
     .h(p.view === 'panel' ? Number(p.height) : Math.min(Number(p.height), allPinsHeight(list.length)))
@@ -272,7 +279,7 @@ export function pinsView(gone, ctl, board = null) {
           .text_size(font.terminalSize)
           .line_height(`${font.terminalLine}px`)
           .text_color(color.text)
-          .child(pin?.text ?? ''),
+          .child(copyableText('pin-copy', pin?.text ?? '', copy, color.text)),
       )
       .child(
         div()
@@ -281,7 +288,7 @@ export function pinsView(gone, ctl, board = null) {
           .flex_none()
           .truncate()
           .text_color(color.dim)
-          .child(pin ? pinContext(pin, Date.now()) : ''),
+          .child(pin ? [pinContext(pin, Date.now()), copyTargets(pin.text).length ? 'c copies' : ''].filter(Boolean).join(' · ') : ''),
       )
       .child(
         div()
@@ -307,7 +314,8 @@ export function pinsView(gone, ctl, board = null) {
   const now = Date.now()
   noteRows(
     ctl,
-    ordered.map(pin => pin.key),
+    // The read state is part of a row: `mark read` going away moves `done` under the cursor (#205).
+    ordered.map(pin => `${pin.key}:${pin.unread ? 'unread' : 'read'}`),
     now,
   )
   // Buttons fire on the press, so one aimed at a row that just moved up would hit the row now under the cursor: ignore it.
