@@ -602,11 +602,24 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       return true
     }
     const set = wait
-    await updateJob(
+    const { after } = await updateJob(
       $,
       job.name,
       live(job, j => ({ ...j, wait: set })),
     )
+    // The wait takes effect once: the coordinator is told (never the worker, which a message would wake). Not a report.
+    // Not once the report has gone out: "its report comes when the wait ends" is false then.
+    if (after && after.status !== 'reported') {
+      // A PR the wait names as "PR #N", else the job's own PR; never a bare "#N", which may be an issue.
+      const named = `${set.for} ${set.check}`.match(/\bPR\s*#(\d{1,6})\b/i)?.[1]
+      const pr = named ?? [...(after.prs ?? [])].pop()
+      // One line, no tags: the text comes from the worker and must not break the message's shape.
+      const what = set.for.replace(/\s+/g, ' ').replace(/[<>]/g, '').trim()
+      await post(
+        $,
+        `<herdr-agent name="${job.name}" profile="${job.profile}" status="parked">\nParked on WAIT.json, waiting for: ${what}${pr ? ` (PR #${pr})` : ''}. It is not finished: its report comes when the wait ends.\n</herdr-agent>`,
+      )
+    }
   }
   if (wait.lastAt !== undefined && now - wait.lastAt < wait.every * 60_000) return true
   const ran = await $.process.run(['/bin/bash', '-c', wait.check], { cwd: job.cwd, timeoutMs: 120_000 }).catch((err: unknown) => ({
