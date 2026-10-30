@@ -28,6 +28,7 @@ jobs:
   python:
     runs-on: ubuntu-latest
     steps:
+      - run: exit 1
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
