@@ -15,7 +15,7 @@ import { drawSide, pollPrs, SIDE, sideClosed, sideOpen, sideShown, syncSide, tog
 import { active, dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
 import { refreshSpawnTool, registerTools } from './tools'
-import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep } from './workers'
+import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep, sweepNeeded } from './workers'
 import type { SpawnArgs } from './workers'
 import { pruneMerged } from './worktrees'
 
@@ -50,25 +50,12 @@ export const register: Register = on => {
     await restoreOutbox($)
     if (isWorker) {
       // A worker's own session sweeps the workers it started, but only while one of them runs,
-      // or while a reported one with an open tab is due to close (closeIdleMinutes). Until then it
+      // while a reported one carries on (a WAIT.json or a new report), or while one with an open tab is due to
+      // close (closeIdleMinutes). Until then it
       // makes no hc call, and none once the last tab is closed. Its report check does nothing
       // with no running job either. The other timers stay with the coordinator.
       const sweepIfNeeded = async () => {
-        const all = Object.values(await jobs($))
-        let needed = all.some(j => active(j) || j.tail)
-        if (!needed && closeMinutes > 0) {
-          const now = await $.clock.now()
-          const asking = new Set((await openQuestions($)).map(d => d.from))
-          needed = all.some(
-            j =>
-              j.status === 'reported' &&
-              !j.closed &&
-              !asking.has(j.name) &&
-              j.endedAt !== undefined &&
-              now - j.endedAt >= closeMinutes * 60_000,
-          )
-        }
-        if (needed) await sweep($, closeMinutes)
+        if (await sweepNeeded($, closeMinutes)) await sweep($, closeMinutes)
       }
       void sweepIfNeeded().catch(() => {})
       $.clock.every(SWEEP_MS, () => {

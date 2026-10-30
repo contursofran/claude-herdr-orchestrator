@@ -968,7 +968,7 @@ test('a wait that passes after its worker was stopped prompts nothing', async ($
   release()
   await clock.settle()
   expect(typed.length).toBe(before)
-  expect(`${W}/WAIT.json` in files).toBe(true)
+  expect(`${W}/WAIT.json` in files).toBe(false)
 })
 
 test('a message held while a report is being delivered is listed, not lost', async ($, on) => {
@@ -1722,18 +1722,71 @@ test('a reported worker that writes a new RESULT.md after its report has it deli
   await s.clock.advance(2 * 60_000)
   await s.clock.advance(BATCH_MS)
   expect(s.submitted.filter(t => t.includes('Final report.'))).toHaveLength(1)
+  // Another sweep does not deliver it again.
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => t.includes('Final report.'))).toHaveLength(1)
   await stopAll($, s.clock, ['w-busy'])
 })
 
-test('the coordinator hears when a tab is closed with a WAIT.json still waiting', async ($, on) => {
-  const s = await start($, on)
+test('the coordinator hears once when a tab is gone with a WAIT.json still waiting, even with closeIdleMinutes 0', async ($, on) => {
+  const s = await start($, on, { closeIdleMinutes: 0 })
   await reportW($, s)
   s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":30,"max":720}'
   s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }])
   await s.clock.advance(60_000)
   s.gone.add('w-busy')
   await s.kill('w-busy')
+  // One list without the worker decides nothing.
+  await s.clock.advance(60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => /tab is gone while .*WAIT\.json was still waiting/.test(t))).toHaveLength(0)
+  await s.clock.advance(5 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => /tab is gone while .*WAIT\.json was still waiting/.test(t))).toHaveLength(1)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ closed: true })
+  expect(`${W}/WAIT.json` in s.files).toBe(false)
+})
+
+test("a stop while a reported worker's WAIT.json check runs does not wake it or report it gone", async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 0 }])
+  const release = s.gate(check)
+  await s.clock.advance(2 * 60_000)
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-busy' })
+  const submitted = s.submitted.length
+  release()
+  await s.clock.settle()
   await s.clock.advance(40 * 60_000)
   await s.clock.advance(BATCH_MS)
-  expect(s.submitted.some(t => /tab is gone while .*WAIT\.json was still waiting/.test(t))).toBe(true)
+  expect(s.typed.length).toBe(before)
+  expect(s.submitted.length).toBe(submitted)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported', closed: true })
+})
+
+test("a worker's own session wakes a reported nested worker whose WAIT.json check passes, even with closeIdleMinutes 0", async ($, on) => {
+  const kept = { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': reportedJob } } }
+  const s = await start($, on, { closeIdleMinutes: 0 }, kept, { HERDR_AGENTS_ROLE: 'worker' })
+  await s.clock.settle()
+  s.files['/repo/wt/.herdr-agents/w-done/WAIT.json'] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 0 }])
+  await s.clock.advance(3 * 60_000)
+  expect(s.typed.some(t => t.includes('Your wait is over'))).toBe(true)
+})
+
+test('a blocked reported worker with a WAIT.json is not woken', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 0 }])
+  s.status['w-busy'] = 'blocked'
+  await s.clock.advance(2 * 60_000)
+  expect(s.typed.length).toBe(before)
+  // The wait stays (the check is not even run to its end), so the wake text is not lost.
+  expect(`${W}/WAIT.json` in s.files).toBe(true)
+  await stopAll($, s.clock, ['w-busy'])
 })

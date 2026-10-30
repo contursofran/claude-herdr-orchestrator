@@ -317,7 +317,9 @@ async function endTail($: EngineInterface, job: Job) {
 // while it may still be finishing its turn, once the file has been the same for a whole tick
 // (seenReport), so a report written in parts is not sent half done. The wait and the sweep
 // stay for a blocked worker and for a turn that ends with no report; a report found there is
-// delivered at once, as the worker has stopped writing. It makes no hc call: one exists
+// delivered at once, as the worker has stopped writing. (The sweep also delivers a new report
+// of a reported worker with no wait for a quiet tick, as it does not tell whether the worker
+// still writes; the worker's later rewrite goes out as a further report.) It makes no hc call: one exists
 // check, and a read once the file is there. Not awaited, so a step queued behind a slow one
 // does not hold up the band's tick.
 export async function checkReports($: EngineInterface) {
@@ -362,8 +364,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   const byName = new Map<string, HcListed>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
   for (const job of Object.values(await jobs($))) {
-    // A reported worker may carry on after its report: a WAIT.json or a new RESULT.md of its own counts.
-    if (job.status !== 'running' && !job.tail && !(job.status === 'reported' && !job.closed && (await carriesOn($, job)))) continue
+    if (job.status !== 'running' && !job.tail && !(await carriesOn($, job))) continue
     await serial(job.name, async () => {
       const current = (await jobs($))[job.name]
       if (!current) return
@@ -374,7 +375,16 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
         if (current.tail) return await sweepTail($, current, agents, a, early)
         if (current.closed) return
         if (await fresh($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
-        if (a && (await $.fs.exists(`${current.dir}/WAIT.json`))) await waiting($, current, a.status ?? 'unknown', now)
+        if (agents === undefined) return
+        if (!a) {
+          // Its tab is gone with a wait still open (or none): nothing will wake it, so the coordinator is told.
+          if (await $.fs.exists(`${current.dir}/WAIT.json`)) await goneWaiting($, current)
+          return
+        }
+        misses.delete(current.name)
+        // A blocked worker is not woken: the wake text would be lost, and a blocked report follows.
+        // `waiting` also drops the job's wait when its WAIT.json was cancelled.
+        if (a.status !== 'blocked') await waiting($, current, a.status ?? 'unknown', now)
         return
       }
       if (await reported($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
@@ -418,9 +428,47 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   void refresh($)
 }
 
-// A reported job whose worker went on after its report: it wrote a WAIT.json, or a RESULT.md not yet delivered.
-async function carriesOn($: EngineInterface, job: Job) {
-  return (await $.fs.exists(`${job.dir}/WAIT.json`)) || (await fresh($, job))
+// A reported job, tab still open, whose worker went on after its report: it has a WAIT.json
+// (or a wait it was running), or a RESULT.md not yet delivered.
+export async function carriesOn($: EngineInterface, job: Job) {
+  if (job.status !== 'reported' || job.closed) return false
+  return !!job.wait || (await $.fs.exists(`${job.dir}/WAIT.json`)) || (await fresh($, job))
+}
+
+// Whether a worker's own session has anything to sweep: a running job, a tail, a reported
+// job that carries on, or (closeIdleMinutes above 0) one due to close.
+export async function sweepNeeded($: EngineInterface, closeMinutes: number) {
+  const all = Object.values(await jobs($))
+  if (all.some(j => active(j) || j.tail)) return true
+  for (const j of all) if (await carriesOn($, j)) return true
+  if (closeMinutes <= 0) return false
+  const now = await $.clock.now()
+  const asking = new Set((await openQuestions($)).map(d => d.from))
+  return all.some(
+    j => j.status === 'reported' && !j.closed && !asking.has(j.name) && j.endedAt !== undefined && now - j.endedAt >= closeMinutes * 60_000,
+  )
+}
+
+// A reported worker's tab is gone while its wait was open. Counted like a running worker's:
+// only GONE_MISSES lists in a row without it, as one list may miss it.
+async function goneWaiting($: EngineInterface, job: Job) {
+  const n = (misses.get(job.name) ?? 0) + 1
+  misses.set(job.name, n)
+  if (n < GONE_MISSES) return
+  misses.delete(job.name)
+  const { after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && !j.closed ? { ...j, closed: true, wait: undefined } : undefined,
+  )
+  if (!after) return
+  await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
+  try {
+    await hc($, ['rm', job.name])
+  } catch {}
+  await post(
+    $,
+    `<herdr-agent name="${job.name}" profile="${job.profile}" status="gone">\nIts tab is gone while ${job.dir}/WAIT.json was still waiting, so its work may be unfinished and nothing will wake it. Check its branch or PR, and start a new worker if needed.\n</herdr-agent>`,
+    true,
+  )
 }
 
 // A reported job still watched (see Job.tail), as the sweep sees it. No quiet-screen rule:
@@ -539,9 +587,11 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   }
   // A worker still working (it wrote WAIT.json mid-turn) is woken once it stops.
   if (status === 'working') return true
-  // The check may have run for minutes: a stop, a report or a new prompt since then ends this wait.
+  // The check may have run for minutes: a stop or a new prompt since then ends this wait.
   const latest = await latestJob($, job.name)
-  if (!latest || (latest.status !== 'running' && latest.status !== 'reported') || latest.token !== job.token) return true
+  // A reported job is woken only while its wait is still set: a stop clears it.
+  if (!latest || latest.token !== job.token) return true
+  if (latest.status === 'reported' ? latest.closed || !latest.wait : latest.status !== 'running') return true
   await $.process.run(['rm', '-f', path])
   const mins = Math.round((now - wait.since) / 60_000)
   await prompt(
@@ -1037,7 +1087,10 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
     headerStatus: undefined,
     endedAt: await $.clock.now(),
     tail: undefined,
+    wait: undefined,
   })
+  // A stopped worker is never woken: its wait ends here, even if its tab fails to close.
+  await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
   try {
     await closeTerminal($, job.name)
   } catch (err) {
@@ -1076,13 +1129,8 @@ export async function closeIdle($: EngineInterface, minutes: number, agents?: Hc
       try {
         await hc($, ['rm', job.name])
       } catch {}
-      // Its tab is gone with a wait still open: nothing will wake it, so the coordinator is told.
-      if (waits)
-        await post(
-          $,
-          `<herdr-agent name="${job.name}" profile="${job.profile}" status="gone">\nIts tab is gone while ${job.dir}/WAIT.json was still waiting, so its work may be unfinished and nothing will wake it. Check its branch or PR, and start a new worker if needed.\n</herdr-agent>`,
-          true,
-        )
+      // Its tab is gone with a wait still open: the sweep tells the coordinator, so it is left to it.
+      if (waits) continue
     }
     // A message may have woken it meanwhile.
     await updateJob($, job.name, j => (j.status === 'reported' ? { ...j, closed: true } : undefined))
