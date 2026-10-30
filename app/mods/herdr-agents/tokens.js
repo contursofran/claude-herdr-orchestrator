@@ -48,10 +48,18 @@ export const card = {
 }
 
 // The board pop-up (S7).
-// The pin drop panel and the all-pins popover (S8).
-export const pinsLook = { bg: '#181818', line: '#3A3A3A', border: '#2E2E2E', rowHover: '#1C1C1C', dot: '#9A9A9A' }
-
 export const popup = { bg: '#181818', border: '#3A3A3A', head: '#7A7A7A', rowHover: '#1C1C1C', cell: 44 }
+
+// The pin drop panel and the all-pins popover (S8).
+export const pinsLook = {
+  bg: '#181818',
+  line: '#3A3A3A',
+  border: '#2E2E2E',
+  rowHover: '#1C1C1C',
+  dot: '#9A9A9A',
+  buttonBorder: '#333333',
+  buttonHover: '#1E1E1E',
+}
 
 // The context sheet (S9), floating over the top of the terminal.
 export const sheet = { well: '#111111', wellBorder: '#262626', rule: '#222222', label: '#7A7A7A', waiting: '#8A8A8A', impact: '#BDBDBD' }

@@ -65,6 +65,7 @@ globalThis.__fakeGpui = {
     app.closed.push(id)
   },
   focused: () => app.focused ?? null,
+  layout: () => app.layout ?? null,
   openOverlay: o => {
     app.opened.push(o)
     return `o${app.opened.length}`
@@ -94,6 +95,7 @@ const names = {
     'focused',
     'hc',
     'home',
+    'layout',
     'nextCommand',
     'notify',
     'openOverlay',

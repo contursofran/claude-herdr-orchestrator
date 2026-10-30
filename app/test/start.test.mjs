@@ -36,7 +36,7 @@ globalThis.__startFake = {
     await state.boardsGate
     return { code: 0, stdout: args[0] === '-1' ? state.listing : '', stderr: '' }
   },
-  watchFolder: () => new Promise(() => {}),
+  watchFolder: () => new Promise(wake => (state.wake = wake)),
   nextCommand: () => state.commands.shift() ?? new Promise(() => {}),
   terminals: () => state.terminals ?? [],
   openOverlay: o => {
@@ -322,6 +322,85 @@ test('an open card, an open sheet and the pin bar redraw when the age they show 
 const settle = async () => {
   for (let i = 0; i < 50; i++) await new Promise(resolve => setImmediate(resolve))
 }
+
+// A pins copy with its board reader running; `write` is a board write the watcher reports.
+async function startPinsWatch(props) {
+  const tasks = []
+  const counts = { notify: 0 }
+  const own = {
+    notify: () => counts.notify++,
+    sleep: async () => {},
+    focus_handle: () => ({ focus() {} }),
+    timer: { every() {}, after() {} },
+  }
+  state.props = { role: 'pins', session: 's', overlay: 'o9', width: 470, height: 300, back: 't7', space: 'a', ...props }
+  state.store['hrd.pins'] = 'o9'
+  state.closed = []
+  state.file = null
+  const copy = new HerdrAgents()
+  copy.init(state.props, { ...own, spawn: f => tasks.push(f) })
+  const openKeys = keys => JSON.stringify({ session: 's', needs: keys.map(key => ({ key, kind: 'know', isOpen: true, text: key })) })
+  const write = async keys => {
+    state.file = openKeys(keys)
+    state.wake(['/home/.herdr-agents/board/s.json'])
+    await settle()
+  }
+  state.file = openKeys(props.list.map(p => p.key))
+  tasks[1](own)
+  await settle()
+  return { copy, counts, write }
+}
+const twoPins = [
+  { id: 's:K1', key: 'K1', title: 'K1', text: 'K1', at: 0 },
+  { id: 's:K2', key: 'K2', title: 'K2', text: 'K2', at: 0 },
+]
+
+test('an open popover: its first board read draws nothing new, a resolved pin redraws, an unrelated write does not', async () => {
+  const { counts, write } = await startPinsWatch({ view: 'all', list: twoPins })
+  assert.equal(counts.notify, 0, 'the first read matches the list it opened with')
+  await write(['K1', 'K2', 'K3'])
+  assert.equal(counts.notify, 0, 'a change to no pin it lists')
+  await write(['K2'])
+  assert.equal(counts.notify, 1)
+  assert.deepEqual(state.closed, [])
+})
+
+test('an open popover closes when its last pin is resolved', async () => {
+  const { write } = await startPinsWatch({ view: 'all', list: twoPins })
+  await write([])
+  assert.deepEqual(state.closed, ['o9'])
+  assert.equal(state.store['hrd.pins'], null)
+})
+
+test("a watcher closing its overlay hands the keyboard back through the close call, and leaves a newer overlay's id", async () => {
+  const { copy, write } = await startPinsWatch({ view: 'all', list: twoPins })
+  state.store['hrd.pins'] = 'o10'
+  await write([])
+  assert.deepEqual(state.closed, ['o9'])
+  assert.equal(state.store['hrd.pins'], 'o10')
+  state.focused = { terminal: null, space: 'a' }
+  state.ran = []
+  await copy.close()
+  assert.deepEqual(state.ran, [['pane.focus', { terminal: 't7' }]])
+  state.focused = null
+  state.ran = null
+})
+
+test('an open drop panel closes when its pin is resolved, not when another is', async () => {
+  const { counts, write } = await startPinsWatch({ view: 'panel', id: 's:K1', list: twoPins })
+  await write(['K1'])
+  assert.deepEqual(state.closed, [])
+  assert.equal(counts.notify, 1)
+  await write([])
+  assert.deepEqual(state.closed, ['o9'])
+})
+
+test('a resolved pin stops counting for the age clock', async () => {
+  const { copy, write } = await startPinsWatch({ view: 'all', list: twoPins.map((p, i) => ({ ...p, at: 100 + i })) })
+  assert.deepEqual(copy.agedTimes(), [100, 101])
+  await write(['K2'])
+  assert.deepEqual(copy.agedTimes(), [101])
+})
 
 test('commands before the first board read wait for it: the last one then does its job, once', async () => {
   globalThis.window = { viewport_size: () => ({ width: 1280, height: 820 }) }
