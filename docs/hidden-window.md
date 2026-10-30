@@ -2,7 +2,7 @@
 
 Draw checks catch what `herdr-app check` and the tests can't, but a normal second Herdr window comes to the front and takes the keyboard. `scripts/herdr-hidden-window.sh` starts a window that draws real frames while the front app and the keyboard stay where they are and nothing shows on screen.
 
-macOS on Apple Silicon only. It needs Xcode's command line tools (`clang`), Herdr in `/Applications` and `herdr-core` on your PATH or in `~/.local/bin`.
+macOS on Apple Silicon only. It needs Xcode's command line tools (`clang`), Herdr in `/Applications` and `herdr-core` on your PATH or in `~/.local/bin`, which `start` copies.
 
 ## Use
 
@@ -18,7 +18,9 @@ $w sync                                  # after editing the mod: hot reload
 $w stop                                  # closes it and removes every trace
 ```
 
-`run` runs any command against this window: its own home, app folder and core, so `herdr-app` and `hc` never reach your real window. Save shots outside the window's folder, which `stop` deletes, and give `shot` an absolute path. Set `HERDR_HIDDEN_NAME` for a window of your own when others may be running one; each has its own copy of the app (about 63 MB until `stop`).
+`run` runs any command against this window: its own home, app folder and copy of `herdr-core`, with `~/.local/bin` off its PATH, so `herdr-app` and `hc` never reach your real window or its core. Save shots outside the window's folder, which `stop` deletes, and give `shot` an absolute path. Set `HERDR_HIDDEN_NAME` for a window of your own when others may be running one; each has its own copy of the app (about 70 MB until `stop`). A name has at most 13 characters, so the longest socket path fits the 103 macOS allows.
+
+Only one `start` or `stop` runs per window: another one refuses and leaves the first alone. `start` over a window that died closes what it left first. A `start` that fails at any step leaves no process or folder.
 
 To draw your own board, pass it to `demo`. By hand, its file must be `.herdr-agents/board/<session>.json` in the window's home and its `coordinator.terminal` a live agent, or the bar and strip stay empty and the pop-up has no content.
 
@@ -30,7 +32,14 @@ The copy of the app has its own bundle id and `LSBackgroundOnly`, and is ad-hoc 
 - keep the window on its screen at alpha 0, under normal windows, ignoring the mouse;
 - tell GPUI the window is never covered. **This is what keeps frames coming**: without it `render()` stops and `shot` returns the same frame forever.
 
-The copy also has no network (no updates or telemetry), no sounds or beeps, no clipboard writes and no notification prompt, and can't hide other apps or open links. A crash exits quietly, without the crash dialog.
+At the end of `start`, the window server must report every window of the copy at alpha 0 on layer -1. If not, `start` closes the copy and exits non-zero. It also warns when Herdr's version isn't the one the hooks were tested on (`tested_version` in the script).
+
+What else is blocked, and how far that goes:
+
+- **Network:** the app process can't open internet connections, which stops its updater and telemetry. The hook does not reach the core, `hc` or programs in its terminals: they have network. An update run there can only replace the copy's `herdr-core`, not yours.
+- **Clipboard:** the copy's `clipboard_write` setting is off. Nothing blocks the clipboard itself, so a program in its terminals can still use `pbcopy`.
+- **Links:** the app's `openURL:` call does nothing, and `open` and `afplay` found on PATH are silent shims. A program calling `/usr/bin/open` by its full path is not stopped.
+- **Sounds and prompts:** beeps, the notification prompt and hiding other apps are refused. A crash exits quietly, without the crash dialog.
 
 ## Measured
 
@@ -61,4 +70,4 @@ The front app, sampled about every 270 ms through every run (21 runs, 920 sample
 - The window is never really active, so whatever asks if the person is looking at it gets no.
 - It has the default size on the main display; one display was tested.
 - "Nothing on screen" rests on what the window server reports, not on looking at the screen. Mission Control and Stage Manager were not checked.
-- The hooks fit this app version. After an update, if the front app ever moves, the app exits instead of staying in front and `run` says the window is not running; check the numbers above again before relying on it.
+- The hooks fit this app version; `start` warns on another. After an update, if the front app ever moves, the app exits instead of staying in front and `run` says the window is not running; check the numbers above again before relying on it.

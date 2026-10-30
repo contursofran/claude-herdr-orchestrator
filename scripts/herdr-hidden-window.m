@@ -1,6 +1,24 @@
 // Loaded into a throwaway copy of Herdr by scripts/herdr-hidden-window.sh, so
 // the copy draws real frames while the person's front app and keyboard stay put.
 // The original app has the hardened runtime and ignores DYLD_INSERT_LIBRARIES.
+//
+// Built with -DWINDOW_CHECK it is instead a small tool: it prints the alpha and
+// layer the window server holds for each window of a pid, one window per line.
+#ifdef WINDOW_CHECK
+#import <CoreGraphics/CoreGraphics.h>
+#import <Foundation/Foundation.h>
+
+int main(int argc, char **argv) {
+  if (argc != 2) return 2;
+  int pid = atoi(argv[1]);
+  NSArray *windows = (NSArray *)CGWindowListCopyWindowInfo(kCGWindowListOptionAll, kCGNullWindowID);
+  for (NSDictionary *window in windows) {
+    if ([window[(id)kCGWindowOwnerPID] intValue] != pid) continue;
+    printf("%g %d\n", [window[(id)kCGWindowAlpha] doubleValue], [window[(id)kCGWindowLayer] intValue]);
+  }
+  return 0;
+}
+#else
 #import <AppKit/AppKit.h>
 #import <UserNotifications/UserNotifications.h>
 #import <errno.h>
@@ -168,3 +186,4 @@ __attribute__((constructor)) static void start(void) {
                         reason:@"hidden test window"] retain];
   note("loaded");
 }
+#endif  // WINDOW_CHECK
