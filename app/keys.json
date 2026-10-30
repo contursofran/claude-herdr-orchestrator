@@ -1,1 +1,10 @@
-{}
+{
+  "layout:coordinator": {
+    "cmd-shift-1": "herdr-agents.pick1",
+    "cmd-shift-2": "herdr-agents.pick2",
+    "cmd-shift-3": "herdr-agents.pick3",
+    "cmd-shift-4": "herdr-agents.pick4",
+    "cmd-shift-5": "herdr-agents.pick5",
+    "cmd-shift-6": "herdr-agents.pick6"
+  }
+}

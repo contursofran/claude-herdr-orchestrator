@@ -64,3 +64,11 @@ test('full.json has what the plan lists: a blocked worker, 2 asks, 2 dos, 3 know
   assert.equal(b.tasks.length, 6)
   assert.equal(b.coordinator.terminal, 't4')
 })
+
+test('every icon the strip draws exists in the mod folder', () => {
+  const strip = readFileSync(new URL('../mods/herdr-agents/strip.js', import.meta.url), 'utf8')
+  const names = [...strip.matchAll(/icon\('([a-z-]+)'\)/g)].map(m => m[1])
+  assert.ok(names.length >= 1)
+  const have = readdirSync(new URL('../mods/herdr-agents/icons/', import.meta.url))
+  for (const n of ['working', 'waiting', 'blocked', 'decide', 'do', ...names]) assert.ok(have.includes(`${n}.svg`), n)
+})

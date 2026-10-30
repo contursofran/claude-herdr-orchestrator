@@ -111,3 +111,93 @@ export function debugLine(board) {
   if (!board) return ''
   return `${board.cwd ?? ''} · ${openNeeds(board).length} open`
 }
+
+// ---- S3: the strip --------------------------------------------------------------------------------
+
+/** First line of a text, trimmed. */
+const firstLine = text =>
+  String(text ?? '')
+    .split('\n')[0]
+    .trim()
+
+/**
+ * What the strip draws, in order: workers that are blocked, then open asks, then open dos, each in board order.
+ * (`know` items belong to the pin bar.) An item is {key, id, kind: 'blocked' | 'ask' | 'do', label, terminal?}:
+ * `id` is the bold part of the tab (the worker's name, or D7 / T12), `label` the short text after it, `key` is
+ * unique on the board.
+ */
+export function stripItems(board) {
+  if (!board) return []
+  const blocked = (board.workers ?? [])
+    .filter(w => w?.state === 'blocked')
+    .map(w => ({ key: `w:${w.name}`, id: w.name, kind: 'blocked', label: firstLine(w.note) || 'stuck' }))
+  const open = kind =>
+    openNeeds(board)
+      .filter(n => n.kind === kind)
+      .map(n => ({ key: n.key, id: n.key, kind: kind === 'ask' ? 'ask' : 'do', label: firstLine(n.title) || firstLine(n.text) }))
+  return [...blocked, ...open('ask'), ...open('do')]
+}
+
+/** The tab a `pick1`..`pick6` key means: the Nth item, or null (a 7th and later are reached by scrolling). */
+export function pickAt(items, n) {
+  if (!Number.isInteger(n) || n < 1 || n > 6) return null
+  return items[n - 1] ?? null
+}
+
+/** How many workers are working, waiting and blocked. */
+export function counts(board) {
+  const out = { working: 0, waiting: 0, blocked: 0 }
+  for (const w of board?.workers ?? []) if (w?.state in out) out[w.state] += 1
+  return out
+}
+
+/**
+ * Open items on the other live boards, for `N in other ›`: {count, terminal}, where `terminal` is the coordinator
+ * of the newest other board that has any (null when none). A board whose coordinator is the shown board's
+ * terminal is the same place (a /clear or a stray session leaves a second file), so it is not "other".
+ */
+export function otherCount(boards, terminals, current) {
+  const byAddress = new Map((terminals ?? []).map(t => [t.address, t]))
+  const mine = current?.coordinator?.terminal
+  const others = (boards ?? [])
+    .filter(b => {
+      const address = b?.coordinator?.terminal
+      if (typeof address !== 'string' || address === mine || b.session === current?.session) return false
+      return live(byAddress.get(address))
+    })
+    .map(b => ({ board: b, n: stripItems(b).length }))
+    .filter(o => o.n > 0)
+    .sort((a, b) => (b.board.at ?? 0) - (a.board.at ?? 0) || String(a.board.session).localeCompare(String(b.board.session)))
+  return { count: others.reduce((sum, o) => sum + o.n, 0), terminal: others[0]?.board.coordinator.terminal ?? null }
+}
+
+/** A new item's tab flashes for 4 swings of 0.9 s. */
+export const FLASH_MS = 3600
+
+/** Whether the tab for `key` is flashing: it first showed up at `firstSeenAt` (ms), now is `now`. */
+export function flashing(key, firstSeenAt, now) {
+  if (!key || typeof firstSeenAt !== 'number') return false
+  const age = now - firstSeenAt
+  return age >= 0 && age < FLASH_MS
+}
+
+/**
+ * When each item was first seen, as {"<session>:<key>": ms}. `known` is the last result, or null for the first
+ * load: what is there at the start is stamped 0 (long ago), so only items that arrive later flash. Items that are
+ * gone are dropped.
+ */
+export function observeArrivals(known, boards, now) {
+  const next = {}
+  for (const b of boards ?? []) {
+    for (const item of stripItems(b)) {
+      const id = `${b.session}:${item.key}`
+      next[id] = known === null || known === undefined ? 0 : (known[id] ?? now)
+    }
+  }
+  return next
+}
+
+/** After the flash an item stays in a static "unseen" style until the owner selects it. */
+export function isUnseen(id, known, seen) {
+  return (known?.[id] ?? 0) > 0 && !seen?.has(id)
+}
