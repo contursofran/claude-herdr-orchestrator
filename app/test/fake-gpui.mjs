@@ -1,6 +1,6 @@
-// A stand-in for the app's `gpui-kit` and `herdr` modules, so a view can really be built in a test. It is stricter than
-// `herdr-app check`: a colour must be a hex string, and a bare number as a line height is refused (with one, the panel drew
-// no text; with "20px" it does).
+// A stand-in for the app's `gpui-kit` and `herdr` modules, so a view can really be built in a test. It is as strict as the
+// app where `herdr-app check` is not: a colour must be a hex string, and a bare number as a line height is refused (the app
+// reads it as a multiple of the font size, and the text does not draw), and `.child(null)` throws, as it does there.
 import { registerHooks } from 'node:module'
 
 const COLOUR = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i
@@ -14,6 +14,7 @@ function makeElement() {
       if (name === 'when') return (cond, f) => (cond ? f(el) : el)
       if (name === 'child') {
         return kid => {
+          if (kid === null || kid === undefined) throw new Error('.child() needs an element or text')
           node.kids.push(kid)
           return el
         }
@@ -42,7 +43,7 @@ function makeElement() {
 }
 
 /** What the fake `herdr` module reads and records; a test sets these before it renders. */
-export const app = { props: null, store: {}, opened: [], closed: [], viewport: null, focused: null, ran: [] }
+export const app = { props: null, store: {}, opened: [], closed: [], viewport: null, focused: null, ran: [], settings: { zoom: 1 } }
 
 globalThis.__fakeGpui = {
   div: makeElement,
@@ -50,17 +51,18 @@ globalThis.__fakeGpui = {
   View: class {},
   closeOverlay: id => app.closed.push(id),
   focused: () => app.focused ?? null,
-  run: (name, args) => app.ran.push([name, args]),
   openOverlay: o => {
     app.opened.push(o)
     return `o${app.opened.length}`
   },
   props: () => app.props,
+  run: (name, args) => app.ran.push([name, args]),
   settings: () => app.settings ?? {},
   setShared: (k, v) => {
     app.store[k] = v
   },
   shared: k => app.store[k],
+  terminals: () => [],
 }
 
 const names = {
@@ -74,12 +76,14 @@ const names = {
     'nextCommand',
     'notify',
     'openOverlay',
+    'playSound',
     'props',
     'readTextFile',
     'run',
-    'setShared',
     'settings',
+    'setShared',
     'shared',
+    'terminals',
     'watchFolder',
     'writeTextFile',
   ],
