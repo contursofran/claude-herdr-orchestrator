@@ -142,8 +142,10 @@ export function pins(board, read = {}, hidden = new Set()) {
     .map(n => {
       const id = readKey(board.session, n.key)
       const { first, rest } = textParts(n.text)
-      const title = (typeof n.title === 'string' && n.title.trim()) || first || n.key
-      const hasTitle = typeof n.title === 'string' && n.title.trim() !== ''
+      const given = typeof n.title === 'string' ? n.title.trim() : ''
+      // The plugin sends title = text today (#84): a title equal to the whole text counts as no title.
+      const hasTitle = given !== '' && given !== String(n.text ?? '').trim()
+      const title = (hasTitle ? textParts(given).first : first) || n.key
       const summary = (typeof n.summary === 'string' && n.summary.trim()) || (hasTitle ? [first, rest].filter(Boolean).join(' ') : rest)
       return {
         id,
@@ -244,9 +246,16 @@ export function takeDue(queue, now) {
   return { due: queue.filter(q => q.due <= now), rest: queue.filter(q => q.due > now) }
 }
 
-/** Read keys of items whose action waits or was sent and still shows open on the board. */
-export function hiddenKeys(queue, sent) {
-  return new Set([...queue, ...sent].filter(q => q.key).map(q => readKey(q.session, q.key)))
+/** How long a sent action keeps its item hidden while the board shows no outcome (the plugin may have stopped), ms. */
+export const SENT_HIDE_MS = 60000
+
+/**
+ * Read keys of items whose action waits or was sent and still shows open on the board. A sent action older than
+ * SENT_HIDE_MS (when `now` is given) no longer hides its item.
+ */
+export function hiddenKeys(queue, sent, now = null) {
+  const live = sent.filter(s => now === null || s.at === undefined || now - s.at < SENT_HIDE_MS)
+  return new Set([...queue, ...live].filter(q => q.key).map(q => readKey(q.session, q.key)))
 }
 
 /**
@@ -268,4 +277,49 @@ export function settleSent(sent, boards) {
     if (open) keep.push(s)
   }
   return { sent: keep, failed }
+}
+
+/** The pin bar's memory between draws: the picked pin, the board it was on, the pins seen, the pins already flashed. */
+export const newBarState = () => ({ session: null, sel: null, seen: null, flashed: new Set() })
+
+/**
+ * One draw of the pin bar, pure. `waiting` are the queued actions ({id, session, key}) and `hidden` the keys to leave out.
+ * Returns {state, view, list, flashStart}: the next state, the data pinbar() draws (without handlers), and the pin id
+ * whose flash starts now (once per pin), else null.
+ */
+export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0 } = {}) {
+  if (!board) return { state: prev, view: { mode: 'empty', waiting: [] }, list: [], flashStart: null }
+  const list = pins(board, read, hidden)
+  let { session, sel, seen, flashed } = prev
+  if (session !== board.session) {
+    session = board.session
+    sel = null
+    seen = null
+  }
+  if (newPinIds(seen, list).length) sel = null // a new pin takes the bar back from a picked one
+  seen = new Set(list.map(p => p.id))
+
+  const mode = pinbarMode(list, sel)
+  const current = currentPin(list, sel)
+  let flashStart = null
+  if (mode === 'full' && current.unread && !flashed.has(current.id)) {
+    flashStart = current.id
+    flashed = new Set(flashed).add(current.id)
+  }
+  const all = pins(board, read)
+  return {
+    state: { session, sel, seen, flashed },
+    list,
+    flashStart,
+    view: {
+      mode,
+      current,
+      segments: segments(list, current),
+      slim: slimLine(list),
+      meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
+      waiting: waiting
+        .filter(q => q.session === board.session)
+        .map(q => ({ id: q.id, title: all.find(p => p.key === q.key)?.title ?? q.key })),
+    },
+  }
 }

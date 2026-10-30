@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
+  SENT_HIDE_MS,
   UNDO_MS,
   ageText,
   applyFile,
@@ -9,11 +10,13 @@ import {
   cancelAction,
   currentPin,
   debugLine,
+  deriveBar,
   doneAction,
   actionFile,
   hiddenKeys,
   labelOf,
   markRead,
+  newBarState,
   newPinIds,
   openNeeds,
   pinbarMode,
@@ -397,4 +400,74 @@ test('hiddenKeys: queued and sent items are hidden; settleSent keeps them until 
   )
   const ok = { ...open, actions: [{ id: 'f0', ok: true, message: '' }] }
   assert.deepEqual(settleSent(sent, [ok]), { sent: [], failed: [] })
+})
+
+test('real plugin shape: title equal to text counts as no title; title is first line, summary the rest, never twice', () => {
+  const text = 'Index added\nTakes 4 s.\nSafe.'
+  const [a, b] = pins(pinBoard([know('K1', { title: text, text }), know('K2', { title: 'One line', text: 'One line' })]))
+  assert.equal(a.title, 'Index added')
+  assert.equal(a.summary, 'Takes 4 s. Safe.')
+  assert.equal(b.title, 'One line')
+  assert.equal(b.summary, '')
+})
+
+test('a title is always one line, also when given and different from the text', () => {
+  const [a] = pins(pinBoard([know('K1', { title: 'Head\nmore', text: 'Body' })]))
+  assert.equal(a.title, 'Head')
+  assert.equal(a.summary, 'Body')
+})
+
+test('hiddenKeys: a sent action stops hiding its item after SENT_HIDE_MS; queued ones keep hiding', () => {
+  const sent = [{ id: 'f0', session: 's', key: 'K2', at: 1000 }]
+  const queue = queueAction([], { id: 'f1', session: 's', action: doneAction('K1'), now: 0 })
+  assert.deepEqual([...hiddenKeys(queue, sent, 1000 + SENT_HIDE_MS - 1)].sort(), ['s:K1', 's:K2'])
+  assert.deepEqual([...hiddenKeys(queue, sent, 1000 + SENT_HIDE_MS)].sort(), ['s:K1'])
+})
+
+const bar = (prev, board, extra = {}) => deriveBar(prev, board, { now: 1000, ...extra })
+
+test('deriveBar: no board is the empty view and keeps the state', () => {
+  const s = newBarState()
+  const r = bar(s, null)
+  assert.equal(r.view.mode, 'empty')
+  assert.equal(r.state, s)
+})
+
+test('deriveBar: a pin flashes once; the same pin does not flash again', () => {
+  const b = pinBoard([know('K1')])
+  const r1 = bar(newBarState(), b)
+  assert.equal(r1.flashStart, 's:K1')
+  assert.equal(bar(r1.state, b).flashStart, null)
+  assert.equal(bar(r1.state, pinBoard([know('K1'), know('K2', { at: 200 })])).flashStart, 's:K2')
+})
+
+test('deriveBar: a read pin or the slim bar does not flash', () => {
+  const b = pinBoard([know('K1')])
+  assert.equal(bar(newBarState(), b, { read: { 's:K1': true } }).flashStart, null)
+})
+
+test('deriveBar: the selection resets on a new board and when a new pin arrives, not otherwise', () => {
+  const b = pinBoard([know('K1'), know('K2')])
+  const picked = { ...bar(newBarState(), b).state, sel: 's:K1' }
+  assert.equal(bar(picked, b).state.sel, 's:K1', 'kept')
+  const away = bar(picked, pinBoard([], 'other'))
+  assert.equal(away.state.sel, null, 'other board')
+  assert.equal(bar(away.state, b).state.sel, null, 'back on the first board the old pick is not revived')
+  assert.equal(bar(picked, pinBoard([know('K1'), know('K2'), know('K3')])).state.sel, null, 'new pin')
+})
+
+test('deriveBar: the first draw of a board never resets by "new pins"; waiting titles come from the key', () => {
+  const b = pinBoard([know('K1', { title: 'Retry' })])
+  const waiting = [
+    { id: 'f1', session: 's', key: 'K1' },
+    { id: 'f2', session: 's', key: 'Zed' },
+    { id: 'f3', session: 'x', key: 'K1' },
+  ]
+  const r = bar(newBarState(), b, { waiting, hidden: new Set(['s:K1']) })
+  assert.deepEqual(r.view.waiting, [
+    { id: 'f1', title: 'Retry' },
+    { id: 'f2', title: 'Zed' },
+  ])
+  assert.equal(r.view.mode, 'empty', 'hidden pins are left out')
+  assert.equal(bar(newBarState(), b, { now: 100 + 5 * 60000 }).view.meta, 'w-api · 5m')
 })

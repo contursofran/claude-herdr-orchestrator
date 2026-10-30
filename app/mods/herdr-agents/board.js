@@ -1,6 +1,6 @@
 // Reads the boards the plugin writes (~/.herdr-agents/board/<session>.json) and keeps them current.
-import { exec, home, notify, readTextFile, watchFolder, writeTextFile } from 'herdr'
-import { UNDO_MS, actionFile, applyFile, boardId, cancelAction, hiddenKeys, queueAction, settleSent, takeDue } from './model.js'
+import { exec, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
+import { actionFile, applyFile, boardId } from './model.js'
 
 export const boardDir = () => `${home()}/.herdr-agents/board`
 export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
@@ -58,66 +58,9 @@ export async function send(session, action, id = actionFile(Date.now(), Math.ran
   await exec('mkdir', ['-p', out, dest])
   await writeTextFile(`${out}/${id}`, JSON.stringify(action), null)
   const moved = await exec('mv', [`${out}/${id}`, `${dest}/${id}`])
-  if (moved.code !== 0) throw new Error(moved.stderr.trim() || 'mv failed')
+  if (moved.code !== 0) {
+    await exec('rm', ['-f', `${out}/${id}`]) // nothing is left behind in outgoing/
+    throw new Error(moved.stderr.trim() || 'mv failed')
+  }
   return id
-}
-
-/**
- * Actions that wait UNDO_MS for undo, then go out through send(). An unsent one is lost if the mod reloads.
- * After sending, an action stays in `sent` until the board shows its outcome or the item closed, so the item stays hidden.
- * Used for Done × now; the card's answers (S5) use it too.
- */
-export class Outbox {
-  constructor() {
-    this.queue = []
-    this.sent = []
-  }
-
-  /** Read keys to leave out of the lists: waiting or sent and not yet gone from the board. */
-  hidden() {
-    return hiddenKeys(this.queue, this.sent)
-  }
-
-  /** Waiting actions of one board, for the undo row. */
-  waiting(session) {
-    return this.queue.filter(q => q.session === session)
-  }
-
-  /** Queue an action; it goes out after UNDO_MS unless undo() is called first. `cx` is the caller's own. */
-  schedule(cx, session, action) {
-    const id = actionFile(Date.now(), Math.random().toString(36).slice(2, 8))
-    this.queue = queueAction(this.queue, { id, session, action, now: Date.now() })
-    cx.timer.after(UNDO_MS + 50, cx => this.flush(cx))
-    return id
-  }
-
-  undo(id) {
-    this.queue = cancelAction(this.queue, id)
-  }
-
-  flush(cx) {
-    const { due, rest } = takeDue(this.queue, Date.now())
-    this.queue = rest
-    if (!due.length) return
-    cx.spawn(async cx => {
-      for (const q of due) {
-        try {
-          await send(q.session, q.action, q.id)
-          this.sent.push({ id: q.id, session: q.session, key: q.key })
-        } catch (e) {
-          notify({ title: 'Could not send', body: String(e?.message ?? e), level: 'error' })
-        }
-      }
-      cx.notify()
-    })
-  }
-
-  /** Call when the boards change: forget what the boards settled and report failures. Returns true when anything changed. */
-  settle(boards) {
-    const { sent, failed } = settleSent(this.sent, boards)
-    const changed = sent.length !== this.sent.length
-    this.sent = sent
-    for (const f of failed) notify({ title: 'Action failed', body: f.message, level: 'error' })
-    return changed
-  }
 }
