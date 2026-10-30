@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   POPUP_W,
+  boardSpace,
   isBoardCommand,
+  overlayPlan,
+  projectName,
   popupHeight,
   popupSpot,
   rowAction,
@@ -79,4 +82,29 @@ test('isBoardCommand matches the board command only', () => {
   assert.ok(isBoardCommand('herdr-agents.board'))
   assert.ok(!isBoardCommand('herdr-agents.pick1'))
   assert.ok(!isBoardCommand('herdr-agents.dashboard'))
+})
+
+test('rowAction: a worker with the same name in another project is not focused', () => {
+  const terminals = [
+    { address: 't1', name: 'w-api', state: 'live', labels: { 'herdr.space': 'sp-other' } },
+    { address: 't2', name: 'w-api', state: 'live', labels: { 'herdr.space': 'sp-shop' } },
+  ]
+  const r = workRows(board())[0]
+  assert.deepEqual(rowAction(r, terminals, 'sp-shop'), { type: 'focus', terminal: 't2' })
+  assert.deepEqual(rowAction(r, terminals.slice(0, 1), 'sp-shop'), { type: 'card', item: 'D7' })
+})
+
+test('boardSpace: the space label of the coordinator terminal; projectName: its folder', () => {
+  const b = board()
+  assert.equal(boardSpace(b, [{ address: 't4', labels: { 'herdr.space': 'sp-shop' } }]), 'sp-shop')
+  assert.equal(boardSpace(b, []), null)
+  assert.equal(projectName(b), 'shop')
+  assert.equal(projectName(null), '')
+})
+
+test('overlayPlan: one overlay at a time; the card hands the keyboard back when the pop-up replaces it', () => {
+  assert.deepEqual(overlayPlan('card', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
+  assert.deepEqual(overlayPlan('card', { popup: false, card: false }).closePopup, false)
+  assert.deepEqual(overlayPlan('popup', { popup: false, card: true }), { closePopup: false, closeCard: true, refocus: true })
+  assert.deepEqual(overlayPlan('popup', { popup: true, card: false }), { closePopup: true, closeCard: false, refocus: false })
 })

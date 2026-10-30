@@ -712,15 +712,42 @@ export function workRows(board) {
     }))
 }
 
+/** The Herdr space the board's coordinator runs in (its terminal's `herdr.space` label), or null when unknown. */
+export function boardSpace(board, terminals) {
+  const t = (terminals ?? []).find(x => x?.address === board?.coordinator?.terminal)
+  return labelOf(t, 'herdr.space')
+}
+
+/** The project the pop-up names in its header: the last part of the coordinator's folder. */
+export function projectName(board) {
+  const parts = String(board?.cwd ?? '')
+    .split('/')
+    .filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ''
+}
+
 /**
- * What a click on a row does. A task whose tab is a live terminal: focus it. Otherwise, a task with an `item`: open
- * that item's card. Otherwise nothing. {type: 'focus', terminal} | {type: 'card', item} | null.
+ * What a click on a row does. A task whose tab is a live terminal of this board's space: focus it (workers are named by
+ * worker only, so two projects can each have a `build-1`). Otherwise, a task with an `item`: open that item's card.
+ * Otherwise nothing. {type: 'focus', terminal} | {type: 'card', item} | null. `space` is boardSpace().
  */
-export function rowAction(row, terminals) {
-  const t = row?.tab ? (terminals ?? []).find(x => x?.name === row.tab && x.state === 'live') : null
+export function rowAction(row, terminals, space = null) {
+  const t = row?.tab ? (terminals ?? []).find(x => x?.name === row.tab && x.state === 'live' && labelOf(x, 'herdr.space') === space) : null
   if (t) return { type: 'focus', terminal: t.address }
   if (row?.item) return { type: 'card', item: row.item }
   return null
+}
+
+/**
+ * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card}: booleans).
+ * Opening the card closes the pop-up; opening the pop-up closes the card and hands the keyboard back (`refocus`),
+ * because the card took it.
+ */
+export function overlayPlan(kind, open) {
+  const popup = Boolean(open?.popup)
+  const card = Boolean(open?.card)
+  if (kind === 'card') return { closePopup: popup, closeCard: false, refocus: false }
+  return { closePopup: popup, closeCard: card, refocus: card }
 }
 
 /** The action file for the header's wrap up / keep going: `on` is the state to set. */

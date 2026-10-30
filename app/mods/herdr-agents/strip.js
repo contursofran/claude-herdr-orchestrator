@@ -6,6 +6,7 @@ import {
   counts,
   flashing,
   isBoardCommand,
+  overlayPlan,
   isUnseen,
   nextPick,
   observeArrivals,
@@ -81,7 +82,7 @@ export class StripState {
       for (;;) {
         const name = String(await nextCommand())
         if (isBoardCommand(name)) {
-          openBoardPopup(cx, this.board)
+          openBoardPopup(this.board)
           continue
         }
         const n = pickNumber(name)
@@ -102,26 +103,37 @@ export class StripState {
     const current = shared('hrd.pick')
     const next = nextPick(current, board.session, item.key, toggle)
     if (!next) closeCard()
-    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) openCard(board, item)
+    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) {
+      // One overlay at a time: the pop-up goes before the card opens.
+      if (overlayPlan('card', { popup: Boolean(popupId), card: false }).closePopup) closeBoardPopup()
+      openCard(board, item)
+    }
   }
 }
 
 /** Open the work table above the strip, right aligned. Only the owner's click or key calls this. One overlay at a
- *  time: an open card goes first. `cx` is the caller's own. The popup's root has a fixed size, so its height is
+ *  time: an open card goes first. The popup's root has a fixed size, so its height is
  *  worked out here from the rows and handed over as a prop. */
 let popupId = null
 
-export function openBoardPopup(cx, board) {
+/** Close the pop-up if one is up (its id may be stale when the pop-up closed itself). */
+function closeBoardPopup() {
+  if (!popupId) return
+  try {
+    closeOverlay(popupId)
+  } catch {}
+  popupId = null
+}
+
+export function openBoardPopup(board) {
   if (!board) return
   const height = popupHeight(workRows(board).length)
   const view = window.viewport_size()
-  if (shared('hrd.open')) closeCard(false)
+  const plan = overlayPlan('popup', { popup: Boolean(popupId), card: Boolean(shared('hrd.open')) })
+  // The card took the keyboard: closing it gives it back to the terminal that had it.
+  if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
-  if (popupId) {
-    try {
-      closeOverlay(popupId)
-    } catch {}
-  }
+  if (plan.closePopup) closeBoardPopup()
   popupId = openOverlay({
     mod: 'herdr-agents',
     kind: 'popup',
@@ -222,7 +234,7 @@ const boardPill = board =>
     .cursor_pointer()
     .hover(el => el.bg(look.pillHover))
     .on_mouse_down('left', (_e, cx) => {
-      openBoardPopup(cx, board)
+      openBoardPopup(board)
       cx.notify()
     })
     .child('board ▴')

@@ -3,7 +3,7 @@ import { div, svg } from 'gpui-kit'
 import { closeOverlay, notify, props, run, terminals } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { POPUP_ROW, POPUP_W, rowAction, workRows, wrapUpButton } from './model.js'
+import { POPUP_ROW, POPUP_W, boardSpace, projectName, rowAction, workRows, wrapUpButton } from './model.js'
 import { color, font, icon, popup as look } from './tokens.js'
 
 const whoColor = kind => (kind === 'you' ? color.text : kind === 'text' ? color.soft : color.dim)
@@ -42,14 +42,13 @@ function row(r, board) {
     .gap(8)
     .cursor_pointer()
     .hover(el => el.bg(look.rowHover))
-    .on_mouse_down('left', (_e, cx) => {
-      const act = rowAction(r, terminals())
+    .on_mouse_down('left', () => {
+      const act = rowAction(r, terminals(), boardSpace(board, terminals()))
       if (!act) return
       closeOverlay(props().overlay)
       if (act.type === 'focus') run('pane.focus', { terminal: act.terminal })
       // The card resizes the terminal: only this click may open it. One overlay at a time, so the pop-up went first.
-      else openCard(board, { key: act.item }, null, terminals())
-      cx.notify()
+      else openCard(board, { key: act.item })
     })
     .child(div().w(44).flex_none().text_color(color.dim).child(r.label))
     .child(div().flex_1().min_w_0().truncate().text_color(color.text).child(r.title))
@@ -104,7 +103,7 @@ export function popupView(board) {
         })
         .child(wrap.text),
     )
-    .child(div().flex_1())
+    .child(div().flex_1().min_w_0().truncate().text_color(look.head).child(projectName(board)))
     .child(div().w(70).flex_none())
     .children(stageNames.map(n => div().w(look.cell).flex_none().flex().justify_center().text_size(11).text_color(look.head).child(n)))
   const rows = workRows(board)
