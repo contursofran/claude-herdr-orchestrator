@@ -17,8 +17,11 @@ export type Job = {
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
   // set while a reported job's turn is not over, so it is still watched: 'early' = reported before its
-  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report
+  // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report.
+  // A 'blocked' worker with no report that works again goes back to 'running'.
   tail?: 'early' | 'blocked'
+  // the token whose CLI error was reported: that prompt's later errors are not reported again
+  errorToken?: string
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
   // a stop was asked (set before the drop and the tab's close, and kept if the tab fails to close): nothing

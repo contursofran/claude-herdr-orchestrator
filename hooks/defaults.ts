@@ -31,6 +31,9 @@ export const QUIET_MS = 5 * 60_000
 // The same for a worker whose status lines show background work of its own (a shell,
 // a monitor, a subagent): a dev server it left running must not hide it for good.
 export const QUIET_BUSY_MS = 60 * 60_000
+// How long a worker blocked with no report keeps counting as working: most prompts pass within this, so the
+// report and nudge sent as it blocks don't ask for a replacement. One stuck for longer frees its slot.
+export const BLOCKED_COUNTS_MS = 3 * 60_000
 // How often a prompt is sent or submitted again when hc sees no work start after it.
 export const PROMPT_TRIES = 3
 // How long a prompt gets to start work before it is submitted or typed again. Longer than the 56 s a

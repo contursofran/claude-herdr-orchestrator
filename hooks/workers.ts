@@ -320,14 +320,18 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
   await endTail($, job)
 }
 
-// A blocked report (tail 'blocked') whose worker works again was answered in its tab: it is no longer
-// blocked (its turn is still on, so the watch stays as an early report's). A job with tail 'early' is left
-// as it is: its worker working means the turn it reported in is still on, not that anyone answered it.
+// A blocked report (tail 'blocked') whose worker works again was answered in its tab, or its prompt passed by
+// itself: it is no longer blocked. With no report written (the block or CLI error was all that went out) the
+// worker is simply running again, so it counts and its report or quiet end is delivered as any worker's. After
+// a real report its turn is still on, as an early report's. A job with tail 'early' is left as it is: its
+// worker working means the turn it reported in is still on, not that anyone answered it.
 // Returns the job as it is now.
 async function answered($: EngineInterface, job: Job) {
-  const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && j.tail === 'blocked' ? { ...j, tail: 'early', headerStatus: undefined } : undefined,
-  )
+  const { after } = await updateJob($, job.name, j => {
+    if (j.token !== job.token || j.status !== 'reported' || j.tail !== 'blocked') return undefined
+    if (j.reportStatus === 'done') return { ...j, tail: 'early' as const, headerStatus: undefined }
+    return { ...j, status: 'running' as const, tail: undefined, endedAt: undefined, reportStatus: undefined, headerStatus: undefined }
+  })
   return after ?? job
 }
 
@@ -711,6 +715,7 @@ export async function deliver(
   // The file this report was kept in, for the state file's block.
   let reportFile: string | undefined
   let tail: Job['tail']
+  let errorToken: string | undefined
   if (await reported($, current)) {
     if (status === 'done' && opts.early) tail = 'early'
     body = reportBody(await $.fs.read(resultPath))
@@ -788,7 +793,25 @@ export async function deliver(
     notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   } else {
     // A CLI error, like a block, may pass: a report it writes after recovering is delivered too.
-    if (status === 'error') tail = 'blocked'
+    if (status === 'error') {
+      // Already told about this prompt's errors: a retrying CLI must not nudge the coordinator, or rewrite the
+      // screen file, each time. The job waits as after the first one; messages held for it stay held.
+      if (current.token && current.errorToken === current.token) {
+        const endedAt = await $.clock.now()
+        const { after } = await updateJob($, job.name, j =>
+          j.token === current.token && !j.stopped && !stoppedSince(j, current)
+            ? { ...j, status: 'reported', wait: undefined, endedAt, tail: 'blocked', reportStatus: status, headerStatus: undefined }
+            : undefined,
+        )
+        if (!after) return
+        arm($, after, 'resume')
+        misses.delete(job.name)
+        quiet.delete(job.name)
+        return
+      }
+      tail = 'blocked'
+      errorToken = current.token
+    }
     let lines = ''
     try {
       lines = (await readScreen($, job.name, 40)).trim()
@@ -814,6 +837,7 @@ export async function deliver(
           reportFile,
           reportStatus: status,
           headerStatus: header?.status,
+          ...(errorToken ? { errorToken } : {}),
         }
       : undefined,
   )
