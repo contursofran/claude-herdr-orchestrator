@@ -1,5 +1,6 @@
 import { nextCommand, notify, setShared, shared } from 'herdr'
 import { openPins } from './pinsctl.js'
+import { takeDismissed } from './outside.js'
 import { send } from './board.js'
 import { Outbox } from './outbox.js'
 import { deriveBar, doneAction, doneRequests, keyStep, markRead, newBarState, newestPin, pinStepDir, pins, pruneRead } from './model.js'
@@ -18,6 +19,7 @@ export class PinCtl {
     this.pruned = false
     this.shown = null // {mode, list, current} of the last draw, for the keys; null with no board
     this.bounds = null // the bar's place in the window, as the last press on it reported it: where the overlays go
+    this.back = null // the terminal that surface closed by the last press on the bar would have handed the keyboard to
   }
 
   /** Keys: ctrl-cmd-[ and ctrl-cmd-] in layout:coordinator send herdr-agents.prevpin / nextpin here. */
@@ -107,15 +109,18 @@ export class PinCtl {
       onRead: (id, cx) => {
         pick(null)
         this.mark(id)
-        openPins(board.session, open(), 'panel', { id, bar: this.bounds })
+        openPins(board.session, open(), 'panel', { id, bar: this.bounds, back: this.back })
         cx.notify()
       },
       onAll: cx => {
-        openPins(board.session, open(), 'all', { bar: this.bounds })
+        openPins(board.session, open(), 'all', { bar: this.bounds, back: this.back })
         cx.notify()
       },
-      onBounds: b => {
+      onPress: e => {
+        const b = e?.bounds
         if (b?.width > 0) this.bounds = { x: b.x, y: b.y, width: b.width, height: b.height }
+        // A press here that closed the card, sheet or pop-up: what it opens still hands the keyboard back.
+        this.back = takeDismissed(e)?.back ?? null
       },
       onDone: (pin, cx) => {
         pick(null)

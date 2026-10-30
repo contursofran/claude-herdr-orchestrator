@@ -22,6 +22,7 @@ import {
 } from './model.js'
 import { Arrivals } from './arrivals.js'
 import { closeCard, openCard } from './cardctl.js'
+import { handBack, takeDismissed } from './outside.js'
 import { closeSheet, openSheet } from './sheetctl.js'
 import { isSheetCommand, sheetTarget } from './sheetmodel.js'
 import { closePins, closePopupOverlay } from './pinsctl.js'
@@ -124,10 +125,13 @@ export class StripState {
 
   /** Select a tab and open the card for it (the owner's click or key). A click
    *  on the selected one deselects it and closes the card (`toggle`); a key never does, so a command that reaches the
-   *  mod twice leaves it open. */
-  pick(board, item, toggle = true) {
+   *  mod twice leaves it open. `press` is the click's event: if it already closed this item's card on its way here, the
+   *  card stays closed; if it closed anything else, what opens now hands the keyboard back to where that would have. */
+  pick(board, item, toggle = true, press = null) {
     const id = `${board.session}:${item.key}`
     this.seen.add(id)
+    const gone = takeDismissed(press)
+    if (gone?.surface === 'card' && gone.session === board.session && gone.key === item.key) return handBack(gone)
     const current = shared('hrd.pick')
     const next = nextPick(current, board.session, item.key, toggle)
     if (!next) closeCard()
@@ -142,15 +146,18 @@ export class StripState {
       if (plan.closePopup) closePopupOverlay()
       if (plan.closePins) closePins()
       if (plan.closeSheet) closeSheet(plan.refocus)
-      openCard(board, item)
+      openCard(board, item, gone)
     }
   }
 }
 
 /** Open the work table above the strip, right aligned. Only the owner's click or key calls this. One overlay at a
  *  time: an open card goes first. The popup's root has a fixed size, so its height is
- *  worked out here from the rows and handed over as a prop. */
-export function openBoardPopup(board) {
+ *  worked out here from the rows and handed over as a prop. `press` is the click's event: if it already closed the pop-up on
+ *  its way here, the pop-up stays closed. */
+export function openBoardPopup(board, press = null) {
+  const gone = takeDismissed(press)
+  if (gone?.surface === 'popup') return handBack(gone)
   if (!board) return
   const height = popupHeight(workRows(board).length)
   const view = window.viewport_size()
@@ -161,8 +168,8 @@ export function openBoardPopup(board) {
     sheet: Boolean(shared('hrd.sheet')),
   })
   // The terminal to hand back; if the card holds the keyboard, the one the card will hand back. Read before anything closes.
-  const back = shared('hrd.open')?.back ?? focused()?.terminal ?? null
-  const space = focused()?.space ?? null
+  const back = shared('hrd.open')?.back ?? gone?.back ?? focused()?.terminal ?? null
+  const space = (gone?.back ? gone.space : focused()?.space) ?? null
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
@@ -182,23 +189,27 @@ export function openBoardPopup(board) {
 }
 
 /** ⌘J (and the pill): close the sheet if it is up, else open it on the item the card shows or the first open one. One
- *  overlay at a time: an open card or pop-up goes first. Only the owner's click or key calls this. */
-export function toggleSheet(board) {
+ *  overlay at a time: an open card or pop-up goes first. Only the owner's click or key calls this. `press` is the click's
+ *  event: if it already closed the sheet on its way here, the sheet stays closed; if it closed the card, the sheet opens on
+ *  that card's item. */
+export function toggleSheet(board, press = null) {
+  const gone = takeDismissed(press)
+  if (gone?.surface === 'sheet') return handBack(gone)
   if (shared('hrd.sheet')) return closeSheet()
   if (!board) return
-  const card = shared('hrd.open')
+  const card = shared('hrd.open') ?? (gone?.surface === 'card' ? gone : null)
   const key = sheetTarget(board, card?.session === board.session ? card.key : null)
   if (!key) return
   const plan = overlayPlan('sheet', {
     popup: Boolean(shared('hrd.popup')),
-    card: Boolean(card),
+    card: Boolean(shared('hrd.open')),
     pins: Boolean(shared('hrd.pins')),
     sheet: false,
   })
   if (plan.closeCard) closeCard(plan.refocus)
   if (plan.closePopup) closePopupOverlay()
   if (plan.closePins) closePins()
-  openSheet(board, key)
+  openSheet(board, key, gone)
 }
 
 function tab(item, board, state, now) {
@@ -227,8 +238,8 @@ function tab(item, board, state, now) {
     .bg(t.bg)
     .text_size(font.size)
     .cursor_pointer()
-    .on_mouse_down('left', (_e, cx) => {
-      if (state) state.pick(board, item)
+    .on_mouse_down('left', (e, cx) => {
+      if (state) state.pick(board, item, true, e)
       cx.notify()
     })
     .child(tabBody(item, fg))
@@ -297,8 +308,8 @@ const sheetPill = board =>
     .text_color(look.muted)
     .cursor_pointer()
     .hover(el => el.bg(look.pillHover))
-    .on_mouse_down('left', (_e, cx) => {
-      toggleSheet(board)
+    .on_mouse_down('left', (e, cx) => {
+      toggleSheet(board, e)
       cx.notify()
     })
     .child('⌘J')
@@ -315,8 +326,8 @@ const boardPill = board =>
     .text_color(look.muted)
     .cursor_pointer()
     .hover(el => el.bg(look.pillHover))
-    .on_mouse_down('left', (_e, cx) => {
-      openBoardPopup(board)
+    .on_mouse_down('left', (e, cx) => {
+      openBoardPopup(board, e)
       cx.notify()
     })
     .child('board ▴')

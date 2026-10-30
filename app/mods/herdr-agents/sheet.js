@@ -7,6 +7,8 @@ import { CardState, clearStaleSheet, firstThisRun } from './cardstate.js'
 import { button, faceIcon, ghost, keyButton } from './card.js'
 import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, pageSheet } from './sheetctl.js'
+import { noteDismissed } from './outside.js'
+import { pastFrame } from './model.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
 /** The sheet's state for this copy (main.js, role `sheet`): the card's (an Outbox for the undo window, the focus handle),
@@ -306,6 +308,13 @@ export function sheetBlock(boards, ctl, cx) {
     .flex()
     .flex_col()
     .text_size(font.size)
+    .on_mouse_down_out((e, cx) => {
+      // As the card: the keyboard stays on what was pressed, and any button dismisses.
+      if (!pastFrame(e, settings()?.zoom)) return
+      noteDismissed('sheet', e, open)
+      closeSheet(false)
+      cx.notify()
+    })
     .child(
       div()
         .id('sheet-body')

@@ -4,8 +4,9 @@ import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
 import { copyableText } from './copy.js'
 import { copyKey, copyTargets } from './copystate.js'
+import { noteDismissed } from './outside.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem } from './model.js'
+import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem, pastFrame } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
 /** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
@@ -243,6 +244,13 @@ export function card(boards, ctl, cx) {
   }
 
   const canCopy = copyTargets(view.text).length > 0
+  // A press elsewhere closes it and the keyboard stays on what was pressed. Any button: a right-click elsewhere dismisses too.
+  root.on_mouse_down_out((e, cx) => {
+    if (!pastFrame(e, settings()?.zoom)) return
+    noteDismissed('card', e, open)
+    closeCard(false)
+    cx.notify()
+  })
   return root.child(
     div()
       .id('card-body')

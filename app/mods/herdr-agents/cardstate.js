@@ -66,7 +66,7 @@ export function clearStaleSheet(get, set) {
 /** At app start: forget what the last run left in shared. Overlay ids restart with each run, so an old one could name another
  *  overlay; a Done request left behind was never undoable and is not sent now. */
 export function clearStaleOverlays(get, set) {
-  for (const key of ['hrd.pins', 'hrd.popup', 'hrd.doneReq']) if (get(key)) set(key, null)
+  for (const key of ['hrd.pins', 'hrd.popup', 'hrd.doneReq', 'hrd.dismissed']) if (get(key)) set(key, null)
 }
 
 /**
