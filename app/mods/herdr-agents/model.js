@@ -310,10 +310,12 @@ export function ageText(at, now) {
 export const AGE_TICK_MS = 60_000
 
 /** The times behind the ages a copy has on screen; [] when it shows none (a closed card or sheet, no pin, other roles).
- *   boards  every board read       open  hrd.open or hrd.sheet, for the card and the sheet
+ *   boards  every board read       session  the pop-up's board       open  hrd.open or hrd.sheet, for the card and the sheet
  *   pinAt   the pin bar's current pin's time       pins  props() of a pins copy       gone  the pins it has hidden */
-export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set() } = {}) {
+export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set(), session = null } = {}) {
   const known = at => (at ? [at] : [])
+  // The board pop-up: the merge times of the merged rows.
+  if (role === 'board') return workRows(boards.find(b => b.session === session)).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
   if (role === 'pinbar') return known(pinAt)
   if (role === 'pins') {
     const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
@@ -919,7 +921,24 @@ export function workRows(board) {
       stages: Array.from({ length: 5 }, (_, i) => stageIcon(t.stages?.[i])),
       item: t.item ?? null,
       tab: t.tab ?? null,
+      link: prLink(t),
+      isMerged: t.isMerged === true,
+      mergedAt: Number.isFinite(t.mergedAt) && t.mergedAt > 0 ? t.mergedAt : null,
     }))
+}
+
+/** The row's PR link: its number and where it opens, only for a task that has a PR and a web address for it.
+ *  `onLabel` when the row's own label already reads `#<pr>`, so that label is the link and nothing is added. */
+function prLink(t) {
+  if (!Number.isInteger(t.pr) || typeof t.url !== 'string' || !/^https?:\/\//.test(t.url)) return null
+  const text = `#${t.pr}`
+  return { text, url: t.url, onLabel: t.label === text }
+}
+
+/** What a merged row says about when: `merged 2h`, or just `merged` when the board has no merge time (an older plugin). */
+export function mergedText(row, now) {
+  if (!row?.isMerged) return ''
+  return ['merged', ageText(row.mergedAt, now)].filter(Boolean).join(' ')
 }
 
 /** The Herdr space the board's coordinator runs in (its terminal's `herdr.space` label), or null when unknown. */

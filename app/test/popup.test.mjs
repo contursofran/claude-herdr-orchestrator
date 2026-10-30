@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { test } from 'node:test'
+import { beforeEach, test } from 'node:test'
+import { app, findId, textOf } from './fake-gpui.mjs'
 import {
   POPUP_W,
   boardSpace,
+  agedTimes,
   isBoardCommand,
+  mergedText,
   overlayPlan,
   popupKeyAction,
   popupRefocus,
@@ -177,4 +180,126 @@ test('every way of closing hands the keyboard back, and a row keeps its own targ
   const strip = source('strip.js')
   assert.match(strip, /const back = shared\('hrd\.open'\)\?\.back \?\? gone\?\.back \?\? focused\(\)\?\.terminal \?\? null/)
   assert.match(strip, /props: \{ role: 'board', session: board\.session, height, board, back, space \}/)
+})
+
+// --- PR links and merge ages (#218) ---
+
+const prTask = (over = {}) => ({
+  key: 'k',
+  label: '#212',
+  title: 'a title',
+  pr: 212,
+  url: 'https://github.com/o/n/pull/212',
+  stages: [],
+  isMerged: false,
+  ...over,
+})
+
+test('workRows: the PR link needs a PR and a web address; the label that reads #<pr> is the link itself', () => {
+  const [a, b, c, d, e] = workRows({
+    tasks: [
+      prTask(),
+      prTask({ label: '#12' }),
+      prTask({ pr: null, url: 'https://github.com/o/n/issues/12' }),
+      prTask({ url: null }),
+      prTask({ url: 'javascript:alert(1)' }),
+    ],
+  })
+  assert.deepEqual(a.link, { text: '#212', url: 'https://github.com/o/n/pull/212', onLabel: true })
+  assert.deepEqual(b.link, { text: '#212', url: 'https://github.com/o/n/pull/212', onLabel: false })
+  assert.equal(c.link, null, 'an issue link without a PR keeps the row as it was')
+  assert.equal(d.link, null)
+  assert.equal(e.link, null, 'only http(s) opens')
+})
+
+test('mergedText: merged and how long ago; just merged when the board has no time', () => {
+  const T = 1_000_000_000
+  const row = at => workRows({ tasks: [prTask({ isMerged: true, mergedAt: at })] })[0]
+  assert.equal(mergedText(row(T), T + 2 * 3600_000), 'merged 2h')
+  assert.equal(mergedText(row(T), T + 5 * 60_000), 'merged 5m')
+  assert.equal(mergedText(row(undefined), T), 'merged', 'an old board without mergedAt')
+  assert.equal(mergedText(row(null), T), 'merged')
+  assert.equal(mergedText(workRows({ tasks: [prTask()] })[0], T), '', 'an open PR says nothing')
+})
+
+test('agedTimes: the pop-up ages are the merge times of the merged rows of its board', () => {
+  const boards = [
+    {
+      session: 's',
+      tasks: [prTask({ isMerged: true, mergedAt: 7 }), prTask({ key: 'x', isMerged: true }), prTask({ key: 'y', mergedAt: 9 })],
+    },
+  ]
+  assert.deepEqual(agedTimes('board', { boards, session: 's' }), [7])
+  assert.deepEqual(agedTimes('board', { boards, session: 'other' }), [])
+})
+
+const { popupView } = await import('../mods/herdr-agents/popup.js')
+
+const draw = (tasks, now = 1_000_000_000 + 2 * 3600_000) => {
+  app.props = { role: 'board', session: 's', overlay: 'o9', height: 300 }
+  app.execs = []
+  app.closed = []
+  const realNow = Date.now
+  Date.now = () => now
+  try {
+    return popupView({ session: 's', stageNames: [], tasks }, { h: {}, leaving: false })
+  } finally {
+    Date.now = realNow
+  }
+}
+const click = (el, ctx = { stop_propagation() {} }) => el.node.calls.on_mouse_down[1]({}, ctx)
+
+beforeEach(() => {
+  app.execs = []
+  app.ran = []
+})
+
+test('the pop-up row: the PR number opens the PR, and the press stops there', () => {
+  const root = draw([prTask({ key: 'a' })])
+  let stopped = 0
+  click(findId(root, 'work-pr-a'), { stop_propagation: () => stopped++ })
+  assert.deepEqual(app.execs, [['open', 'https://github.com/o/n/pull/212']])
+  assert.equal(stopped, 1, 'the row below does not also take the press')
+  assert.deepEqual(app.closed, [], 'the pop-up stays')
+  assert.ok(findId(root, 'work-pr-a').node.calls.cursor_pointer)
+  assert.equal(textOf(root).filter(x => x === '#212').length, 1, 'the label is the link: no second #212 beside the title')
+})
+
+test('the pop-up row: a label that is not the PR number gets a separate link', () => {
+  const root = draw([prTask({ key: 'a', label: '#12' })])
+  assert.deepEqual(textOf(findId(root, 'work-pr-a')), ['#212'])
+  click(findId(root, 'work-pr-a'))
+  assert.deepEqual(app.execs, [['open', 'https://github.com/o/n/pull/212']])
+})
+
+test('the pop-up row: no link without a PR or an address', () => {
+  const root = draw([prTask({ key: 'a', pr: null }), prTask({ key: 'b', url: null })])
+  assert.equal(findId(root, 'work-pr-a'), null)
+  assert.equal(findId(root, 'work-pr-b'), null)
+})
+
+test('the pop-up row: a merged PR says how long ago, an old board just merged, an open PR nothing', () => {
+  const T = 1_000_000_000
+  const root = draw([
+    prTask({ key: 'a', isMerged: true, mergedAt: T, who: { text: 'merged', kind: 'dim' } }),
+    prTask({ key: 'b', isMerged: true, who: { text: 'merged', kind: 'dim' } }),
+    prTask({ key: 'c', who: { text: 'you', kind: 'you' } }),
+  ])
+  const all = id => textOf(findId(root, id))
+  assert.ok(textOf(findId(root, 'work-rows')).includes('merged 2h'))
+  assert.ok(textOf(findId(root, 'work-rows')).includes('merged'))
+  assert.equal(all('work-a').filter(x => x === 'merged').length, 0, 'the who column does not say it twice')
+  assert.equal(all('work-c').filter(x => /merged/.test(x)).length, 0)
+})
+
+test('the pop-up row: narrow, the title is what truncates; the link and the age keep their size', () => {
+  const root = draw([prTask({ key: 'a', label: '#12', isMerged: true, mergedAt: 1_000_000_000 })])
+  const kids = findId(root, 'work-a').node.kids
+  const title = kids.find(k => textOf(k).includes('a title'))
+  assert.ok(title.node.calls.truncate && title.node.calls.min_w_0 && title.node.calls.flex_1)
+  for (const text of ['#212', 'merged 2h']) {
+    const k = kids.find(x => textOf(x).includes(text))
+    assert.ok(k.node.calls.flex_none, text)
+    assert.ok(!k.node.calls.truncate, text)
+  }
 })

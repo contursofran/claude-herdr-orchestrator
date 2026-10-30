@@ -90,7 +90,11 @@
           "tab": { "type": ["string", "null"], "description": "The worker whose tab to focus." },
           "workers": { "type": "array", "items": { "type": "string" } },
           "isFinished": { "type": "boolean" },
-          "isMerged": { "type": "boolean" }
+          "isMerged": { "type": "boolean" },
+          "mergedAt": {
+            "type": ["integer", "null"],
+            "description": "When the PR merged, in ms since the epoch; null or absent when unknown (older boards)."
+          }
         }
       }
     },

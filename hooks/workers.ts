@@ -104,7 +104,7 @@ export function reportRule(job: Job, token = job.token) {
     'To wait for something outside your control (CI, a merge, a free test machine), never sleep or poll inside a command for more than 2 minutes.',
     `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run with ${job.cwd} as its working directory (not the report folder), that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
     'and end your turn without RESULT.md; you get a message when the check passes or times out.',
-    `For CI on a PR, use its number. This is ready on pass or fail, or at once if the PR conflicts with its base, since GitHub then runs no CI; it is not ready while a check is pending or before any has registered: {"for": "CI on PR #123", "check": "gh pr view 123 --json mergeable --jq .mergeable | grep -q CONFLICTING || gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!=\\"pending\\")' | grep -q true", "every": 3, "max": 45}`,
+    `For CI on a PR, use its number. This is ready on pass or fail, or at once if the PR conflicts with its base, since GitHub then runs no CI; it is not ready while a check is pending or before any has registered: {"for": "CI on PR #123", "check": "gh pr view 123 --json mergeable --jq .mergeable | grep -q CONFLICTING || gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!=\\"pending\\")' | grep -q true", "every": 1, "max": 45}`,
     'When that wait wakes you, run gh pr view 123 --json mergeable first: on CONFLICTING, merge the base branch, resolve it, push and wait again; UNKNOWN only means GitHub is still working it out after the base moved.',
     `Temp files, PR bodies included, go in ${job.dir}, even if $TMPDIR points elsewhere; never use a fixed name in a shared folder such as /tmp, where another worker can overwrite it.`,
     'Remove temp files by literal path, or just leave them in the job folder, which is ignored: commands like rm -rf "$d" or rm $B/*.bak stop at a "Dangerous rm operation" prompt and lose minutes.',
@@ -651,7 +651,8 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       )
     }
   }
-  if (wait.lastAt !== undefined && now - wait.lastAt < wait.every * 60_000) return true
+  // Half a sweep's slack: a sweep landing a moment short of `every` still checks, or every 1 minute would become 2.
+  if (wait.lastAt !== undefined && now - wait.lastAt < wait.every * 60_000 - SWEEP_MS / 2) return true
   const ran = await $.process.run(['/bin/bash', '-c', wait.check], { cwd: job.cwd, timeoutMs: 120_000 }).catch((err: unknown) => ({
     exitCode: -1,
     stdout: String(err),
