@@ -680,6 +680,96 @@ export function cardSize(viewport) {
   return { w, maxH }
 }
 
+// --- S7: the board pop-up (the work table from `board ▴`) ---
+
+/** The pop-up is this wide; the status bar and the strip are the rows under it. */
+export const POPUP_W = 620
+export const POPUP_ROW = 26
+const POPUP_CHROME = 2 + 10 + 24 + 8 // border, top padding, header row, bottom padding
+const POPUP_MAX_ROWS = 12
+const STATUS_PX = 28
+const STRIP_PX = 34
+
+/** The icon name a stage cell shows (a file in icons/), or null for an empty cell. `ask` is drawn as the white decide disc. */
+const STAGE_ICONS = { done: 'done', run: 'working', wait: 'waiting', ask: 'decide', todo: 'do', block: 'blocked' }
+export const stageIcon = stage => STAGE_ICONS[stage] ?? null
+
+/**
+ * The work rows of the one board, in their slots, top to bottom. A slot whose task joined another row is left out.
+ * A row is {key, label, title, who: {text, kind}, stages: [5 icon names or null], item, tab}.
+ */
+export function workRows(board) {
+  return (board?.tasks ?? [])
+    .filter(t => t && typeof t === 'object' && !t.joined)
+    .map(t => ({
+      key: String(t.key),
+      label: t.label ?? '',
+      title: t.title ?? '',
+      who: { text: t.who?.text ?? '', kind: t.who?.kind ?? 'dim' },
+      stages: Array.from({ length: 5 }, (_, i) => stageIcon(t.stages?.[i])),
+      item: t.item ?? null,
+      tab: t.tab ?? null,
+    }))
+}
+
+/** The Herdr space the board's coordinator runs in (its terminal's `herdr.space` label), or null when unknown. */
+export function boardSpace(board, terminals) {
+  const t = (terminals ?? []).find(x => x?.address === board?.coordinator?.terminal)
+  return labelOf(t, 'herdr.space')
+}
+
+/** The project the pop-up names in its header: the last part of the coordinator's folder. */
+export function projectName(board) {
+  const parts = String(board?.cwd ?? '')
+    .split('/')
+    .filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ''
+}
+
+/**
+ * What a click on a row does. A task whose tab is a live terminal of this board's space: focus it (workers are named by
+ * worker only, so two projects can each have a `build-1`). Otherwise, a task with an `item`: open that item's card.
+ * Otherwise nothing. {type: 'focus', terminal} | {type: 'card', item} | null. `space` is boardSpace().
+ */
+export function rowAction(row, terminals, space = null) {
+  const t = row?.tab ? (terminals ?? []).find(x => x?.name === row.tab && x.state === 'live' && labelOf(x, 'herdr.space') === space) : null
+  if (t) return { type: 'focus', terminal: t.address }
+  if (row?.item) return { type: 'card', item: row.item }
+  return null
+}
+
+/**
+ * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card}: booleans).
+ * Opening the card closes the pop-up; opening the pop-up closes the card and hands the keyboard back (`refocus`),
+ * because the card took it.
+ */
+export function overlayPlan(kind, open) {
+  const popup = Boolean(open?.popup)
+  const card = Boolean(open?.card)
+  if (kind === 'card') return { closePopup: popup, closeCard: false, refocus: false }
+  return { closePopup: popup, closeCard: card, refocus: card }
+}
+
+/** The action file for the header's wrap up / keep going: `on` is the state to set. */
+export const wrapUpAction = on => ({ action: 'wrapUp', on })
+
+/** The header's button: its text and the action it sends (the opposite of what the board has now). */
+export function wrapUpButton(board) {
+  const on = board?.summary?.wrapUp !== true
+  return { text: on ? 'wrap up' : 'keep going', action: wrapUpAction(on) }
+}
+
+/** The pop-up's height in px for `n` rows: fixed, because a popup whose root has no size draws nothing. */
+export const popupHeight = n => POPUP_CHROME + POPUP_ROW * Math.min(Math.max(n, 1), POPUP_MAX_ROWS)
+
+/** Window coordinates of the pop-up's top left: right aligned, its bottom just above the strip. */
+export function popupSpot(viewW, viewH, height) {
+  return { x: Math.max(0, viewW - POPUP_W - 8), y: Math.max(0, viewH - STATUS_PX - STRIP_PX - height - 4) }
+}
+
+/** Whether a mod command name means "open the board pop-up" (`herdr-agents.board`). */
+export const isBoardCommand = name => /(?:^|\.)board$/.test(String(name))
+
 // ---- Sound and notification (S10) ----
 
 /**
