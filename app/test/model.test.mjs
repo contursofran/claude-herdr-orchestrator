@@ -984,3 +984,24 @@ test('Arrivals: silent first sight, one sound and notice per change, a returning
   assert.equal(calls[1][1].action.args.terminal, 't9')
   assert.equal(calls[1][1].title, 'New pin')
 })
+
+test('Arrivals: a click goes to the first board with a terminal; with none the notice has no action', () => {
+  const posts = []
+  const a = new Arrivals({ play: () => {}, post: n => posts.push(n) })
+  const none = (...needs) => ({ ...needsBoard(...needs), session: 'a', coordinator: { terminal: null } })
+  const t9 = (...needs) => ({ ...needsBoard(...needs), session: 'b', coordinator: { terminal: 't9' } })
+  a.observe([none(['A1', 'ask']), t9(['B1', 'ask'])])
+  a.observe([none(['A1', 'ask'], ['A2', 'ask']), t9(['B1', 'ask'], ['B2', 'ask'])])
+  assert.deepEqual(posts.at(-1).action, { name: 'pane.focus', args: { terminal: 't9' } })
+  a.observe([none(['A1', 'ask'], ['A2', 'ask'], ['A3', 'ask']), t9(['B1', 'ask'], ['B2', 'ask'])])
+  assert.deepEqual(posts.at(-1), { title: 'New question', body: 'text A3' })
+})
+
+test('Arrivals: a board with no session is skipped', () => {
+  const calls = []
+  const a = new Arrivals({ play: s => calls.push(s), post: n => calls.push(n) })
+  const { session, ...nameless } = needsBoard(['D1', 'ask'])
+  a.observe([nameless])
+  a.observe([{ ...nameless, needs: [...nameless.needs, { key: 'D2', kind: 'ask', isOpen: true, text: 'Hi' }] }])
+  assert.deepEqual(calls, [])
+})
