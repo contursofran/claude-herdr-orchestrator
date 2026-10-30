@@ -58,6 +58,10 @@ The panel shows the coordinator's context (`ctx 75k / 200k`); the sidebar shows 
 
 Builder, then reviewer; the builder plans for itself, and the planner goes first only for work that needs several PRs or leaves the approach open. Each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run.
 
+### Learning notes
+
+Off by default. When agents do the building, you see a lot of new ideas go by without learning them. With `learningNotes` on, the coordinator leaves an Obsidian note for each concept the session worked with (garbage collection, WebSockets, a build cache) when it wraps up, or when you run `/hrd-notes`. A note has the title, where the concept came up (issue, PR or file), `[[links]]` to related notes and two or three questions, and an empty **My explanation** for you to write. The coordinator never writes the explanation and never edits your text; a concept that already has a note only gets a new "Seen in" line. Only the coordinator writes notes, once per run, so workers spend nothing on it.
+
 ### Wrap-up and cleanup
 
 `/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches; each report is also kept in `~/.herdr-agents/reports/`, so the metrics outlive the worktree. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
@@ -122,6 +126,7 @@ All start with `hrd-` (`commandPrefix` changes it).
 | --- | --- |
 | `/hrd-orchestrate <goal>` | Make this session the coordinator, with the playbook and a goal. |
 | `/hrd-wrap-up`, `/hrd-wrap-up off` | Stop starting workers and let the running ones finish; resume. |
+| `/hrd-notes` | Leave learning notes now for the concepts this session worked with (needs `learningNotes`). |
 | `/hrd-side` | Open or close the sidebar beside the chat. ctrl+x tab moves into it; there Tab walks its buttons and Enter presses one. It draws no hotkeys, so it stays grey and white. |
 | `/hrd-decisions` | List the questions and to-dos waiting for you. Answer on the panel: `1`–`4` from an empty prompt, or alt+d then arrows and Enter. |
 | `/hrd-workers` | List this session's workers. |
@@ -148,6 +153,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `pruneMinutes` | `30` | How often merged worktrees are pruned; `0` turns it off (`/hrd-prune` still works). |
 | `closeIdleMinutes` | `30` | How long a worker's tab stays open, idle, after its report; `0` keeps it open. |
 | `repos` | from git remotes | Short names for `#123` links, e.g. `{"web": "owner/website"}`. The repos of the session's and workers' folders are known already, by name and by the part after the last dash (`acme-client`, `client`). |
+| `learningNotes` | off | `{"enabled": true, "vault": "~/Obsidian/Learning", "folder": "Concepts"}` leaves you an Obsidian note per concept a session worked with, at wrap-up and on `/hrd-notes`. See [Learning notes](#learning-notes). |
 | `wrapUp` | off | `true` wraps up every coordinator on the machine; `/hrd-wrap-up off` clears it. |
 | `view` | `band` | Where the workers and what needs you show: `band` above the prompt or `side`, the sidebar, opened at the start of each session. Only one shows; `/hrd-side` switches for the session. |
 

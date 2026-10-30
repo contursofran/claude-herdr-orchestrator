@@ -138,6 +138,8 @@ export type Settings = {
   closeIdleMinutes?: number
   repos?: Record<string, string>
   wrapUp?: boolean
+  // Obsidian stubs for the concepts a session worked with (hooks/notes.ts); off by default
+  learningNotes?: { enabled?: boolean; vault?: string; folder?: string }
   // where the workers and what needs the person show: the band above the prompt or the sidebar
   view?: 'band' | 'side'
   // the PR pipeline (pipeline.ts); every key optional, see pipelineSettings
