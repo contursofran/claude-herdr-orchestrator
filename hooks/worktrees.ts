@@ -129,11 +129,12 @@ export async function repoTop($: EngineInterface, repo?: string) {
   return r.ok && r.out ? r.out : undefined
 }
 
-// The branch origin/HEAD points to; else the branch the main checkout is on; else main.
+// The branch origin/HEAD points to; else, only in a repo with no origin remote, the branch the checkout is on; else main.
 export async function defaultBase($: EngineInterface, top: string) {
   const r = await git($, ['-C', top, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
   const head = r.ok && r.out.replace(/^origin\//, '')
   if (head) return head
+  if ((await git($, ['-C', top, 'remote', 'get-url', 'origin'])).ok) return 'main'
   const on = await git($, ['-C', top, 'branch', '--show-current'])
   return (on.ok && on.out) || 'main'
 }

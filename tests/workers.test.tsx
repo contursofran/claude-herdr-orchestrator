@@ -1508,7 +1508,7 @@ test('a repo with no origin remote reuses an existing local branch', async ($, o
 })
 
 test('a repo with an origin whose fetch fails still fails with the fetch error', async ($, on) => {
-  const { runs } = await start($, on)
+  const { runs, shell, submitted, clock } = await start($, on)
   answerGit(
     runs,
     git('-C /repo rev-parse --show-toplevel', '/repo\n'),
@@ -1517,7 +1517,42 @@ test('a repo with an origin whose fetch fails still fails with the fetch error',
   )
   await spawnBranch($)
   await settled()
-  expect(JSON.stringify(runs.get('git -C /repo fetch origin main'))).toContain('unable to access')
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/status="failed">\nThe worker did not start: .*git fetch origin main failed: fatal: unable to access/)
+  expect(shell.some(c => c.includes('worktree add'))).toBe(false)
+})
+
+test('a repo with an origin but no origin/HEAD keeps main, not the checked-out branch', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', '', 128, 'fatal: not a symbolic ref'),
+    git('-C /repo branch --show-current', 'trunk\n'),
+    git('-C /repo remote get-url origin', 'git@example.com:x/y.git\n'),
+    git('-C /repo fetch origin main'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main'),
+  )
+  await spawnBranch($)
+  await settled()
+  expect(shell).toContain('git -C /repo fetch origin main')
+  expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/main')
+})
+
+test('a repo with no origin remote and a detached HEAD falls back to main', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', '', 128, 'fatal: not a symbolic ref'),
+    git('-C /repo remote get-url origin', '', 2),
+    git('-C /repo branch --show-current', ''),
+    git('-C /repo rev-parse --verify --quiet refs/heads/fix-x', '', 1),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x refs/heads/main'),
+  )
+  await spawnBranch($)
+  await settled()
+  expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x refs/heads/main')
 })
 
 test('a base that is not a valid branch name is denied before any git call that could take it as an option', async ($, on) => {
