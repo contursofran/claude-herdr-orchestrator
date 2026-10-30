@@ -35,7 +35,7 @@ export default class HerdrAgents extends View {
     this.boards = new Boards()
     if (props()?.role === 'board') {
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
-      this.boards.start(cx, cx => cx.notify())
+      this.boards.startOne(cx, props().session, props().board, cx => cx.notify())
       return
     }
     this.last = null

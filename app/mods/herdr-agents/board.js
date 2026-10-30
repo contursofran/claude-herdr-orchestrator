@@ -1,6 +1,6 @@
 // Reads the boards the plugin writes (~/.herdr-agents/board/<session>.json) and keeps them current.
 import { exec, hc, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
-import { actionFile, applyFile, boardIdIn, coreIdOf, heartbeat } from './model.js'
+import { actionFile, applyFile, boardIdIn, coreIdOf, heartbeat, touchesBoard } from './model.js'
 
 export const boardDir = () => `${home()}/.herdr-agents/board`
 export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
@@ -36,6 +36,26 @@ export class Boards {
         const ids = new Set(paths.map(p => boardIdIn(dirs, p)).filter(Boolean))
         for (const id of ids) await this.load(dir, id)
         if (ids.size) onChange(cx)
+      }
+    })
+  }
+
+  /** The pop-up's reader: it starts from the board the strip passed (`first`, already parsed) and keeps only that one file
+   *  current. No mkdir, realpath or ls and no other board is read: the strip made the folder and chose the board. */
+  startOne(cx, session, first, onChange) {
+    if (first && typeof first === 'object') this.files = { [session]: first }
+    cx.spawn(async cx => {
+      const dir = boardDir()
+      // Watch before the re-read, so a write between the two is not missed; the copy the strip passed may be seconds old.
+      let changed = watchFolder(dir)
+      await this.load(dir, session)
+      onChange(cx)
+      for (;;) {
+        const paths = await changed
+        changed = watchFolder(dir)
+        if (!touchesBoard(session, paths)) continue
+        await this.load(dir, session)
+        onChange(cx)
       }
     })
   }

@@ -11,6 +11,7 @@ import {
   popupSpot,
   rowAction,
   stageIcon,
+  touchesBoard,
   workRows,
   wrapUpAction,
   wrapUpButton,
@@ -132,4 +133,14 @@ test('overlayPlan: one overlay at a time; the card or sheet hands the keyboard b
   assert.deepEqual(overlayPlan('sheet', {}), { closePopup: false, closeCard: false, closeSheet: false, refocus: false })
   assert.deepEqual(overlayPlan('card', { sheet: true }), { closePopup: false, closeCard: false, closeSheet: true, refocus: true })
   assert.deepEqual(overlayPlan('popup', { sheet: true }), { closePopup: false, closeCard: false, closeSheet: true, refocus: true })
+})
+
+test("touchesBoard: only the pop-up's own board file counts, under either spelling of the folder", () => {
+  assert.equal(touchesBoard('s1', ['/tmp/h/board/s1.json']), true)
+  assert.equal(touchesBoard('s1', ['/private/tmp/h/board/other.json', '/private/tmp/h/board/s1.json']), true)
+  assert.equal(touchesBoard('s1', ['/tmp/h/board/s2.json']), false)
+  assert.equal(touchesBoard('s1', ['/tmp/h/board/s1.json.tmp', '/tmp/h/board/s1.actions/s1.json.x']), false)
+  assert.equal(touchesBoard('s1', ['/tmp/h/board/xs1.json']), false)
+  assert.equal(touchesBoard('s1', []), false)
+  assert.equal(touchesBoard('s1', undefined), false)
 })
