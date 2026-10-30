@@ -3,7 +3,7 @@ import { beforeEach, test } from 'node:test'
 import { app, findId, textOf } from './fake-gpui.mjs'
 
 // After the fake is registered: these import `gpui-kit` and `herdr`.
-const { closePinsOverlay, pinsView } = await import('../mods/herdr-agents/pinbar.js')
+const { closePinsOverlay, pinbar, pinsView } = await import('../mods/herdr-agents/pinbar.js')
 const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
@@ -406,4 +406,57 @@ test('a resolved pin has no row to press while the others hold still', t => {
   pinsView(new Set(), ctl, boardOf('K1', 'K2', 'K3'))
   const moved = pinsView(new Set(), ctl, boardOf('K2', 'K3'))
   assert.equal(findId(moved, 'pin-done-K1'), null)
+})
+
+// ---- #205: marking a pin read takes `mark read` away; `done` slides under the cursor, so it is held too ----
+
+test('after mark read, a press where done slid to is ignored until the row settles, even though the order is unchanged', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const gone = new Set()
+  const ctl = {}
+  const before = pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  down(before, 'pin-read-K3')
+  assert.deepEqual(app.store['hrd.read'], { 's:K3': true })
+  // K3 was the last row and stays it: only its button row changed.
+  const after = pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  assert.equal(findId(after, 'pin-read-K3'), null)
+  down(after, 'pin-done-K3')
+  assert.deepEqual([...gone], [], 'the second press of a double click on mark read')
+  t.mock.timers.tick(ROWS_SETTLE_MS)
+  down(after, 'pin-done-K3')
+  assert.deepEqual([...gone], ['s:K3'])
+})
+
+// ---- #211: the bar's × belongs to the pin it was drawn for ----
+
+const barUi = (current, onDone) => ({
+  mode: 'full',
+  current,
+  many: false,
+  empty: '',
+  segments: [],
+  slim: '',
+  meta: '',
+  waiting: [],
+  flash: false,
+  onBounds() {},
+  onDone,
+})
+
+test("the bar's Done × has an id per pin, so a press on one pin's × is no click on the pin that replaced it", () => {
+  const done = []
+  const first = pinbar(
+    {},
+    barUi(pin('K1'), p => done.push(p.key)),
+  )
+  const second = pinbar(
+    {},
+    barUi(pin('K2'), p => done.push(p.key)),
+  )
+  assert.ok(findId(first, 'pin-done-K1'))
+  assert.equal(findId(first, 'pin-done-K2'), null)
+  assert.equal(findId(second, 'pin-done-K1'), null)
+  findId(second, 'pin-done-K2').node.calls.on_click[0]({}, cx)
+  assert.deepEqual(done, ['K2'])
 })
