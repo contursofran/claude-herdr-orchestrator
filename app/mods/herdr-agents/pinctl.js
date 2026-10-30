@@ -2,7 +2,7 @@ import { nextCommand, notify, setShared, shared } from 'herdr'
 import { openPins } from './pinsctl.js'
 import { send } from './board.js'
 import { Outbox } from './outbox.js'
-import { deriveBar, doneAction, keyStep, markRead, newBarState, newestPin, pinStepDir, pins, pruneRead, takeDoneRequest } from './model.js'
+import { deriveBar, doneAction, doneRequests, keyStep, markRead, newBarState, newestPin, pinStepDir, pins, pruneRead } from './model.js'
 
 const FLASH_MS = 2200 // 1.1 s, twice
 
@@ -18,7 +18,6 @@ export class PinCtl {
     this.pruned = false
     this.shown = null // {mode, list, current} of the last draw, for the keys; null with no board
     this.bounds = null // the bar's place in the window, as the last press on it reported it: where the overlays go
-    this.doneSeen = shared('hrd.doneReq')?.n ?? null // a request left by the last run is not done again
   }
 
   /** Keys: ctrl-cmd-[ and ctrl-cmd-] in layout:coordinator send herdr-agents.prevpin / nextpin here. */
@@ -61,9 +60,11 @@ export class PinCtl {
   /** The `ui` argument of pinbar(); `cx` is the render's own. */
   ui(board, cx) {
     // A Done from the drop panel or the popover: the same queued, undoable action as the Done ×.
-    const req = takeDoneRequest(shared('hrd.doneReq'), this.doneSeen)
-    this.doneSeen = req.seen
-    if (req.request) this.outbox.schedule(cx, req.request.session, doneAction(req.request.key))
+    const asked = shared('hrd.doneReq')
+    if (asked?.length) {
+      setShared('hrd.doneReq', [])
+      for (const r of doneRequests(asked)) this.outbox.schedule(cx, r.session, doneAction(r.key))
+    }
     const { state, view, list, flashStart } = deriveBar(this.bar, board, {
       read: shared('hrd.read') ?? {},
       hidden: this.outbox.hidden(),
@@ -86,6 +87,8 @@ export class PinCtl {
         }
       })
     }
+    // What the overlays list: never a pin waiting on a Done, or it could be Done twice.
+    const open = () => pins(board, shared('hrd.read') ?? {}, this.outbox.hidden())
     const pick = sel => {
       this.bar = { ...this.bar, sel }
     }
@@ -102,11 +105,11 @@ export class PinCtl {
       onRead: (id, cx) => {
         pick(null)
         this.mark(id)
-        openPins(board.session, pins(board, shared('hrd.read') ?? {}), 'panel', { id, bar: this.bounds })
+        openPins(board.session, open(), 'panel', { id, bar: this.bounds })
         cx.notify()
       },
       onAll: cx => {
-        openPins(board.session, pins(board, shared('hrd.read') ?? {}), 'all', { bar: this.bounds })
+        openPins(board.session, open(), 'all', { bar: this.bounds })
         cx.notify()
       },
       onBounds: b => {

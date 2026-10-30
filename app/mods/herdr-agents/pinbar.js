@@ -1,6 +1,6 @@
 import { div, svg } from 'gpui-kit'
 import { closeOverlay, props, setShared, shared } from 'herdr'
-import { ageText, markAllRead, markRead, orderPins } from './model.js'
+import { ageText, markAllRead, markRead, orderPins, pinContext } from './model.js'
 import { openPins } from './pinsctl.js'
 import { color, font, icon, pinsLook, row } from './tokens.js'
 
@@ -187,7 +187,8 @@ const ghostDown = (id, label, onClick) =>
 
 /** Done from here: a request the pin bar's copy turns into its own queued action (so the same 5 s undo applies). */
 function requestDone(pin, session) {
-  setShared('hrd.doneReq', { session, key: pin.key, n: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
+  const asked = shared('hrd.doneReq')
+  setShared('hrd.doneReq', [...(Array.isArray(asked) ? asked : []), { session, key: pin.key }])
 }
 
 /**
@@ -226,9 +227,18 @@ export function pinsView(gone) {
           .min_h_0()
           .overflow_y_scroll()
           .text_size(font.terminalSize)
-          .line_height(font.terminalLine)
+          .line_height(`${font.terminalLine}px`)
           .text_color(color.text)
           .child(pin?.text ?? ''),
+      )
+      .child(
+        div()
+          .id('pin-context')
+          .h(font.line)
+          .flex_none()
+          .truncate()
+          .text_color(color.dim)
+          .child(pin ? pinContext(pin, Date.now()) : ''),
       )
       .child(
         div()
@@ -318,7 +328,7 @@ export function pinsView(gone) {
                       .size(6)
                       .flex_none()
                       .rounded_full()
-                      .bg(pin.unread ? pinsLook.dot : 'transparent'),
+                      .when(pin.unread, el => el.bg(pinsLook.dot)),
                   )
                   .child(
                     div()

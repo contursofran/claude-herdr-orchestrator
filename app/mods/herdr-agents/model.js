@@ -822,6 +822,8 @@ const PANEL_CHAR_W = 7.8 // a 13 px mono character
 const PANEL_MAX_LINES = 12
 const PANEL_FALLBACK_TOP = 80 // tabs 42 + pin bar 38, when the bar's own bounds are not known
 const PANEL_FALLBACK_SIDE = CARD_SIDE
+const PINS_MIN_H = 120 // an overlay never gets smaller than this, however small the window
+const PINS_WINDOW_GAP = 8 // kept free between an overlay and the window's bottom edge
 
 /** Unread first, then read; the newest first within each (board order when equal). Does not change `list`. */
 export function orderPins(list) {
@@ -840,7 +842,17 @@ export function panelHeight(text, width) {
   const lines = String(text ?? '')
     .split('\n')
     .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / per)), 0)
-  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + 12 + 28 + 14
+  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + 12 + 18 + 12 + 28 + 14
+}
+
+/** The drop panel's context line: who, age and tag, as far as the pin has them. */
+export const pinContext = (pin, now) => [pin.who, ageText(pin.at, now), pin.tag].filter(Boolean).join(' · ')
+
+/** `height`, limited to what fits below `y` in the window, so the buttons stay reachable and the content scrolls. */
+export function fitHeight(height, y, viewport) {
+  const vh = Number(viewport?.height)
+  if (!(vh > 0)) return height
+  return Math.min(height, Math.max(PINS_MIN_H, vh - y - PINS_WINDOW_GAP))
 }
 
 /** The all-pins popover's height for `n` pins. */
@@ -860,11 +872,11 @@ export function pinsSpot(view, bar, viewport) {
   return { x: Math.max(0, x + width - PINS_ALL_W - 8), y: y + 4, width: PINS_ALL_W }
 }
 
-/** A Done from the overlay is a request in shared("hrd.doneReq"); the pin bar copy turns it into the same queued, undoable
- *  action as its own Done ×. Returns {request: {session, key} | null, seen}: each request (by its `n`) is taken once. */
-export function takeDoneRequest(req, seen) {
-  if (!req || !req.key || req.n === seen) return { request: null, seen }
-  return { request: { session: req.session, key: req.key }, seen: req.n }
+/** Done from the overlay: a list of requests in shared("hrd.doneReq"), so two in one tick both stay; the pin bar copy empties
+ *  it and turns each into the same queued, undoable action as its own Done ×. These are the usable ones of `list`. */
+export function doneRequests(list) {
+  if (!Array.isArray(list)) return []
+  return list.filter(r => r?.session && r?.key).map(r => ({ session: r.session, key: r.key }))
 }
 
 // --- S6: the band steps aside ---

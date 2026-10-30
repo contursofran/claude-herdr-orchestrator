@@ -2,7 +2,7 @@
 // pop-up and the card: overlayPlan() says what to close. Ids are kept in shared so any copy of the mod can close them.
 import { closeOverlay, openOverlay, setShared, shared } from 'herdr'
 import { closeCard } from './cardctl.js'
-import { PINS_ALL_W, allPinsHeight, overlayPlan, panelHeight, pinsSpot } from './model.js'
+import { PINS_ALL_W, allPinsHeight, fitHeight, overlayPlan, panelHeight, pinsSpot } from './model.js'
 
 function closeById(key) {
   const id = shared(key)
@@ -35,7 +35,7 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
   const spot = pinsSpot(view, bar, viewport)
   const pin = list.find(p => p.id === id)
   if (view === 'panel' && !pin) return
-  const height = view === 'panel' ? panelHeight(pin.text, spot.width) : allPinsHeight(list.length)
+  const height = fitHeight(view === 'panel' ? panelHeight(pin.text, spot.width) : allPinsHeight(list.length), spot.y, viewport)
   const overlay = openOverlay({
     mod: 'herdr-agents',
     kind: 'popup',

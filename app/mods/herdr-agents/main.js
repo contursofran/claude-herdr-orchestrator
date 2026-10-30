@@ -1,9 +1,9 @@
 import { View, div } from 'gpui-kit'
-import { focused, props, terminals } from 'herdr'
+import { focused, props, setShared, shared, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
-import { onBoardsChanged } from './cardstate.js'
+import { clearStaleOverlays, onBoardsChanged } from './cardstate.js'
 import { HEARTBEAT_MS, resolveBoard } from './model.js'
 import { pinbar, pinsView } from './pinbar.js'
 import { popupView } from './popup.js'
@@ -45,6 +45,7 @@ export default class HerdrAgents extends View {
     this.last = null
     this.pin = new PinCtl()
     const pinbarCopy = props()?.role === 'pinbar'
+    if (pinbarCopy) clearStaleOverlays(shared, setShared)
     // The card has an Outbox of its own: it settles it here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.

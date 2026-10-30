@@ -3,14 +3,16 @@ import { test } from 'node:test'
 import {
   PINS_ALL_W,
   allPinsHeight,
+  doneRequests,
+  fitHeight,
   markAllRead,
   markRead,
   orderPins,
   panelHeight,
+  pinContext,
   pins,
   pinsSpot,
   readKey,
-  takeDoneRequest,
 } from '../mods/herdr-agents/model.js'
 
 const know = (key, extra = {}) => ({ key, kind: 'know', isOpen: true, text: `${key} text`, ...extra })
@@ -57,18 +59,33 @@ test('pins carry the full text, for the drop panel', () => {
   assert.equal(p.text, 'First line\nsecond line')
 })
 
-test('takeDoneRequest: each request is taken once, by its n; none or an empty one is ignored', () => {
-  const req = { session: 's', key: 'K1', n: 'a' }
-  assert.deepEqual(takeDoneRequest(req, null), { request: { session: 's', key: 'K1' }, seen: 'a' })
-  assert.deepEqual(takeDoneRequest(req, 'a'), { request: null, seen: 'a' })
-  assert.deepEqual(takeDoneRequest({ ...req, n: 'b' }, 'a'), { request: { session: 's', key: 'K1' }, seen: 'b' })
-  assert.deepEqual(takeDoneRequest(null, 'a'), { request: null, seen: 'a' })
-  assert.deepEqual(takeDoneRequest({ session: 's', n: 'c' }, null), { request: null, seen: null })
+test('doneRequests: every usable request of the list, in order; anything else is ignored', () => {
+  const list = [{ session: 's', key: 'K1' }, { session: 's' }, null, { key: 'K3' }, { session: 's', key: 'K2' }]
+  assert.deepEqual(doneRequests(list), [
+    { session: 's', key: 'K1' },
+    { session: 's', key: 'K2' },
+  ])
+  assert.deepEqual(doneRequests(null), [])
+  assert.deepEqual(doneRequests({ session: 's', key: 'K1', n: 'left by an older build' }), [])
+})
+
+test('fitHeight limits an overlay to the window, keeps a minimum, and leaves it alone with no window size', () => {
+  assert.equal(fitHeight(638, 84, { height: 900 }), 638)
+  assert.equal(fitHeight(638, 84, { height: 500 }), 408)
+  assert.equal(fitHeight(638, 84, { height: 150 }), 120)
+  assert.equal(fitHeight(638, 84, null), 638)
+})
+
+test('pinContext: who, age and tag, leaving out what the pin does not have', () => {
+  const now = 3_600_000 * 2
+  assert.equal(pinContext({ who: 'builder', at: now - 120_000, tag: 'PR' }, now), 'builder · 2m · PR')
+  assert.equal(pinContext({ who: '', at: 0, tag: null }, now), '')
 })
 
 test('panelHeight grows with the lines of the text, up to a cap; allPinsHeight with the pins, up to four rows', () => {
   assert.ok(panelHeight('x'.repeat(2000), 900) > panelHeight('x', 900))
   assert.equal(panelHeight('a\nb\nc', 900) - panelHeight('a', 900), 40)
+  assert.equal(panelHeight('a', 900), 1 + 14 + 20 + 12 + 18 + 12 + 28 + 14, 'room for the context line')
   assert.equal(panelHeight('x'.repeat(100000), 900), panelHeight('x'.repeat(200000), 900))
   assert.ok(panelHeight('x'.repeat(200), 400) > panelHeight('x'.repeat(200), 1200), 'narrower wraps more')
   assert.ok(allPinsHeight(2) > allPinsHeight(1))
