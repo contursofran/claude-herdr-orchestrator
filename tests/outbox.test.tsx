@@ -1,6 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { BATCH_MS, JOBS_KEEP_MS } from '../hooks/defaults'
-import { spawn, start, stopAll } from './harness'
+import { spawn, start, stopAll, test } from './harness'
 
 // The outbox (outbox.ts): the prompts for the coordinator that come close together go out as one,
 // after a quiet BATCH_MS and once the coordinator's turn has ended. The batch's tick checks read

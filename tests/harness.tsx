@@ -1,10 +1,21 @@
-import { mock } from 'claude-code/testing'
+import { mock, test as kitTest } from 'claude-code/testing'
 import type { CommandRunInput, On } from 'claude-code'
 import type { Engine, MockClock, Mounted } from 'claude-code/testing'
 import type { Settings } from '../types'
 
 // What the tests share: the band's render props, and start(), which stands in for the
 // engine beneath the mod (hc, git, the file system) and starts a session in /repo.
+
+// The kit gives a test 5 s unless it names timeoutMs, and the runner has no setting for it. These tests
+// run on real timers, so a busy machine can pass 5 s with nothing wrong. Import test from here: the same
+// test, with 60 s, or the test's own timeoutMs when that is longer.
+const TIMEOUT_MS = 60_000
+export const test: typeof kitTest = ((name: string, ...rest: unknown[]) => {
+  const [first] = rest
+  const opts = typeof first === 'function' ? undefined : (first as { timeoutMs?: number })
+  const tail = typeof first === 'function' ? rest : rest.slice(1)
+  return (kitTest as (...a: unknown[]) => unknown)(name, { ...opts, timeoutMs: Math.max(opts?.timeoutMs ?? 0, TIMEOUT_MS) }, ...tail)
+}) as typeof kitTest
 
 export const BAND = {
   plugin: 'herdr-agents',

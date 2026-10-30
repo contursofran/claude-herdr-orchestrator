@@ -1,6 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { BATCH_MS, LOST_REPORT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
-import { command, registering, settled, spawn, start, stopAll, until } from './harness'
+import { command, registering, settled, spawn, start, stopAll, test, until } from './harness'
 
 // The hc side of the mod: the guard, how a worker is started, prompted, watched, messaged and
 // closed, and what happens when hc says no. The fake in harness.tsx answers like hc 0.1.14 did.

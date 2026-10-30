@@ -1,5 +1,5 @@
-import { expect, test } from 'claude-code/testing'
-import { BAND, command, start } from './harness'
+import { expect } from 'claude-code/testing'
+import { BAND, command, start, test } from './harness'
 
 // /hrd-config: the settings listed on the band, saved to the user's or the folder's file.
 

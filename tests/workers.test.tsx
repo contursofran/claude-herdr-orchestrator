@@ -1,6 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { BATCH_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
-import { command, settled, spawn, start, stopAll } from './harness'
+import { command, settled, spawn, start, stopAll, test } from './harness'
 
 // Starting workers: the rules spawn applies, from the built-in profiles in effect. A report
 // reaches the coordinator once its batch goes out (see outbox.ts), BATCH_MS after it.
