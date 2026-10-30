@@ -228,6 +228,59 @@ test('a merged PR gets its merge time from the same gh call, and is not asked ag
   await stopAll($, clock, ['w-done'])
 })
 
+test('a merged PR already stored with no merge time is asked once to fill it, then left alone', async ($, on) => {
+  // State kept before `mergedAt` existed: the stored merged PR reads back without it (while `old` is set).
+  let old = false
+  on('state.get', async (_, e, next) => {
+    const read = await next(e)
+    const value = read.value?.value as { prs?: Record<string, { mergedAt?: unknown }> } | undefined
+    if (!old || e.key !== 'side' || !value?.prs) return read
+    const prs = Object.fromEntries(Object.entries(value.prs).map(([k, { mergedAt: _, ...rest }]) => [k, rest]))
+    return { value: { value: { ...value, prs }, version: read.value!.version } }
+  })
+  const { clock, typed, files, prs, shell } = await start($, on)
+  await $.tool.call({
+    tool: 'mcp__herdr-agents__spawn',
+    worker: 'w-done',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    task: '# Build #12: hotbar keys',
+  })
+  await settled()
+  await clock.settle()
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo/wt/.herdr-agents/w-done/RESULT.md'] =
+    `<!-- report ${token} -->\nOpened https://github.com/acme/app-client/pull/15. Tests pass.`
+  await clock.advance(3000)
+  const asked = () => shell.filter(c => c.startsWith('gh pr view 15')).length
+  const tick = async () => {
+    for (let i = 0; i < 5; i++) {
+      await clock.advance(30_000)
+      files[FILE] = beat(clock.now())
+    }
+  }
+  files[FILE] = beat(clock.now())
+  prs['acme/app-client#15'] = { state: 'OPEN', statusCheckRollup: [] }
+  await tick()
+  // It is stored as merged, without its time.
+  old = true
+  prs['acme/app-client#15'] = { state: 'MERGED', statusCheckRollup: [] }
+  await tick()
+  const stored = asked()
+  // gh now has the time: the stored PR is asked once more, and the time reaches the board.
+  prs['acme/app-client#15'] = { state: 'MERGED', mergedAt: '2026-10-30T20:00:00Z', statusCheckRollup: [] }
+  await tick()
+  expect(asked(), 'a stored merged PR with no time is asked again').toBeGreaterThan(stored)
+  old = false
+  await tick()
+  const filled = asked()
+  expect(JSON.parse(files[BOARD]!).tasks[0]).toMatchObject({ isMerged: true, mergedAt: Date.parse('2026-10-30T20:00:00Z') })
+  await tick()
+  await tick()
+  expect(asked(), 'once filled it is not asked again').toBe(filled)
+  await stopAll($, clock, ['w-done'])
+})
+
 test('a merged PR with no merge time is asked once more and then left alone, even if gh gives none', async ($, on) => {
   const { clock, typed, files, prs, shell } = await start($, on)
   await $.tool.call({
