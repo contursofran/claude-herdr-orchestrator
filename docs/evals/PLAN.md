@@ -31,7 +31,7 @@ Base branch `main`. Run `npm run check` before a PR. CI (`.github/workflows/chec
 - **Each role call:** `claude -p <profile.args…> --output-format json --permission-prompts none --settings={"env":{"CLAUDE_CODE_PLUGIN_DIRS":""}} --disallowedTools=WebFetch(domain:github.com) --max-budget-usd <remaining> (--session-id <uuid4> | --resume <sid>)`.
   - Prompt on stdin; cwd is the role's folder. Use `--opt=value` so variadic `--disallowedTools` can't swallow the next argument.
   - Env: profile's `env`, plus `PATH=<scripts/hrd-eval/bin>:$PATH`, `CLAUDE_ENV_FILE=<run>/env.sh` (re-exports that PATH before each Bash command), `HRD_EVAL_GH_STATE=<run>/gh`, `GH_CONFIG_DIR=<run>/gh-config` (empty).
-  - Env removed: `GH_TOKEN`, `GITHUB_TOKEN`, `CLAUDECODE`, `HERDR_*`.
+  - Env removed: `GH_TOKEN`, `GITHUB_TOKEN`, `CLAUDECODE`, `HERDR_*`, `HC_*`.
   - Per-call timeout `--call-timeout` minutes (default 20): SIGINT, wait 30 s, SIGKILL.
   - JSON output has `result`, `session_id`, `total_cost_usd`. On `--resume`, `total_cost_usd` is the whole conversation's total, so a resumed call's cost is the difference.
   - Transcript: glob `${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/<sid>.jsonl`.
