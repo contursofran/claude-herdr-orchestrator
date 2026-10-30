@@ -1,6 +1,6 @@
 // Reads the boards the plugin writes (~/.herdr-agents/board/<session>.json) and keeps them current.
-import { exec, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
-import { actionFile, applyFile, boardIdIn, heartbeat } from './model.js'
+import { exec, hc, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
+import { actionFile, applyFile, boardIdIn, coreIdOf, heartbeat } from './model.js'
 
 export const boardDir = () => `${home()}/.herdr-agents/board`
 export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
@@ -75,7 +75,12 @@ const heartbeatFile = () => `${home()}/.herdr-agents/app-mod.json`
 export async function beat(boards, terminals) {
   const file = heartbeatFile()
   await exec('mkdir', ['-p', `${home()}/.herdr-agents`])
-  await writeTextFile(`${file}.tmp`, heartbeat(boards, terminals, Date.now()), null)
+  // The app's own core, as the plugin sees its own; unknown (an old hc, a failed call) is left out of the file.
+  const core = await hc(['server', 'status', '--json']).then(
+    r => (r.code === 0 ? coreIdOf(r.stdout) : ''),
+    () => '',
+  )
+  await writeTextFile(`${file}.tmp`, heartbeat(boards, terminals, Date.now(), core), null)
   const moved = await exec('mv', [`${file}.tmp`, file])
   if (moved.code !== 0) await exec('rm', ['-f', `${file}.tmp`])
 }

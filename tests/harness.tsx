@@ -456,6 +456,8 @@ export async function start(
         event(t.name, 'removed')
         return ok({ removed: t.address })
       }
+      // The hc core this session talks to (`hc server status`).
+      if (sub === 'server') return ok({ core: { id: 'core-A', name: 'mac' }, live: 1 })
       return ok({})
     }
     // /repo and /srv are GitHub checkouts; a folder in one (/repo/wt) is a worktree of it.
@@ -511,7 +513,13 @@ export async function start(
       streams.splice(streams.indexOf(stream), 1)
     }
   })
-  on('prompt.submit', (_, e) => {
+  on('prompt.submit', async (_, e) => {
+    // A test can hold the submit with gate(argv => argv[0] === 'prompt.submit').
+    const hold = gates.find(g => !g.used && g.match(['prompt.submit']))
+    if (hold) {
+      hold.used = true
+      await hold.held
+    }
     if (refuse.next > 0) {
       refuse.next--
       throw new Error('the session refused the prompt')

@@ -688,7 +688,18 @@ export function localCoordinators(boards, terminals) {
   return [...new Set(out.filter(a => !a.includes('/')))]
 }
 
-/** The text of ~/.herdr-agents/app-mod.json. */
-export function heartbeat(boards, terminals, now) {
-  return JSON.stringify({ at: now, terminals: localCoordinators(boards, terminals) })
+/** The text of ~/.herdr-agents/app-mod.json. `core` is the hc core's id (`hc server status`), left out when unknown, so
+ *  a second core on the same HOME (its own `t1`) is told apart from this one. */
+export function heartbeat(boards, terminals, now, core = '') {
+  return JSON.stringify({ at: now, terminals: localCoordinators(boards, terminals), ...(core ? { core } : {}) })
+}
+
+/** The core id out of `hc server status --json` output, or '' when it does not say. */
+export function coreIdOf(text) {
+  try {
+    const id = JSON.parse(text)?.core?.id
+    return typeof id === 'string' ? id : ''
+  } catch {
+    return ''
+  }
 }
