@@ -32,13 +32,14 @@ test('a key already bound to the same action is left alone without a report; the
 test('app/keys.json: the strip keys sit in layout:coordinator, ctrl-cmd-1..6, and merge into the app keys', () => {
   const wanted = JSON.parse(readFileSync(new URL('../keys.json', import.meta.url), 'utf8'))
   assert.deepEqual(Object.keys(wanted), ['layout:coordinator'])
-  assert.deepEqual(
-    Object.entries(wanted['layout:coordinator']),
-    [1, 2, 3, 4, 5, 6].map(n => [`ctrl-cmd-${n}`, `herdr-agents.pick${n}`]),
-  )
+  assert.deepEqual(Object.entries(wanted['layout:coordinator']), [
+    ...[1, 2, 3, 4, 5, 6].map(n => [`ctrl-cmd-${n}`, `herdr-agents.pick${n}`]),
+    ['ctrl-cmd-[', 'herdr-agents.prevpin'],
+    ['ctrl-cmd-]', 'herdr-agents.nextpin'],
+  ])
   const r = mergeKeys({ global: { 'cmd-1': 'tab.select:1' } }, wanted)
   assert.equal(r.keys['layout:coordinator']['ctrl-cmd-3'], 'herdr-agents.pick3')
-  assert.equal(r.added.length, 6)
+  assert.equal(r.added.length, 8)
   // Run again over the result: nothing more to add, nothing skipped.
   const again = mergeKeys(r.keys, wanted)
   assert.deepEqual([again.added, again.skipped], [[], []])
