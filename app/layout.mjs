@@ -32,7 +32,7 @@ export function repointAgents(layout) {
   }
   const node = find(layout)
   if (!node) return false
-  node.content = structuredClone(agentsList)
+  node.content = { ...node.content, ...structuredClone(agentsList), props: { ...node.content.props, ...agentsList.props } }
   return true
 }
 

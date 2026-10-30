@@ -7,7 +7,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { orchestratorSection } from "./model.js";
+import { listOrder } from "./model.js";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 
 function find(node, id) {
@@ -78,8 +78,8 @@ export class AgentsList {
   init(cx) {
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
-    this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
-    this.pins = JSON.parse(localStorage.getItem("pins") ?? "[]");
+    this.changed = JSON.parse(localStorage.getItem("hrd.changed") ?? "{}");
+    this.pins = JSON.parse(localStorage.getItem("hrd.pins") ?? "[]");
     cx.timer.every(30000, (cx) => cx.notify());
   }
 
@@ -97,12 +97,12 @@ export class AgentsList {
     // Gone and old: the list alone is empty right after a start.
     const listed = new Set(list.map((a) => a.address));
     for (const [k, c] of Object.entries(this.changed)) if (!listed.has(k) && now - c.at > 30 * 86400000) delete this.changed[k];
-    localStorage.setItem("changed", JSON.stringify(this.changed));
+    localStorage.setItem("hrd.changed", JSON.stringify(this.changed));
   }
 
   setPins(pins) {
     this.pins = pins;
-    localStorage.setItem("pins", JSON.stringify(pins));
+    localStorage.setItem("hrd.pins", JSON.stringify(pins));
   }
 
   // Drops pins of agents that ended. Only for machines the list has heard from:
@@ -218,8 +218,6 @@ export class AgentsList {
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
-    // S12: in agents() order, before the sort below, so the section's rows never move with state.
-    const { orchestrators } = orchestratorSection(list, boards.list(), terminals());
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     const shown = focused()?.agent;
@@ -231,12 +229,11 @@ export class AgentsList {
     const rankOf = (a) => urgency.get(a.address);
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
     this.prunePins(all);
-    // S12: the orchestrators come out first, wherever the sort and the pins would put them: a pinned one is here only.
+    // S12: the orchestrators come out first, wherever the sort and the pins would put them: a pinned one is in the section only.
+    // Their order is the sorted list's, so only the sort view moves them; the section is what keeps them on top.
+    const { orchestrators, pinned, rest, list: ordered } = listOrder(list, boards.list(), all, this.pins);
     const orchAddrs = new Set(orchestrators.map((a) => a.address));
-    const others = list.filter((a) => !orchAddrs.has(a.address));
-    const pinned = this.pins.map((p) => others.find((a) => a.address === p)).filter(Boolean);
-    const rest = others.filter((a) => !this.pins.includes(a.address));
-    list = [...orchestrators, ...pinned, ...rest];
+    list = ordered;
     setAgentOrder(list.map((a) => a.address));
 
     const withKids = (a, i) => {
@@ -358,8 +355,8 @@ export class AgentsList {
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .when(this.hovered === a.address, el => el.child(pin))
-        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
+        .when(this.hovered === a.address && !isOrch, el => el.child(pin))
+        .when(!(this.hovered === a.address && !isOrch) && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
         .child(this.status(t, a, byPriority && !isPinned && !isOrch));
     };
 
@@ -375,7 +372,7 @@ export class AgentsList {
       else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
     }
 
-    // A group's header; it folds the group. Folded, it says how many and the most urgent state.
+    // A group's header; it folds the group. Folded, it says how many and the most urgent state (S12: the Orchestrators header too in priority view, so a blocked one isn't hidden).
     const header = (g) => {
       const open = !this.folded.has(g.id);
       const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
@@ -399,7 +396,7 @@ export class AgentsList {
         .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
         .child(div().flex_1())
         .when(!open, (el) => el
-          .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
+          .when((!byPriority || g.id === "orch") && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
     const rows = collapsed

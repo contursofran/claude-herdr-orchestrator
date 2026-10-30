@@ -7,6 +7,7 @@ import {
   boardId,
   debugLine,
   labelOf,
+  listOrder,
   openNeeds,
   orchestratorSection,
   resolveBoard,
@@ -230,10 +231,6 @@ test("S12: an agent is an orchestrator when its address is a live board's coordi
     r.orchestrators.map(a => a.address),
     ['t1'],
   )
-  assert.deepEqual(
-    r.others.map(a => a.address),
-    ['t2', 't3'],
-  )
 })
 
 test('S12: workers of a board and boards without the field are not orchestrators', () => {
@@ -259,30 +256,62 @@ test('S12: a state change keeps the row in the section and the order', () => {
       ['t1', 't2'],
       status,
     )
-    assert.deepEqual(
-      r.others.map(a => a.address),
-      ['t5'],
-    )
   }
 })
 
-test('S12: a pinned orchestrator is in the section only (the list takes pins from `others`)', () => {
-  const r = orchestratorSection([agent('t1'), agent('t5')], [board('a', 't1')], [term('t1'), term('t5')])
-  const pins = ['t1', 't5']
+test('S12: a pinned orchestrator shows once, in the section', () => {
+  const sorted = [agent('t5'), agent('t1'), agent('t6')]
+  const r = listOrder(sorted, [board('a', 't1')], [term('t1'), term('t5'), term('t6')], ['t1', 't6'])
   assert.deepEqual(
-    pins
-      .map(p => r.others.find(a => a.address === p))
-      .filter(Boolean)
-      .map(a => a.address),
-    ['t5'],
+    r.list.map(a => a.address),
+    ['t1', 't6', 't5'],
+  )
+  assert.deepEqual(
+    r.pinned.map(a => a.address),
+    ['t6'],
+  )
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1'],
   )
 })
 
-test('S12: with no board the list is the one given', () => {
+test('S12: orchestrators, then pinned in pin order, then the rest in the given order; stale pins are skipped', () => {
+  const sorted = [agent('t5'), agent('t1'), agent('t6'), agent('t2')]
+  const boards = [board('a', 't1'), board('b', 't2')]
+  const terminals = ['t1', 't2', 't5', 't6'].map(a => term(a))
+  const r = listOrder(sorted, boards, terminals, ['t6', 'gone', 't5'])
+  assert.deepEqual(
+    r.list.map(a => a.address),
+    ['t1', 't2', 't6', 't5'],
+  )
+  assert.deepEqual(r.rest, [])
+  const none = listOrder(sorted, boards, terminals, [])
+  assert.deepEqual(
+    none.rest.map(a => a.address),
+    ['t5', 't6'],
+  )
+})
+
+test('S12: with no board the list matches the shipped order (pinned, then the rest)', () => {
+  const sorted = [agent('t1'), agent('t2', 'working'), agent('t3')]
+  const terminals = [term('t1'), term('t2'), term('t3')]
+  for (const boards of [[], undefined]) {
+    const r = listOrder(sorted, boards, terminals, ['t3'])
+    assert.deepEqual(r.orchestrators, [])
+    assert.deepEqual(
+      r.list.map(a => a.address),
+      ['t3', 't1', 't2'],
+    )
+    assert.deepEqual(listOrder(sorted, boards, terminals, []).list, sorted)
+  }
+  assert.deepEqual(listOrder(undefined, [], []).list, [])
+})
+
+test('S12: with no board the section is empty', () => {
   const list = [agent('t1'), agent('t2', 'working')]
-  const r = orchestratorSection(list, [], [term('t1'), term('t2')])
-  assert.deepEqual(r, { orchestrators: [], others: list })
-  assert.deepEqual(orchestratorSection(list, undefined, undefined).others, list)
+  assert.deepEqual(orchestratorSection(list, [], [term('t1'), term('t2')]), { orchestrators: [] })
+  assert.deepEqual(orchestratorSection(list, undefined, undefined).orchestrators, [])
 })
 
 test("S12: a remote terminal's address carries its machine, so a local board does not match it", () => {
@@ -305,4 +334,12 @@ test("S12: aliveBoards is the resolver's rule 1", () => {
     aliveBoards(boards, terminals).map(b => b.session),
     ['ok'],
   )
+})
+
+test('S12: a terminal labelled as a worker is never a coordinator, even with a leftover board', () => {
+  const boards = [board('old', 't1')]
+  const terminals = [term('t1', { labels: { 'herdr-agents.role': 'worker' } })]
+  assert.deepEqual(aliveBoards(boards, terminals), [])
+  assert.deepEqual(orchestratorSection([agent('t1')], boards, terminals).orchestrators, [])
+  assert.equal(resolveBoard(boards, terminals, focus('t1')).board, null)
 })

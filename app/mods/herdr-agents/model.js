@@ -36,7 +36,9 @@ export function labelOf(terminal, key) {
   return v === undefined || v === null ? null : String(v)
 }
 
-const live = t => t && t.state === 'live' && t.program?.agent === true
+// A terminal the coordinator started as a worker is never a coordinator, whatever a leftover board says
+// (terminal ids may restart with the core); terminals() carries the label (seen in the app).
+const live = t => t && t.state === 'live' && t.program?.agent === true && labelOf(t, 'herdr-agents.role') !== 'worker'
 
 function choose(candidates, last) {
   if (candidates.length === 0) return null
@@ -129,12 +131,26 @@ export function aliveBoards(boards, terminals) {
  * An agent is an orchestrator when its `address` equals `coordinator.terminal` of a board that passes rule 1.
  * Both use the core's address form: `t4` for a local terminal, `machine/t4` for another machine's, so a board
  * (written by a local session) matches local agents only. Order inside is the list's own, never by state.
- * Returns {orchestrators, others}; others keeps the order it was given, so a pinned orchestrator is in one place only.
+ * Returns {orchestrators}: the section's agents, in the order given.
  */
 export function orchestratorSection(agents, boards, terminals) {
   const coordinators = new Set(aliveBoards(boards, terminals).map(b => b.coordinator.terminal))
-  const orchestrators = []
-  const others = []
-  for (const a of agents ?? []) (coordinators.has(a.address) ? orchestrators : others).push(a)
-  return { orchestrators, others }
+  return { orchestrators: (agents ?? []).filter(a => coordinators.has(a.address)) }
+}
+
+/**
+ * The order the agents list draws and hands to setAgentOrder: orchestrators, then pinned, then the rest.
+ *   sorted    the agents in the list's own order (after the sort view)
+ *   boards, terminals   as for orchestratorSection
+ *   pins      the pinned addresses, in pin order
+ * An orchestrator is in the first part only, pinned or not; pins that match no agent are skipped.
+ * Returns {orchestrators, pinned, rest, list}; `list` is the three joined.
+ */
+export function listOrder(sorted, boards, terminals, pins = []) {
+  const { orchestrators } = orchestratorSection(sorted, boards, terminals)
+  const orch = new Set(orchestrators.map(a => a.address))
+  const others = (sorted ?? []).filter(a => !orch.has(a.address))
+  const pinned = pins.map(p => others.find(a => a.address === p)).filter(Boolean)
+  const rest = others.filter(a => !pins.includes(a.address))
+  return { orchestrators, pinned, rest, list: [...orchestrators, ...pinned, ...rest] }
 }

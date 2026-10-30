@@ -109,6 +109,17 @@ test("the agents block points at this mod with role agents; main keeps Herdr's o
   assert.deepEqual(input.children[0].children[0].content, { mod: 'agents' })
 })
 
+test("repointAgents keeps the block's other content props", () => {
+  const layout = main()
+  layout.children[0].children[0].content = { mod: 'agents', props: { keep: 1, role: 'x' }, extra: true }
+  assert.equal(repointAgents(layout), true)
+  assert.deepEqual(layout.children[0].children[0].content, {
+    mod: 'herdr-agents',
+    props: { keep: 1, role: 'agents' },
+    extra: true,
+  })
+})
+
 test("repointAgents touches only a block still on Herdr's agents mod", () => {
   const mine = main()
   mine.children[0].children[0].content = { mod: 'my-agents' }
