@@ -7,6 +7,7 @@
     "ctrl-cmd-5": "herdr-agents.pick5",
     "ctrl-cmd-6": "herdr-agents.pick6",
     "ctrl-cmd-[": "herdr-agents.prevpin",
-    "ctrl-cmd-]": "herdr-agents.nextpin"
+    "ctrl-cmd-]": "herdr-agents.nextpin",
+    "ctrl-cmd-b": "herdr-agents.board"
   }
 }

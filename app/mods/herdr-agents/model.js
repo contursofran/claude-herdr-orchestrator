@@ -539,25 +539,10 @@ export function nextPick(current, session, key, toggle) {
   return { session, key }
 }
 
-// --- S5: the answer card, a hidden panel row below the terminal ---
-
-/** The card block's id in the layout. */
-export const CARD_ID = 'hrd-card'
+// --- S5: the answer card, a floating block over the terminal ---
 
 /** The `answer` action file body for one decision. */
 export const answerAction = (key, answer) => ({ action: 'answer', key, answer })
-
-/** Panel height in px for a face (`ask`, `do`, `resolved`, `blocked`) and an option count: border 2 + padding 28, the
- *  header 20, a gap of 12 before each row, a question or note 40 (two lines), a row of buttons 28 with 6 between, and
- *  the key hint under them (a gap of 12 and a line of 16). */
-export function cardHeight(face, options = 0) {
-  const base = 30 + 20 + 12 + 16
-  const rows = Math.min(Math.max(Number(options) || 0, 1), 6)
-  if (face === 'ask') return base + 12 + 40 + 12 + rows * 28 + (rows - 1) * 6
-  if (face === 'do') return base + 12 + 40 + 12 + 28
-  if (face === 'blocked') return base + 12 + 20 + 12 + 28
-  return base + 12 + 28 // resolved
-}
 
 /**
  * What the card draws for item `key` of `board`, pure. `queue` are actions waiting out their undo time, `sent` the ones
@@ -668,12 +653,160 @@ export function cardKeyAction(face, keystroke, { options = 0, url = false, held 
  * The shared("hrd.open") value after opening `key` on `session`: keeps the terminal to give back, else takes `back`.
  * `seq` is a counter bumped on every open, so the card takes the keyboard on each open, even of the same item.
  */
-export const openState = (current, session, key, back, seq = 0) => ({ session, key, back: current?.back ?? back ?? null, seq })
+export const openState = (current, session, key, back, seq = 0, space = null) => ({
+  session,
+  key,
+  back: current?.back ?? back ?? null,
+  space: current?.back ? (current.space ?? null) : space,
+  seq,
+})
 
-/** The height the panel needs to show `key` of `board` right now (`now` as for cardView: an old sent answer is not counted). */
-export function openHeight(board, key, ctx) {
-  const view = cardView(board, key, ctx)
-  return cardHeight(view?.face, view?.options?.length)
+/** Whether closing the card may hand the keyboard to `open.back`: only while the owner is still in the space it was
+ *  opened from (focusing it from another space would jump there). */
+export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
+
+/** The card floats over the main block, so it is sized from the window: `CARD_W` at most, and clear of the sidebars
+ *  (`SIDE` px each side) when the window is narrow; at most `CARD_MAX_H_PCT`% of the window's height, the rest scrolls.
+ *  `viewport` is {width, height}; without one the card keeps its full width and a modest height. */
+export const CARD_W = 560
+export const CARD_MIN_W = 220
+export const CARD_SIDE = 170
+export const CARD_MAX_H_PCT = 70
+export function cardSize(viewport) {
+  const vw = Number(viewport?.width)
+  const vh = Number(viewport?.height)
+  const w = vw > 0 ? Math.max(CARD_MIN_W, Math.min(CARD_W, Math.floor(vw - 2 * CARD_SIDE))) : CARD_W
+  const maxH = vh > 0 ? Math.floor((vh * CARD_MAX_H_PCT) / 100) : 400
+  return { w, maxH }
+}
+
+// --- S7: the board pop-up (the work table from `board ▴`) ---
+
+/** The pop-up is this wide; the status bar and the strip are the rows under it. */
+export const POPUP_W = 620
+export const POPUP_ROW = 26
+const POPUP_CHROME = 2 + 10 + 24 + 8 // border, top padding, header row, bottom padding
+const POPUP_MAX_ROWS = 12
+const STATUS_PX = 28
+const STRIP_PX = 34
+
+/** The icon name a stage cell shows (a file in icons/), or null for an empty cell. `ask` is drawn as the white decide disc. */
+const STAGE_ICONS = { done: 'done', run: 'working', wait: 'waiting', ask: 'decide', todo: 'do', block: 'blocked' }
+export const stageIcon = stage => STAGE_ICONS[stage] ?? null
+
+/**
+ * The work rows of the one board, in their slots, top to bottom. A slot whose task joined another row is left out.
+ * A row is {key, label, title, who: {text, kind}, stages: [5 icon names or null], item, tab}.
+ */
+export function workRows(board) {
+  return (board?.tasks ?? [])
+    .filter(t => t && typeof t === 'object' && !t.joined)
+    .map(t => ({
+      key: String(t.key),
+      label: t.label ?? '',
+      title: t.title ?? '',
+      who: { text: t.who?.text ?? '', kind: t.who?.kind ?? 'dim' },
+      stages: Array.from({ length: 5 }, (_, i) => stageIcon(t.stages?.[i])),
+      item: t.item ?? null,
+      tab: t.tab ?? null,
+    }))
+}
+
+/** The Herdr space the board's coordinator runs in (its terminal's `herdr.space` label), or null when unknown. */
+export function boardSpace(board, terminals) {
+  const t = (terminals ?? []).find(x => x?.address === board?.coordinator?.terminal)
+  return labelOf(t, 'herdr.space')
+}
+
+/** The project the pop-up names in its header: the last part of the coordinator's folder. */
+export function projectName(board) {
+  const parts = String(board?.cwd ?? '')
+    .split('/')
+    .filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ''
+}
+
+/**
+ * What a click on a row does. A task whose tab is a live terminal of this board's space: focus it (workers are named by
+ * worker only, so two projects can each have a `build-1`). Otherwise, a task with an `item`: open that item's card.
+ * Otherwise nothing. {type: 'focus', terminal} | {type: 'card', item} | null. `space` is boardSpace().
+ */
+export function rowAction(row, terminals, space = null) {
+  const t = row?.tab ? (terminals ?? []).find(x => x?.name === row.tab && x.state === 'live' && labelOf(x, 'herdr.space') === space) : null
+  if (t) return { type: 'focus', terminal: t.address }
+  if (row?.item) return { type: 'card', item: row.item }
+  return null
+}
+
+/**
+ * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card}: booleans).
+ * Opening the card closes the pop-up; opening the pop-up closes the card and hands the keyboard back (`refocus`),
+ * because the card took it.
+ */
+export function overlayPlan(kind, open) {
+  const popup = Boolean(open?.popup)
+  const card = Boolean(open?.card)
+  if (kind === 'card') return { closePopup: popup, closeCard: false, refocus: false }
+  return { closePopup: popup, closeCard: card, refocus: card }
+}
+
+/** The action file for the header's wrap up / keep going: `on` is the state to set. */
+export const wrapUpAction = on => ({ action: 'wrapUp', on })
+
+/** The header's button: its text and the action it sends (the opposite of what the board has now). */
+export function wrapUpButton(board) {
+  const on = board?.summary?.wrapUp !== true
+  return { text: on ? 'wrap up' : 'keep going', action: wrapUpAction(on) }
+}
+
+/** The pop-up's height in px for `n` rows: fixed, because a popup whose root has no size draws nothing. */
+export const popupHeight = n => POPUP_CHROME + POPUP_ROW * Math.min(Math.max(n, 1), POPUP_MAX_ROWS)
+
+/** Window coordinates of the pop-up's top left: right aligned, its bottom just above the strip. */
+export function popupSpot(viewW, viewH, height) {
+  return { x: Math.max(0, viewW - POPUP_W - 8), y: Math.max(0, viewH - STATUS_PX - STRIP_PX - height - 4) }
+}
+
+/** Whether a mod command name means "open the board pop-up" (`herdr-agents.board`). */
+export const isBoardCommand = name => /(?:^|\.)board$/.test(String(name))
+
+// ---- Sound and notification (S10) ----
+
+/**
+ * New `know` and `ask` items on one board. `prevKeys` is the Set this returned last time for the board, or null the first
+ * time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
+ * Returns {keys, fresh}: every open know/ask key now, and the items in it that were not in `prevKeys` ({key, kind, text}).
+ */
+export function newArrivals(prevKeys, board) {
+  const items = openNeeds(board).filter(n => n.kind === 'know' || n.kind === 'ask')
+  const keys = new Set(items.map(n => n.key))
+  if (!prevKeys) return { keys, fresh: [] }
+  const fresh = items
+    .filter(n => !prevKeys.has(n.key))
+    .map(n => ({ key: n.key, kind: n.kind, text: firstLine(n.title) || firstLine(n.text) || n.key }))
+  return { keys, fresh }
+}
+
+/**
+ * The one notification for what arrived across boards: `arrivals` is [{terminal, fresh}] (boards with nothing new left
+ * out). One item names it; several give a count. `terminal` is where a click goes: the first board's coordinator.
+ * Returns {title, body, terminal} or null when nothing arrived.
+ */
+export function arrivalNotice(arrivals) {
+  const list = (arrivals ?? []).filter(a => a?.fresh?.length)
+  if (!list.length) return null
+  const all = list.flatMap(a => a.fresh)
+  const terminal = list.find(a => typeof a.terminal === 'string')?.terminal ?? null
+  if (all.length === 1) {
+    const [one] = all
+    return { title: one.kind === 'ask' ? 'New question' : 'New pin', body: one.text, terminal }
+  }
+  const asks = all.filter(i => i.kind === 'ask').length
+  const pinsN = all.length - asks
+  const parts = []
+  if (asks) parts.push(`${asks} ${asks === 1 ? 'question' : 'questions'}`)
+  if (pinsN) parts.push(`${pinsN} ${pinsN === 1 ? 'pin' : 'pins'}`)
+  return { title: `${all.length} new items`, body: parts.join(', '), terminal }
 }
 
 // --- S6: the band steps aside ---
