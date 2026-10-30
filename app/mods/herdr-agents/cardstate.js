@@ -7,8 +7,7 @@ import { Outbox } from './outbox.js'
  *   send, notify  as for Outbox
  *   handle        the focus handle
  * The card floats over the terminal, so nothing here touches the layout. Only the owner's click or key (cardctl.js)
- * opens or closes it. "hrd.open" is saved in shared.json like any shared value, so after a restart a card that was
- * open is still open; Esc or the esc button closes it.
+ * opens or closes it. "hrd.open" is saved in shared.json like any shared value, so clearStaleOpen forgets it at start.
  */
 export class CardState {
   constructor({ send, notify, handle }) {
@@ -32,6 +31,15 @@ export class CardState {
   undo(id) {
     this.outbox.undo(id)
   }
+}
+
+/** At start: forget a card left open by the last run (`get`/`set` are shared/setShared). Its board is likely gone and
+ *  it would draw over the prompt and take the first key. true if there was one. */
+export function clearStaleOpen(get, set) {
+  if (!get('hrd.open')) return false
+  set('hrd.open', null)
+  set('hrd.pick', null)
+  return true
 }
 
 /**

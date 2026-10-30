@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
+  CARD_MIN_W,
+  CARD_SIDE,
+  CARD_W,
   SENT_HIDE_MS,
+  canRefocus,
+  cardSize,
   UNDO_MS,
   answerAction,
   cardFor,
@@ -15,7 +20,7 @@ import {
   openState,
   readKey,
 } from '../mods/herdr-agents/model.js'
-import { CardState, onBoardsChanged } from '../mods/herdr-agents/cardstate.js'
+import { CardState, clearStaleOpen, onBoardsChanged } from '../mods/herdr-agents/cardstate.js'
 import { Outbox } from '../mods/herdr-agents/outbox.js'
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
@@ -126,9 +131,15 @@ test('cardView: a sent answer with no outcome stops counting after SENT_HIDE_MS,
 })
 
 test('openState keeps the terminal to give back while a card is already open', () => {
-  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', seq: 0 })
-  assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), { session: 's', key: 'D8', back: 't1', seq: 0 })
-  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, seq: 0 })
+  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', space: null, seq: 0 })
+  assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), {
+    session: 's',
+    key: 'D8',
+    back: 't1',
+    space: null,
+    seq: 0,
+  })
+  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, space: null, seq: 0 })
 })
 
 function outbox() {
@@ -271,11 +282,44 @@ test('the card never resizes, shows or hides a layout node: no layout.* call, no
   }
 })
 
-test('the card draws nothing when closed and a fixed-width root, no size_full, when open', () => {
-  const src = readFileSync(new URL('../mods/herdr-agents/card.js', import.meta.url), 'utf8')
-  assert.match(src, /if \(!view\) \{\n\s+ctl\.token = null\n\s+return div\(\)\n/)
-  assert.match(src, /\.id\('card'\)\.w\(CARD_W\)/)
-  assert.doesNotMatch(src, /size_full/)
+test('cardSize keeps the card inside a narrow window and caps its height, scrolling the rest', () => {
+  assert.deepEqual(cardSize({ width: 1200, height: 800 }), { w: CARD_W, maxH: 400 })
+  const narrow = cardSize({ width: 620, height: 800 })
+  assert.equal(narrow.w <= 620 - 2 * CARD_SIDE, true, 'clear of both sidebars')
+  assert.equal(cardSize({ width: 300, height: 800 }).w, CARD_MIN_W)
+  assert.equal(cardSize({ width: 1200, height: 360 }).maxH, 180)
+  assert.deepEqual(cardSize(null), { w: CARD_W, maxH: 400 }, 'no window size: the full width')
+})
+
+test('a card left open is forgotten at start, a missing one is left alone', () => {
+  const set = {}
+  const store = { 'hrd.open': { session: 's', key: 'D1' }, 'hrd.pick': { session: 's', key: 'D1' } }
+  assert.equal(
+    clearStaleOpen(
+      k => store[k],
+      (k, v) => (store[k] = v),
+    ),
+    true,
+  )
+  assert.equal(store['hrd.open'], null)
+  assert.equal(store['hrd.pick'], null)
+  assert.equal(
+    clearStaleOpen(
+      k => store[k],
+      (k, v) => (set[k] = v),
+    ),
+    false,
+  )
+  assert.deepEqual(set, {}, 'nothing is written when nothing was open')
+})
+
+test('closing hands the keyboard back only in the space the card was opened from', () => {
+  const open = openState(null, 's', 'D1', 't1', 1, 'space-a')
+  assert.equal(open.space, 'space-a')
+  assert.equal(canRefocus(open, 'space-a'), true)
+  assert.equal(canRefocus(open, 'space-b'), false)
+  assert.equal(canRefocus({ ...open, back: null }, 'space-a'), false)
+  assert.equal(openState(open, 's', 'D2', 't9', 2, 'space-b').space, 'space-a', 'a next card keeps the first space')
 })
 
 test('every open bumps the counter in the state, so reopening the same item is a new open', () => {

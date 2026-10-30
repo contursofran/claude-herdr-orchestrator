@@ -1,5 +1,5 @@
-// Makes layouts/coordinator.json from layouts/main.json: the same window with two always-present rows,
-// the pin bar under the tabs and the strip under the work area, and the answer card floating over the terminal. Written only if absent, and never switched to
+// Makes layouts/coordinator.json from layouts/main.json: the same window with the pin bar under the tabs, the strip
+// under the work area and the answer card floating over the terminal. Written only if absent, and never switched to
 // (layout.clone would switch the owner's window).
 //
 //   node app/layout.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
@@ -109,7 +109,7 @@ export function coordinatorLayout(main, version) {
   return layout
 }
 
-/** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written' or 'exists'. A file that exists keeps
+/** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists', 'updated' or 'updated-no-card' (the old card row was removed but there is no `main` block to float one over). A file that exists keeps
  *  everything but one thing: an `agents` block still on Herdr's own mod is repointed (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
@@ -125,7 +125,7 @@ export function writeCoordinatorLayout(home) {
     if (!changed) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
-    return 'updated'
+    return hasFloatingCard(layout) ? 'updated' : 'updated-no-card'
   }
   const main = JSON.parse(readFileSync(join(home, 'layouts', 'main.json'), 'utf8'))
   let version
@@ -149,7 +149,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
           ? 'Layout "coordinator" exists; only its agents list and answer card were brought up to date.'
-          : 'Layout "coordinator" exists; left as it is.',
+          : result === 'updated-no-card'
+            ? 'Layout "coordinator" exists; its agents list was updated and the old answer card row removed, but it has no "main" block to float a card over, so there is no answer card.'
+            : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {
     // Not fatal: the install carries on without the layout.

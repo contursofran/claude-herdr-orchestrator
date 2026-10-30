@@ -227,3 +227,19 @@ test('addCard adds the floating block once, keeps other floating blocks, and doe
   assert.equal(addCard(layout), false)
   assert.equal(addCard({ id: 'root', children: [] }), false)
 })
+
+test('with no main block the old card row goes, no card is added, and the result says so', t => {
+  const old = main()
+  const kids = old.children[1].children
+  kids.splice(3, 0, {
+    id: 'hrd-card',
+    type: 'block',
+    size: { px: 120 },
+    hidden: true,
+    content: { mod: 'herdr-agents', props: { role: 'card' } },
+  })
+  old.children[1].children[1].children[0].id = 'elsewhere'
+  const { home, target } = layoutHome(t, old)
+  assert.equal(writeCoordinatorLayout(home), 'updated-no-card')
+  assert.equal(JSON.stringify(JSON.parse(readFileSync(target, 'utf8'))).includes('hrd-card'), false)
+})

@@ -34,10 +34,8 @@ export const strip = {
   spin: 1400,
 }
 
-// The answer card (S5), a panel row below the terminal.
+// The answer card (S5), floating over the terminal.
 export const card = {
-  bg: '#1A1A1A',
-  border: '#3A3A3A',
   meta: '#7A7A7A',
   impact: '#8A8A8A',
   keyBorder: '#333333',

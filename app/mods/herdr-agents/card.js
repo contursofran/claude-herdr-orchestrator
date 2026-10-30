@@ -1,16 +1,17 @@
 import { div, svg } from 'gpui-kit'
-import { exec, notify, run, shared, terminals } from 'herdr'
+import { exec, notify, run, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
-import { CardState } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, doneAction, nextItem } from './model.js'
+import { CardState, clearStaleOpen } from './cardstate.js'
+import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
-/** The card's state for this copy (main.js, role `card`). */
-export const makeCardState = cx => new CardState({ send, notify, handle: cx.focus_handle() })
-
-/** The card's width in px: it floats, so it sizes to its content and needs a fixed width. */
-export const CARD_W = 560
+/** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back:
+ *  its board is likely gone and it would take the first key. */
+export function makeCardState(cx) {
+  clearStaleOpen(shared, setShared)
+  return new CardState({ send, notify, handle: cx.focus_handle() })
+}
 
 const ghost = (id, label, onClick) =>
   div()
@@ -120,7 +121,8 @@ function header(view, onClose) {
  * The owner's click or key is the only thing that opens or closes it, and it takes the keyboard.
  */
 export function card(boards, ctl, cx) {
-  const root = div().id('card').w(CARD_W).flex().flex_col().text_size(font.size)
+  const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null)
+  const root = div().id('card').w(size.w).max_h(size.maxH).flex().flex_col().text_size(font.size)
   const open = shared('hrd.open')
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
@@ -157,7 +159,7 @@ export function card(boards, ctl, cx) {
     cx.notify()
   }
 
-  const body = div().flex().flex_col().gap(12)
+  const body = div().id('card-scroll').flex().flex_col().gap(12).flex_1().min_h_0().overflow_y_scroll()
   if (view.face === 'ask') {
     body.child(div().text_color(color.soft).child(view.text))
     body.child(
@@ -258,10 +260,13 @@ export function card(boards, ctl, cx) {
       .gap(12)
       .px(16)
       .py(14)
+      .min_h_0()
+      .max_h(size.maxH)
       .child(header(view, close))
       .child(body)
       .child(
         div()
+          .flex_none()
           .text_size(11)
           .text_color(look.meta)
           .child(cardHint(view.face, { options: view.options?.length ?? 0, url: Boolean(view.url) })),

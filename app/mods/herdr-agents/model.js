@@ -653,4 +653,29 @@ export function cardKeyAction(face, keystroke, { options = 0, url = false, held 
  * The shared("hrd.open") value after opening `key` on `session`: keeps the terminal to give back, else takes `back`.
  * `seq` is a counter bumped on every open, so the card takes the keyboard on each open, even of the same item.
  */
-export const openState = (current, session, key, back, seq = 0) => ({ session, key, back: current?.back ?? back ?? null, seq })
+export const openState = (current, session, key, back, seq = 0, space = null) => ({
+  session,
+  key,
+  back: current?.back ?? back ?? null,
+  space: current?.back ? (current.space ?? null) : space,
+  seq,
+})
+
+/** Whether closing the card may hand the keyboard to `open.back`: only while the owner is still in the space it was
+ *  opened from (focusing it from another space would jump there). */
+export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
+
+/** The card floats over the main block, so it is sized from the window: `CARD_W` at most, and clear of the sidebars
+ *  (`SIDE` px each side) when the window is narrow; at most `CARD_MAX_H_PCT`% of the window's height, the rest scrolls.
+ *  `viewport` is {width, height}; without one the card keeps its full width and a modest height. */
+export const CARD_W = 560
+export const CARD_MIN_W = 220
+export const CARD_SIDE = 170
+export const CARD_MAX_H_PCT = 50
+export function cardSize(viewport) {
+  const vw = Number(viewport?.width)
+  const vh = Number(viewport?.height)
+  const w = vw > 0 ? Math.max(CARD_MIN_W, Math.min(CARD_W, Math.floor(vw - 2 * CARD_SIDE))) : CARD_W
+  const maxH = vh > 0 ? Math.floor((vh * CARD_MAX_H_PCT) / 100) : 400
+  return { w, maxH }
+}
