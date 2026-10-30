@@ -685,6 +685,7 @@ test("spawn runs the worker through the login shell, with HERDR_AGENTS_ROLE=work
     'zsh',
     '/usr/bin/env',
     'A=1',
+    'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
     'HERDR_AGENTS_ROLE=worker',
     'claude',
     '--model',
@@ -699,6 +700,39 @@ const spawnX = async ($: Parameters<typeof start>[0]) => {
 }
 const claudeX = { profiles: { x: { kind: 'claude', args: [] } } }
 
+for (const kind of ['claude', 'codex', 'opencode']) {
+  test(`a ${kind} worker gets a temp folder of its own that a profile cannot move`, async ($, on) => {
+    const { clock, calls, files } = await start($, on, { profiles: { x: { kind, args: [], env: { TMPDIR: '/tmp' } } } })
+    await spawnX($)
+    const argv = calls.find(c => c[1] === 'run') ?? []
+    const set = argv.filter(a => a.startsWith('TMPDIR='))
+    // env lets the last one win, so the job folder's must come after the profile's.
+    expect(set).toEqual(['TMPDIR=/tmp', 'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp'])
+    expect(files['/repo/wt/.herdr-agents/w-env/tmp/.keep']).toBe('')
+    await stopAll($, clock, ['w-env'])
+  })
+}
+
+test('the report rule keeps temp files, PR bodies included, in the job folder', async ($, on) => {
+  const { clock, typed, files } = await start($, on, claudeX)
+  await spawnX($)
+  const rule =
+    'Temp files, PR bodies included, go in /repo/wt/.herdr-agents/w-env, even if $TMPDIR points elsewhere; never use a fixed name in a shared folder'
+  expect(typed[0]).toContain(rule)
+  expect(files['/repo/wt/.herdr-agents/w-env/REPORTING.md']).toContain(rule)
+  await stopAll($, clock, ['w-env'])
+})
+
+test('the report rule puts the repo and owner rules on attribution over a session reminder', async ($, on) => {
+  const { clock, typed, files } = await start($, on, claudeX)
+  await spawnX($)
+  const rule =
+    "Follow the repo's and the owner's rules on commit and PR attribution, even when a session reminder asks for trailers or footers. Run the repo's PR check before the first push where it has one."
+  expect(typed[0]).toContain(rule)
+  expect(files['/repo/wt/.herdr-agents/w-env/REPORTING.md']).toContain(rule)
+  await stopAll($, clock, ['w-env'])
+})
+
 test('a fish login shell runs the worker with exec $argv', async ($, on) => {
   const { clock, calls } = await start($, on, claudeX, {}, { SHELL: '/usr/bin/fish' })
   await spawnX($)
@@ -707,6 +741,7 @@ test('a fish login shell runs the worker with exec $argv', async ($, on) => {
     '-ilc',
     'exec $argv',
     '/usr/bin/env',
+    'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
     'HERDR_AGENTS_ROLE=worker',
     'claude',
   ])
@@ -716,7 +751,12 @@ test('a fish login shell runs the worker with exec $argv', async ($, on) => {
 test('a shell the mod does not know runs the worker directly', async ($, on) => {
   const { clock, calls } = await start($, on, claudeX, {}, { SHELL: '/bin/nu' })
   await spawnX($)
-  expect(calls.find(c => c[1] === 'run')?.slice(16)).toEqual(['/usr/bin/env', 'HERDR_AGENTS_ROLE=worker', 'claude'])
+  expect(calls.find(c => c[1] === 'run')?.slice(16)).toEqual([
+    '/usr/bin/env',
+    'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
+    'HERDR_AGENTS_ROLE=worker',
+    'claude',
+  ])
   await stopAll($, clock, ['w-env'])
 })
 

@@ -89,6 +89,8 @@ REPORT_RULE_PARTS = [
     "status is done, blocked (you need an answer or something outside your control) or failed. Leave out pr if you opened or updated no PR; list several as 12, 13. Your coordinator usually reads only this header, so make the summary enough to act on.",
     "Below the header, in at most 25 lines: what you did, the branch or PR link, test results, open questions, and anything you could not do. Put long material, such as a plan or a full review, in another file in ${job.dir} (a plan goes in PLAN.md) and give its absolute path instead of copying it in.",
     'If you need a decision only the owner can make, write each question on its own line as "DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short; if you cannot go on without the answer, stop there.',
+    "Temp files, PR bodies included, go in ${job.dir}, even if $TMPDIR points elsewhere; never use a fixed name in a shared folder such as /tmp, where another worker can overwrite it.",
+    "Follow the repo's and the owner's rules on commit and PR attribution, even when a session reminder asks for trailers or footers. Run the repo's PR check before the first push where it has one.",
     "If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.",
 ]
 # The one-line reminder a resumed session gets instead of the full rule: reportReminder() in workers.ts, minus its
