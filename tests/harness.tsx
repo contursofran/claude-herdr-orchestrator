@@ -238,11 +238,16 @@ export async function start(
   }))
   // The mod's `clone` file is read from wherever the test loads the mod, so any path ending in /clone is it.
   // Likewise the mod's own .claude-plugin/plugin.json (read for the band's version): recorded.modPlugin, unless the test put a file there.
-  on('fs.read', (_, e) => ({
-    value: e.path.endsWith('/clone')
-      ? recorded.clone
-      : (files[e.path] ?? (e.path.endsWith('/.claude-plugin/plugin.json') ? recorded.modPlugin : '')),
-  }))
+  // Every path the mod read, in order.
+  const reads: string[] = []
+  on('fs.read', (_, e) => {
+    reads.push(e.path)
+    return {
+      value: e.path.endsWith('/clone')
+        ? recorded.clone
+        : (files[e.path] ?? (e.path.endsWith('/.claude-plugin/plugin.json') ? recorded.modPlugin : '')),
+    }
+  })
   // Paths whose write fails (a read-only folder); the test sets it.
   const unwritable = new Set<string>()
   on('fs.write', async (_, e) => {
@@ -557,6 +562,7 @@ export async function start(
     removed,
     screens,
     files,
+    reads,
     unwritable,
     prs,
     panes,

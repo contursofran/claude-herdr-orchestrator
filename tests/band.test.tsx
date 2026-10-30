@@ -5,6 +5,18 @@ import { BAND, row, spawn, start, stopAll, test } from './harness'
 // The band above the prompt: what pin_for_owner pins at the top, the workers, and #123 links.
 // Run with `claude plugin test .`.
 
+test('a tick reads the settings file twice at most: for the state file and for the band', async ($, on) => {
+  const { clock, reads } = await start($, on)
+  await spawn($, ['w-busy'])
+  await clock.advance(3000)
+  const settings = () => reads.filter(path => path.endsWith('/.claude/herdr-agents.json')).length
+  const before = settings()
+  await clock.advance(10 * 3000)
+  expect(settings() - before).toBeGreaterThan(0)
+  expect(settings() - before).toBeLessThanOrEqual(10 * 2)
+  await stopAll($, clock, ['w-busy'])
+})
+
 test('a pinned to-do shows at the top, and Done unpins it and tells the coordinator', async ($, on) => {
   const { clock, submitted } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Merge client #565', from: 'app-client#541' })
