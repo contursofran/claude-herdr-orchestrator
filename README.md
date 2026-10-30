@@ -76,6 +76,12 @@ Off by default. When agents do the building, you see a lot of new ideas go by wi
 
 What the sidebar shows is also kept in `~/.herdr-agents/board/<session id>.json`, rewritten when it changes and removed when the session ends, so an app outside Claude Code (such as [contr](https://github.com/contursofran/contr), a native herdr client) can draw it. The app presses the sidebar's buttons by dropping a JSON file in `<session id>.actions/` beside it: answer a decision, tick or dismiss a to-do, clear done, wrap up or keep going. The coordinator gets the same prompts as from a click in the sidebar. The format is in [docs/board-schema.json](docs/board-schema.json).
 
+### A Herdr app mod (work in progress)
+
+`app/` holds a mod for the [Herdr app](https://herdr.dev) that will draw the board inside the window: a pin bar under the tabs and a needs-you strip under the terminal, for the coordinator of the space you are in (tracking issue [#93](https://github.com/contursofran/claude-herdr-orchestrator/issues/93)). Today it finds the right board as focus moves and draws one line in each row (the folder and how many items are open); the rest comes slice by slice.
+
+`./install.sh` installs it only when the app's folder exists (`$HERDR_APP_HOME`, default `~/.config/herdr-app`). It copies the mod, adds a layout called `coordinator` next to `main` (a copy of `main` with the two rows) and adds the mod's keys without replacing any key you use. It never switches your layout. To try it, switch yourself: your layout-switch key (`ctrl-shift-l` by default, `cmd-shift-l` in a Mac keys file) or `herdr-app do layout.switch --name coordinator`; to go back, `herdr-app do layout.switch --name main`. The board's `coordinator.terminal` field (the hc terminal the coordinator runs in) tells the mod which board is which, so sessions started before it was added draw empty rows until they reload. Tests: `npm run test:app`.
+
 ## What's in the repo
 
 - **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.
