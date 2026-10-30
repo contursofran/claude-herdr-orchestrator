@@ -73,6 +73,7 @@ export class PinCtl {
       slim: Boolean(shared('hrd.sheet')), // the sheet is open: the row goes slim at the same height
     })
     this.bar = state
+    this.shownAt = view.current?.at ?? null
     if (!board) {
       this.shown = null
       return view
