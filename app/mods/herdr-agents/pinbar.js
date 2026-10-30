@@ -152,7 +152,8 @@ export function pinbar(board, ui) {
       .child(ghost('pin-all', 'all pins', (_e, cx) => ui.onAll(cx)))
       .child(
         div()
-          .id('pin-done')
+          // One id per pin: a press on this pin's × is no click on the pin that replaced it (#211).
+          .id(`pin-done-${pin.key}`)
           .tooltip('Done')
           .flex_none()
           .size(28)
@@ -297,7 +298,8 @@ export function pinsView(gone, ctl, board = null) {
   const now = Date.now()
   noteRows(
     ctl,
-    ordered.map(pin => pin.key),
+    // The read state is part of a row: `mark read` going away moves `done` under the cursor (#205).
+    ordered.map(pin => `${pin.key}:${pin.unread ? 'unread' : 'read'}`),
     now,
   )
   // Buttons fire on the press, so one aimed at a row that just moved up would hit the row now under the cursor: ignore it.
