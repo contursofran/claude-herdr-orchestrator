@@ -1679,3 +1679,61 @@ test('a header verdict reaches the coordinator on the prompt tag', async ($, on)
   )
   await stopAll($, clock, ['w-busy'])
 })
+
+// A worker that carries on after its report (#111): the coordinator's message crossed with the report.
+
+const reportW = async ($: Parameters<typeof start>[0], s: Awaited<ReturnType<typeof start>>, text = 'Done.') => {
+  await spawnBusy($, 'builder')
+  const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\n${text}`
+  await s.finish('w-busy')
+  await s.clock.advance(BATCH_MS)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported' })
+  return token
+}
+
+test('a worker that writes WAIT.json after its report is woken when the check passes', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 0 }])
+  await s.clock.advance(2 * 60_000)
+  expect(s.typed.length).toBe(before + 1)
+  expect(s.typed.at(-1)).toContain('Your wait is over')
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'running' })
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('the idle close leaves a reported worker with a WAIT.json open', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":30,"max":720}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }])
+  await s.clock.advance(40 * 60_000)
+  expect(s.closed).toEqual([])
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a reported worker that writes a new RESULT.md after its report has it delivered', async ($, on) => {
+  const s = await start($, on)
+  const token = await reportW($, s, 'First draft.')
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nFinal report.`
+  await s.clock.advance(2 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.filter(t => t.includes('Final report.'))).toHaveLength(1)
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('the coordinator hears when a tab is closed with a WAIT.json still waiting', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":30,"max":720}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }])
+  await s.clock.advance(60_000)
+  s.gone.add('w-busy')
+  await s.kill('w-busy')
+  await s.clock.advance(40 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted.some(t => /tab is gone while .*WAIT\.json was still waiting/.test(t))).toBe(true)
+})
