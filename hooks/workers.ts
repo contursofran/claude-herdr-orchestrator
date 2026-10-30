@@ -102,7 +102,16 @@ export function reportReminder(job: Job) {
 export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false, force = false) {
   const token = crypto.randomUUID().slice(0, 8)
   seenReport.delete(job.name)
-  const next: Job = { ...job, token, status: 'running', endedAt: undefined, tail: undefined }
+  // The last turn's report is not this turn's: it goes with the status it set.
+  const next: Job = {
+    ...job,
+    token,
+    status: 'running',
+    endedAt: undefined,
+    tail: undefined,
+    reportStatus: undefined,
+    reportFile: undefined,
+  }
   await saveJob($, next)
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
   // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
@@ -232,9 +241,20 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
     if (status === 'blocked' && job.tail === 'early') await blockedAfterReport($, job)
     return
   }
-  // It works again (the owner answered): its turn's end is the one to wait for next.
-  if (status === 'working') return arm($, job, 'finish')
+  // It works again (the owner answered): it is no longer blocked, and its turn's end is the one to wait for next.
+  if (status === 'working') return arm($, await answered($, job), 'finish')
   await endTail($, job)
+}
+
+// A blocked report (tail 'blocked') whose worker works again was answered in its tab: it is no longer
+// blocked (its turn is still on, so the watch stays as an early report's). A job with tail 'early' is left
+// as it is: its worker working means the turn it reported in is still on, not that anyone answered it.
+// Returns the job as it is now.
+async function answered($: EngineInterface, job: Job) {
+  const { after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && j.tail === 'blocked' ? { ...j, tail: 'early', headerStatus: undefined } : undefined,
+  )
+  return after ?? job
 }
 
 // A worker that reported early, then waits at an approval or question: the coordinator is told once.
@@ -389,6 +409,7 @@ async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | unde
   lastStatus.set(job.name, status)
   if (status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
   if (status !== 'working' && status !== 'blocked' && status !== 'error') return await endTail($, job)
+  if (status === 'working') job = await answered($, job)
   if (!armed.has(job.name)) arm($, job, status === 'working' ? 'finish' : 'resume')
 }
 
@@ -594,6 +615,7 @@ export async function deliver(
           tail,
           reportFile,
           reportStatus: status,
+          headerStatus: header?.status,
         }
       : undefined,
   )
@@ -962,7 +984,15 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
       return { result: `Stopped ${e.worker} while it was starting.${await belowTarget($)}` }
     }
   }
-  await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now(), tail: undefined })
+  // A worker that delivered a report keeps its status and file; one that did not is stopped.
+  // Either way it leaves Blocked at once.
+  await patchJob($, job.name, {
+    status: 'reported',
+    ...(job.status === 'running' || !job.reportFile ? { reportStatus: 'stopped' } : {}),
+    headerStatus: undefined,
+    endedAt: await $.clock.now(),
+    tail: undefined,
+  })
   try {
     await closeTerminal($, job.name)
   } catch (err) {

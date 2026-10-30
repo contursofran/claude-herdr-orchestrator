@@ -283,3 +283,17 @@ test('a starting worker is a running stage (◐) on its task row', () => {
   expect(task!.tab).toBe('b-7')
   expect(task!.isFinished).toBe(false)
 })
+
+test('a reported worker that waits blocked is a blocked stage on its task row, not a finished one', () => {
+  const [task] = groupTasks({
+    jobs: [{ name: 'b-7', profile: 'builder', cwd: '/x', dir: '/x', startedAt: 1, status: 'reported', endedAt: 5, refs: [7] }],
+    rows: [{ name: 'b-7', profile: 'builder', state: 'blocked', startedAt: 1 }],
+    items: [],
+    prs: {},
+    now: 10,
+    repoOf: () => 'acme/app',
+  })
+  expect(task!.stages[1]).toBe('block')
+  expect(task!.isFinished).toBe(false)
+  expect(task!.who.text).toBe('blocked')
+})

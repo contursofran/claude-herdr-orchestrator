@@ -215,3 +215,50 @@ test('mergeBlock replaces the block and keeps the rest byte for byte; without ma
   // A stray start marker with no end of its own is left alone.
   expect(mergeBlock(`${AUTO_START}\nkeep\n`, block)).toBe(`${AUTO_START}\nkeep\n${block}\n`)
 })
+
+test('a worker stopped after it reported keeps its report line', async ($, on) => {
+  const { clock, files, emit, typed } = await start($, on)
+  files[STATE] = '# S\n'
+  await spawn($, ['w-a'])
+  await emit('w-a', 'working')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
+  await clock.advance(12_000)
+  await emit('w-a', 'done')
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
+  await clock.advance(3000)
+  expect(files[STATE]).toMatch(/### Recent reports\n- \S+ \S+ w-a \(reviewer\) done: \S+RESULT-\S+\.md\n/)
+  expect(files[STATE]).not.toContain('stopped:')
+})
+
+test('a worker stopped before it reported is listed as stopped, not as a report', async ($, on) => {
+  const { clock, files } = await start($, on)
+  files[STATE] = '# S\n'
+  await spawn($, ['w-a'])
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
+  await clock.advance(3000)
+  expect(files[STATE]).toMatch(/### Recent reports\n- \S+ \S+ w-a \(reviewer\) stopped: no report file\n/)
+  expect(files[STATE]).not.toContain('reported: no report file')
+})
+
+test('a worker messaged after its report is under Running, and stopped before it answers, not shown with the old report', async ($, on) => {
+  const { clock, files, emit, typed } = await start($, on)
+  files[STATE] = '# S\n'
+  await spawn($, ['w-a'])
+  await emit('w-a', 'working')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] = `<!-- report ${token} -->\nReviewed: approve.`
+  await clock.advance(12_000)
+  await emit('w-a', 'done')
+  await clock.advance(3000)
+  expect(files[STATE]).toMatch(/### Running\n- none\n/)
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'One more thing.' })
+  await emit('w-a', 'working')
+  await clock.advance(3000)
+  expect(files[STATE]).toMatch(/### Running\n- w-a .* · running since .*\n/)
+  expect(files[STATE]).toMatch(/### Recent reports\n- none\n/)
+  // Stopped before it answers: the earlier report's status and file are not shown as this turn's.
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' })
+  await clock.advance(3000)
+  expect(files[STATE]).toMatch(/### Recent reports\n- \S+ \S+ w-a \(reviewer\) stopped: no report file\n/)
+})

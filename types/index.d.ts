@@ -31,8 +31,10 @@ export type Job = {
   branch?: string
   // the file deliver wrote for the last report (RESULT-<token>.md or SCREEN-<token>.txt), and its status
   reportFile?: string
-  // also 'failed' (it did not start) and 'stopped' (stopped while it started)
+  // also 'failed' (it did not start) and 'stopped' (stopped before it delivered a report)
   reportStatus?: string
+  // the status in the last report's header (done, blocked, failed), when it had one; reportStatus is deliver's
+  headerStatus?: string
 }
 
 // `every` and `max` in minutes; `lastAt` is when `check` last ran.
