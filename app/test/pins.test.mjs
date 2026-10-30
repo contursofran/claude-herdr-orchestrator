@@ -16,6 +16,7 @@ import {
   pinsOverlayEmpty,
   pinsSpot,
   readKey,
+  settleSent,
   stillOpen,
 } from '../mods/herdr-agents/model.js'
 
@@ -71,6 +72,17 @@ test('doneRequests: every usable request of the list, in order; anything else is
   ])
   assert.deepEqual(doneRequests(null), [])
   assert.deepEqual(doneRequests({ session: 's', key: 'K1', n: 'left by an older build' }), [])
+})
+
+test('settleSent: a refused Done on an item the board shows closed is no failure; an open item or an answer still is', () => {
+  const refused = { id: 'a1', ok: false, message: 'K1 is not an open to-do' }
+  const done = { id: 'a1', session: 's', key: 'K1', action: { action: 'done', key: 'K1' } }
+  const closed = [{ session: 's', needs: [], actions: [refused] }]
+  assert.deepEqual(settleSent([done], closed), { sent: [], failed: [] })
+  const openBoard = [{ session: 's', needs: [know('K1')], actions: [refused] }]
+  assert.deepEqual(settleSent([done], openBoard).failed, [{ id: 'a1', message: 'K1 is not an open to-do' }])
+  const answer = { ...done, action: { action: 'answer', key: 'K1', answer: 'yes' } }
+  assert.deepEqual(settleSent([answer], closed).failed, [{ id: 'a1', message: 'K1 is not an open to-do' }])
 })
 
 test('fitHeight limits an overlay to the window, keeps a minimum, and leaves it alone with no window size', () => {

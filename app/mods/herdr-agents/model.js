@@ -398,7 +398,8 @@ export function hiddenKeys(queue, sent, now = null) {
 
 /**
  * Sent actions after the boards moved on: {sent, failed}. One is settled (dropped) when its board is gone, when the board
- * reports its outcome, or when its item is no longer open. A reported `ok:false` goes to `failed` with the message.
+ * reports its outcome, or when its item is no longer open. A reported `ok:false` goes to `failed` with the message,
+ * unless it is a Done on an item the board shows closed: the plugin refuses that, and what the owner asked for is true.
  */
 export function settleSent(sent, boards) {
   const keep = []
@@ -406,12 +407,12 @@ export function settleSent(sent, boards) {
   for (const s of sent) {
     const board = (boards ?? []).find(b => b.session === s.session)
     if (!board) continue
+    const open = (board.needs ?? []).some(n => n.key === s.key && n.isOpen === true)
     const outcome = (board.actions ?? []).find(a => a.id === s.id)
     if (outcome) {
-      if (outcome.ok === false) failed.push({ id: s.id, message: outcome.message ?? '' })
+      if (outcome.ok === false && (s.action?.action !== 'done' || open)) failed.push({ id: s.id, message: outcome.message ?? '' })
       continue
     }
-    const open = (board.needs ?? []).some(n => n.key === s.key && n.isOpen === true)
     if (open) keep.push(s)
   }
   return { sent: keep, failed }
@@ -1021,15 +1022,18 @@ export function barArea(root, zoom = 1) {
  * Where the overlay goes. `bar` is the pin bar's bounds in the window ({x, y, width, height}) as a click reported them;
  * without them `area` (barArea) places it, and with neither the work area is taken to lie between the sidebars. The panel is as wide as the bar, right under it; the
  * popover is right aligned under it.
+ * `x` and `y` are window px, the overlay's width is drawn at the zoom: without bounds, the width is divided by it.
+ * The bar's bounds keep their numbers: a drawn window has to confirm their units first.
  */
-export function pinsSpot(view, bar, viewport, area = null) {
+export function pinsSpot(view, bar, viewport, area = null, zoom = 1) {
   const ok = Number(bar?.width) > 0
   const x = ok ? bar.x : (area?.x ?? PANEL_FALLBACK_SIDE)
   const y = ok ? bar.y + bar.height : (area?.y ?? PANEL_FALLBACK_TOP)
   const side = area ? area.x + area.right : 2 * PANEL_FALLBACK_SIDE
-  const width = ok ? bar.width : Math.max(CARD_MIN_W, Number(viewport?.width) - side || CARD_W)
+  const width = ok ? bar.width : Math.max(CARD_MIN_W, atZoom(Number(viewport?.width) - side, zoom) || CARD_W)
   if (view === 'panel') return { x, y, width }
-  return { x: Math.max(0, x + width - PINS_ALL_W - 8), y: y + 4, width: PINS_ALL_W }
+  const scale = !ok && zoom > 0 ? zoom : 1
+  return { x: Math.max(0, x + (width - PINS_ALL_W) * scale - 8), y: y + 4, width: PINS_ALL_W }
 }
 
 /** Done from the overlay: a list of requests in shared("hrd.doneReq"), so two in one tick both stay; the pin bar copy empties

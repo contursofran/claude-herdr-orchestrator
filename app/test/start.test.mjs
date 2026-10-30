@@ -372,6 +372,20 @@ test('an open popover closes when its last pin is resolved', async () => {
   assert.equal(state.store['hrd.pins'], null)
 })
 
+test("a watcher closing its overlay hands the keyboard back through the close call, and leaves a newer overlay's id", async () => {
+  const { copy, write } = await startPinsWatch({ view: 'all', list: twoPins })
+  state.store['hrd.pins'] = 'o10'
+  await write([])
+  assert.deepEqual(state.closed, ['o9'])
+  assert.equal(state.store['hrd.pins'], 'o10')
+  state.focused = { terminal: null, space: 'a' }
+  state.ran = []
+  await copy.close()
+  assert.deepEqual(state.ran, [['pane.focus', { terminal: 't7' }]])
+  state.focused = null
+  state.ran = null
+})
+
 test('an open drop panel closes when its pin is resolved, not when another is', async () => {
   const { counts, write } = await startPinsWatch({ view: 'panel', id: 's:K1', list: twoPins })
   await write(['K1'])

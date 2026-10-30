@@ -36,7 +36,7 @@ export function openPins(session, list, view, { id = null, bar = null, back = nu
   if (plan.closePins) closePins()
   if (plan.closeSheet) closeSheet(plan.refocus)
   const viewport = typeof window !== 'undefined' ? window.viewport_size?.() : null
-  const spot = pinsSpot(view, bar, viewport, barArea(layout(), settings()?.zoom))
+  const spot = pinsSpot(view, bar, viewport, barArea(layout(), settings()?.zoom), settings()?.zoom)
   const pin = list.find(p => p.id === id)
   if (view === 'panel' && !pin) return
   const height = fitHeight(
@@ -52,7 +52,7 @@ export function openPins(session, list, view, { id = null, bar = null, back = nu
     width: view === 'panel' ? spot.width : PINS_ALL_W,
     height,
     at: { x: spot.x, y: spot.y },
-    // The pins go in the props: the overlay is a new copy of the mod and reads no board of its own (it would start late).
+    // The pins go in the props: the overlay is a new copy of the mod, and its own board read would start late.
     props: {
       role: 'pins',
       view,

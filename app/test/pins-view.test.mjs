@@ -284,3 +284,27 @@ test('openPins with no bar bounds places the panel from the layout', () => {
   assert.deepEqual(app.opened[0].at, { x: 269, y: 80 })
   assert.equal(app.opened[0].width, 1280 - 269)
 })
+
+for (const [view, x, width] of [
+  ['panel', 538, (1280 - 538) / 2],
+  ['all', 1280 - 470 * 2 - 8, 470],
+]) {
+  test(`openPins at zoom 2 with no bar bounds keeps the ${view} inside the window`, () => {
+    globalThis.window = { viewport_size: () => ({ width: 1280, height: 800 }) }
+    app.settings = { zoom: 2 }
+    app.layout = {
+      type: 'row',
+      children: [
+        { id: 'sidebar', type: 'column', size: { px: 269 }, children: [] },
+        { type: 'column', children: [{ type: 'block', size: { px: 38 }, content: { props: { role: 'pinbar' } } }] },
+      ],
+    }
+    openPins('s', list, view, { id: 's:K1' })
+    app.layout = null
+    app.settings = { zoom: 1 }
+    const o = app.opened.at(-1)
+    assert.deepEqual(o.at, { x, y: view === 'panel' ? 76 : 80 })
+    assert.equal(o.width, width)
+    assert.ok(o.at.x + o.width * 2 <= 1280)
+  })
+}

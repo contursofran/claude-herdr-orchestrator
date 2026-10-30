@@ -193,7 +193,8 @@ function requestDone(pin, session) {
 
 /** This overlay closes itself: main.js's close() then hands the keyboard back. */
 export function closePinsOverlay() {
-  setShared('hrd.pins', null)
+  // A replaced overlay can still fire while it closes: the id in shared is then the new one's.
+  if (shared('hrd.pins') === props()?.overlay) setShared('hrd.pins', null)
   try {
     closeOverlay(props()?.overlay)
   } catch {} // the app's own Esc may have closed it first
