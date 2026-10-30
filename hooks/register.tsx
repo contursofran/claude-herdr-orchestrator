@@ -36,7 +36,10 @@ export const register: Register = on => {
     // Each register waits 8 s for its tool to appear, which never happens under an --agent whose tools
     // line leaves it out, and Claude starts no turn until this hook is done: 56 s for a builder's first
     // prompt. The coordinator's model needs its tools from the first prompt; a worker can get them later.
-    if (isWorker) void registerTools($).catch(() => {})
+    if (isWorker)
+      void registerTools($).catch(err =>
+        $.ui.toast(`herdr-agents: registering its tools failed (${err instanceof Error ? err.message : String(err)})`),
+      )
     else await registerTools($)
     await registerCommands($)
     const restored = await restoreJobs($)

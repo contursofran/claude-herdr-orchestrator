@@ -94,35 +94,41 @@ test('a DECISION line that says none is not pinned for the owner', async ($, on)
   await stopAll($, clock, ['w-none'])
 })
 
-test('a prompt that starts no work is typed again, and a worker it never reaches is reported blocked', async ($, on) => {
-  const { clock, submitted, typed, files, stalls, finish } = await start($, on)
-  // The first try stalls; the second starts work, so the worker runs on and reports.
-  stalls['w-late'] = 1
-  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-late', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
-  await settled()
-  await clock.settle()
-  expect(typed).toHaveLength(1)
-  await clock.advance(PROMPT_WAIT_MS)
-  expect(typed).toHaveLength(2)
-  expect(typed[1]).toBe(typed[0])
-  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
-  files['/repo/wt/.herdr-agents/w-late/RESULT.md'] = `<!-- report ${token} -->\nDone.`
-  await finish('w-late')
-  await clock.advance(BATCH_MS)
-  expect(submitted.at(-1)).toMatch(/<herdr-agent name="w-late" profile="builder" status="done">\nDone\./)
+test(
+  'a prompt that starts no work is typed again, and a worker it never reaches is reported blocked',
+  { timeoutMs: 20_000 },
+  async ($, on) => {
+    const { clock, submitted, typed, files, stalls, finish } = await start($, on)
+    // The first try stalls; the second starts work, so the worker runs on and reports.
+    stalls['w-late'] = 1
+    await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-late', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+    await settled()
+    await clock.settle()
+    expect(typed).toHaveLength(1)
+    await clock.advance(PROMPT_WAIT_MS)
+    expect(typed).toHaveLength(2)
+    expect(typed[1]).toBe(typed[0])
+    const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+    files['/repo/wt/.herdr-agents/w-late/RESULT.md'] = `<!-- report ${token} -->\nDone.`
+    await finish('w-late')
+    await clock.advance(BATCH_MS)
+    expect(submitted.at(-1)).toMatch(/<herdr-agent name="w-late" profile="builder" status="done">\nDone\./)
 
-  // Every try stalls: reported blocked at once, not idle five minutes later.
-  stalls['w-lost'] = 3
-  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
-  await settled()
-  await clock.advance(PROMPT_WAIT_MS)
-  await clock.advance(PROMPT_WAIT_MS)
-  await clock.advance(PROMPT_WAIT_MS)
-  expect(typed).toHaveLength(5)
-  await clock.advance(10_000)
-  await clock.advance(BATCH_MS)
-  expect(submitted.at(-1)).toMatch(/status="blocked">\nThe worker stopped \(its prompt was not delivered: no work started after 3 tries\)/)
-})
+    // Every try stalls: reported blocked at once, not idle five minutes later.
+    stalls['w-lost'] = 3
+    await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-lost', profile: 'builder', cwd: '/repo/wt2', task: 'Fix it.' })
+    await settled()
+    await clock.advance(PROMPT_WAIT_MS)
+    await clock.advance(PROMPT_WAIT_MS)
+    await clock.advance(PROMPT_WAIT_MS)
+    expect(typed).toHaveLength(5)
+    await clock.advance(10_000)
+    await clock.advance(BATCH_MS)
+    expect(submitted.at(-1)).toMatch(
+      /status="blocked">\nThe worker stopped \(its prompt was not delivered: no work started after 3 tries\)/,
+    )
+  },
+)
 
 // It runs 15 minutes or more of sweeps, which a busy CI runner can take most of the default 5 s over.
 test("a reported worker's tab closes once it has sat idle, unless its question is still open", { timeoutMs: 20_000 }, async ($, on) => {

@@ -13,7 +13,7 @@ export const BAND = {
 } as const
 
 // What the engine's tool registrations wait for, if a test sets it before start(): a real one waits 8 s for its tool.
-export const registering: { until?: Promise<void> } = {}
+export const registering: { until?: Promise<void>; fail?: string } = {}
 
 // The clock of the session start() began last: tests run one at a time.
 let latest: MockClock | undefined
@@ -187,6 +187,7 @@ export async function start(
   const toolCalls: string[] = []
   on('tool.register', async (_, e) => {
     await registering.until
+    if (registering.fail) throw new Error(registering.fail)
     tools[e.name] = e
     toolCalls.push(e.name)
     return { value: { tool: e.name } }
@@ -408,9 +409,9 @@ export async function start(
         const word = noStatus.has(t.name) ? null : (status[t.name] ?? null)
         if (stalls[t.name]) {
           stalls[t.name]! -= 1
-          return ok({ started: false, status: word, turn: 0 })
+          return ok({ started: false, status: word, turn: turns[t.name] ?? 0 })
         }
-        return ok({ started: word === null ? null : true, status: word, turn: 0 })
+        return ok({ started: word === null ? null : true, status: word, turn: turns[t.name] ?? 0 })
       }
       if (sub === 'keys') {
         if (!t) return missing()
