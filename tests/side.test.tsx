@@ -1,8 +1,8 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
 import { briefRefs, groupTasks } from '../hooks/tasks'
 import type { Job } from '../types'
-import { BAND, command, settled, start, stopAll, until } from './harness'
+import { BAND, command, settled, start, stopAll, test, until } from './harness'
 
 // The sidebar (/hrd-side): work by issue or PR, what needs the person, and the answer box.
 

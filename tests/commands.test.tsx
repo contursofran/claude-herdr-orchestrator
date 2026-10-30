@@ -1,5 +1,5 @@
-import { expect, test } from 'claude-code/testing'
-import { command, start } from './harness'
+import { expect } from 'claude-code/testing'
+import { command, start, test } from './harness'
 
 // The slash commands: their prefix and the guide.
 

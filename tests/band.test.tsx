@@ -1,6 +1,6 @@
-import { expect, test } from 'claude-code/testing'
+import { expect } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
-import { BAND, row, spawn, start, stopAll } from './harness'
+import { BAND, row, spawn, start, stopAll, test } from './harness'
 
 // The band above the prompt: what pin_for_owner pins at the top, the workers, and #123 links.
 // Run with `claude plugin test .`.
