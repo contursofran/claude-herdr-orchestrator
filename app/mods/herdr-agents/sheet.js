@@ -301,7 +301,7 @@ export function sheetBlock(boards, ctl, cx) {
     .text_size(font.size)
     .on_mouse_down_out((e, cx) => {
       // As the card: the keyboard stays on what was pressed, and any button dismisses.
-      if (!pastFrame(e)) return
+      if (!pastFrame(e, settings()?.zoom)) return
       noteDismissed('sheet', e, open)
       closeSheet(false)
       cx.notify()

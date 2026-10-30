@@ -104,14 +104,16 @@ test("a press on Herdr's frame round the card or sheet is a press on the surface
   assert.ok(app.store['hrd.sheet'])
 })
 
-test('pastFrame: past each edge of the frame, on it, and with no place given', () => {
-  const at = (x, y) => pastFrame({ local_position: { x, y }, bounds: { width: 100, height: 50 } })
-  assert.equal(at(-6, 0), false)
-  assert.equal(at(-7, 0), true)
+test('pastFrame: past the frame above and below only, on it, scaled by zoom, and with no place given', () => {
+  const at = (x, y, zoom) => pastFrame({ local_position: { x, y }, bounds: { width: 100, height: 50 } }, zoom)
+  assert.equal(at(0, -6), false)
   assert.equal(at(0, -7), true)
-  assert.equal(at(107, 0), true)
+  assert.equal(at(50, 56), false)
   assert.equal(at(0, 57), true)
-  assert.equal(at(106, 56), false)
+  assert.equal(at(-1, 0), true)
+  assert.equal(at(101, 0), true)
+  assert.equal(at(0, -3, 2), false)
+  assert.equal(at(0, -4, 2), true)
   assert.equal(pastFrame({}), true)
 })
 
@@ -134,6 +136,16 @@ test('strip segment: a press on another item moves the card there, keeping the t
   assert.equal(app.store['hrd.open'].key, second.key)
   assert.equal(app.store['hrd.open'].back, 't1')
   assert.equal(app.store['hrd.open'].space, 'a')
+  assert.deepEqual(focusRuns(), [])
+})
+
+test('toggle, strip segment: from another space the keyboard stays where it is', () => {
+  const root = cardRoot()
+  const e = press()
+  out(root, e)
+  app.focused = { terminal: 't9', space: 'b' }
+  pressOn(bar(), `tab-${first.key}`, e)
+  assert.equal(app.store['hrd.open'], null)
   assert.deepEqual(focusRuns(), [])
 })
 
@@ -186,6 +198,19 @@ test('pin bar: a press that closed the card opens the pin, which keeps the termi
   findId(root, 'pin-all').node.calls.on_click[0](null, cx)
   assert.equal(app.opened[0].props.back, 't1')
   assert.equal(app.store['hrd.open'], null)
+})
+
+test('pin bar: a press that closed the card, then the caret, hands the keyboard back for the pin', () => {
+  const needs = [{ key: 'K1', kind: 'know', isOpen: true, text: 'K1 text' }]
+  const pinBoard = { session: 's', needs }
+  const ctl = new PinCtl()
+  const e = press({ bounds: { x: 0, y: 0, width: 800, height: 30 } })
+  out(cardRoot(), e)
+  app.focused = { terminal: null, space: 'a' }
+  const root = pinbar(pinBoard, ctl.ui(pinBoard, cx))
+  root.node.calls.on_mouse_down[1](e, cx)
+  findId(root, 'pin-caret').node.calls.on_click[0](null, cx)
+  assert.equal(app.opened[0].props.back, 't1')
 })
 
 test('a later press on the button is its own press: it opens again', () => {

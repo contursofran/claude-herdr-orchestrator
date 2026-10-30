@@ -131,7 +131,7 @@ export class StripState {
     const id = `${board.session}:${item.key}`
     this.seen.add(id)
     const gone = takeDismissed(press)
-    if (toggle && gone?.surface === 'card' && gone.session === board.session && gone.key === item.key) return handBack(gone)
+    if (gone?.surface === 'card' && gone.session === board.session && gone.key === item.key) return handBack(gone)
     const current = shared('hrd.pick')
     const next = nextPick(current, board.session, item.key, toggle)
     if (!next) closeCard()

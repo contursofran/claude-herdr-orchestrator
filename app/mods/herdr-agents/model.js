@@ -794,16 +794,19 @@ export function samePress(note, press, now) {
   )
 }
 
-/** Herdr's frame around a floating block, in px past the mod's root: 5 above and below, plus its 1 px border. */
+/** Herdr's frame around a floating block, in window px past the mod's root: 5 above and below (its docs give no side
+ *  padding), plus its 1 px border. */
 export const FLOAT_FRAME = 6
 
 /** on_mouse_down_out also fires on the frame Herdr draws around a floating block, which is still the surface. True when the
- *  press is past the frame; true too when the event has no place for it. */
-export function pastFrame(press) {
+ *  press is past the frame; true too when the event has no place for it.
+ *  Only above and below: the sides have none. The frame is window px, so it is divided by the zoom as the other sizes are. */
+export function pastFrame(press, zoom = 1) {
   const at = press?.local_position
   const box = press?.bounds
   if (!at || !box) return true
-  return at.x < -FLOAT_FRAME || at.y < -FLOAT_FRAME || at.x > box.width + FLOAT_FRAME || at.y > box.height + FLOAT_FRAME
+  const frame = atZoom(FLOAT_FRAME, zoom)
+  return at.x < 0 || at.y < -frame || at.x > box.width || at.y > box.height + frame
 }
 
 /** Which terminal gets the keyboard when the pop-up goes (`from`: {back, space} saved at open), or null. Null when a row

@@ -242,7 +242,7 @@ export function card(boards, ctl, cx) {
 
   // A press elsewhere closes it and the keyboard stays on what was pressed. Any button: a right-click elsewhere dismisses too.
   root.on_mouse_down_out((e, cx) => {
-    if (!pastFrame(e)) return
+    if (!pastFrame(e, settings()?.zoom)) return
     noteDismissed('card', e, open)
     closeCard(false)
     cx.notify()
