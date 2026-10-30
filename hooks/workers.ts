@@ -89,7 +89,7 @@ export function reportRule(job: Job, token = job.token) {
     `Below the header, in at most 25 lines: what you did, the branch or PR link, test results, open questions, and anything you could not do. Put long material, such as a plan or a full review, in another file in ${job.dir} (a plan goes in PLAN.md) and give its absolute path instead of copying it in.`,
     'If you need a decision only the owner can make, write each question on its own line as "DECISION: [Short title] <question> | <option> (recommended) | <option>", the title 2-4 words and the options short; if you cannot go on without the answer, stop there.',
     'To wait for something outside your control (CI, a merge, a free test machine), never sleep or poll inside a command for more than 2 minutes.',
-    `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run in your folder, that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
+    `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run with ${job.cwd} as its working directory (not the report folder), that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
     'and end your turn without RESULT.md; you get a message when the check passes or times out.',
     `If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.`,
   ].join('\n')
@@ -577,7 +577,10 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
     .slice(-1500)
   const passed = ran.exitCode === 0
   const timedOut = now - wait.since > wait.max * 60_000
-  if (!passed && !timedOut) {
+  // Exit 126/127 or a failed start means the check itself is broken (not found, not runnable),
+  // so waiting longer cannot help: wake the worker now instead of at max.
+  const broken = !passed && (ran.exitCode === 126 || ran.exitCode === 127 || ran.exitCode === -1)
+  if (!passed && !timedOut && !broken) {
     const next = { ...wait, lastAt: now }
     await updateJob(
       $,
@@ -599,7 +602,7 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
     $,
     { ...latest, wait: undefined },
     [
-      `Your wait is over: ${wait.for} ${passed ? `is ready (the check passed after ${mins} min)` : `is still not ready after ${mins} min, so the wait timed out`}.`,
+      `Your wait is over: ${wait.for} ${passed ? `is ready (the check passed after ${mins} min)` : `${broken ? `cannot run (the check failed to start or was not found, exit ${ran.exitCode}; it ran in ${job.cwd})` : `is still not ready after ${mins} min, so the wait timed out`}`}.`,
       out ? `The check's last output:\n${out}\n` : '',
       passed ? 'Carry on with your task.' : 'Decide whether to wait again (a new WAIT.json) or report what is blocking you.',
     ].join(' '),
