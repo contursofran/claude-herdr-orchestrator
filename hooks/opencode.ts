@@ -41,13 +41,24 @@ export function hcStatusPlugin(fs: any, env: any) {
       } catch (e) {}
     }
     const children = new Set()
+    // After an error the worker stays `error` (idle reports are ignored) until the next sign of work.
+    let failed = false
+    const send = (state: any) => {
+      if (state === 'idle' && failed) return
+      if (state !== 'idle') failed = state === 'error'
+      report(state)
+    }
     report('idle')
     return {
       'chat.message': async ({ sessionID }: any) => {
-        if (!sessionID || !children.has(sessionID)) report('working')
+        if (!sessionID || !children.has(sessionID)) send('working')
       },
-      'tool.execute.before': async () => report('working'),
-      'tool.execute.after': async () => report('working'),
+      'tool.execute.before': async ({ sessionID }: any = {}) => {
+        if (!sessionID || !children.has(sessionID)) send('working')
+      },
+      'tool.execute.after': async ({ sessionID }: any = {}) => {
+        if (!sessionID || !children.has(sessionID)) send('working')
+      },
       event: async ({ event }: any) => {
         const type = event?.type
         const properties = event?.properties ?? {}
@@ -57,7 +68,7 @@ export function hcStatusPlugin(fs: any, env: any) {
         if (!state) return
         const id = typeof properties.sessionID === 'string' ? properties.sessionID : undefined
         if (id && children.has(id) && !CHILD_STATES.has(type)) return
-        report(state)
+        send(state)
       },
     }
   }
@@ -73,13 +84,15 @@ export const HcStatusPlugin = hcStatusPlugin(fs, process.env);
 export default { id: "hc.status", server: HcStatusPlugin };
 `
 
-// Writes the plugin to ${XDG_CONFIG_HOME or ~/.config}/opencode/plugins/hc-status.js when it is missing or
+// Writes the plugin to ${OPENCODE_CONFIG_DIR, or XDG_CONFIG_HOME or ~/.config + /opencode}/plugins/hc-status.js when it is missing or
 // different. Returns whether it wrote. A failure is ignored: the worker then just reports no status.
-export async function ensureOpencodePlugin($: EngineInterface) {
+// `profileEnv` is the profile's env: it wins over the coordinator's own, as it does for the worker.
+export async function ensureOpencodePlugin($: EngineInterface, profileEnv: Record<string, string> = {}) {
   try {
-    const xdg = await $.env.get('XDG_CONFIG_HOME')
-    const base = xdg || `${(await $.env.get('HOME')) ?? ''}/.config`
-    const path = `${base}/opencode/plugins/hc-status.js`
+    const dir = profileEnv.OPENCODE_CONFIG_DIR || (await $.env.get('OPENCODE_CONFIG_DIR'))
+    const xdg = profileEnv.XDG_CONFIG_HOME || (await $.env.get('XDG_CONFIG_HOME'))
+    const base = dir || `${xdg || `${(await $.env.get('HOME')) ?? ''}/.config`}/opencode`
+    const path = `${base}/plugins/hc-status.js`
     if ((await $.fs.exists(path)) && (await $.fs.read(path)) === OPENCODE_PLUGIN) return false
     await $.fs.write(path, OPENCODE_PLUGIN)
     return true

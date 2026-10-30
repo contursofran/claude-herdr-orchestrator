@@ -40,6 +40,37 @@ test('XDG_CONFIG_HOME decides where the plugin goes', async ($, on) => {
   await stopAll($, clock, ['w-oc'])
 })
 
+test("a profile's XDG_CONFIG_HOME and OPENCODE_CONFIG_DIR decide where its plugin goes", async ($, on) => {
+  const { clock, files } = await start(
+    $,
+    on,
+    {
+      profiles: {
+        oc: { kind: 'opencode', args: [], env: { XDG_CONFIG_HOME: '/pxdg' } },
+        od: { kind: 'opencode', args: [], env: { OPENCODE_CONFIG_DIR: '/pdir', XDG_CONFIG_HOME: '/pxdg' } },
+      },
+    },
+    {},
+    { XDG_CONFIG_HOME: '/xdg' },
+  )
+  await spawnOc($)
+  expect(files['/pxdg/opencode/plugins/hc-status.js']).toBe(OPENCODE_PLUGIN)
+  expect(files['/xdg/opencode/plugins/hc-status.js']).toBeUndefined()
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-od', profile: 'od', cwd: '/repo/wt2', task: 'Fix it.' })
+  await settled()
+  expect(files['/pdir/plugins/hc-status.js']).toBe(OPENCODE_PLUGIN)
+  await stopAll($, clock, ['w-oc', 'w-od'])
+})
+
+test('a plugin that cannot be written does not stop the worker', async ($, on) => {
+  const { clock, files, typed, unwritable } = await start($, on, opencode)
+  unwritable.add(FILE)
+  await spawnOc($)
+  expect(files[FILE]).toBeUndefined()
+  expect(typed.filter(t => t.includes('/repo/wt/.herdr-agents/w-oc/TASK.md'))).toHaveLength(1)
+  await stopAll($, clock, ['w-oc'])
+})
+
 test('workers of other kinds get no plugin', async ($, on) => {
   const { clock, files } = await start($, on, { profiles: { cx: { kind: 'codex', args: [] } } })
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-cx', profile: 'cx', cwd: '/repo/wt', task: 'Fix it.' })
@@ -48,7 +79,7 @@ test('workers of other kinds get no plugin', async ($, on) => {
   await stopAll($, clock, ['w-cx'])
 })
 
-test('an opencode worker is waited on for 12 tries before its first prompt; codex too, others for 3', async ($, on) => {
+test('an opencode worker is waited on for 12 tries before its first prompt, other kinds for 3', async ($, on) => {
   const { clock, calls, waitReplies } = await start($, on, {
     profiles: { oc: { kind: 'opencode', args: [] }, gm: { kind: 'gemini', args: [] } },
   })
@@ -90,9 +121,9 @@ test('the plugin reports idle on load and maps each opencode event to a state', 
   await hooks.event(ev('permission.asked', { sessionID: 's1' }))
   await hooks.event(ev('permission.replied', { sessionID: 's1' }))
   await hooks.event(ev('question.asked', { sessionID: 's1' }))
-  await hooks.event(ev('session.error', { sessionID: 's1' }))
   await hooks.event(ev('session.idle', { sessionID: 's1' }))
   await hooks.event(ev('session.status', { sessionID: 's1', status: { type: 'idle' } }))
+  await hooks.event(ev('session.error', { sessionID: 's1' }))
   await hooks.event(ev('message.updated', { sessionID: 's1' }))
   expect(states()).toEqual([
     'idle',
@@ -103,9 +134,9 @@ test('the plugin reports idle on load and maps each opencode event to a state', 
     'blocked:kind=permission',
     'working',
     'blocked:kind=question',
+    'idle',
+    'idle',
     'error',
-    'idle',
-    'idle',
   ])
 })
 
@@ -116,9 +147,35 @@ test("a subagent's session does not change the worker's state, except a permissi
   await hooks.event(ev('session.status', { sessionID: 'kid', status: { type: 'busy' } }))
   await hooks.event(ev('session.idle', { sessionID: 'kid' }))
   await hooks.event(ev('session.error', { sessionID: 'kid' }))
+  await hooks['tool.execute.before']({ sessionID: 'kid' })
+  await hooks['tool.execute.after']({ sessionID: 'kid' })
   expect(states()).toEqual(['idle'])
   await hooks.event(ev('permission.asked', { sessionID: 'kid' }))
   expect(states()).toEqual(['idle', 'blocked:kind=permission'])
+  await hooks['tool.execute.before']({ sessionID: 'kid2' })
+  await hooks['tool.execute.before']({ sessionID: 'kid' })
+  expect(states()).toEqual(['idle', 'blocked:kind=permission', 'working'])
+})
+
+test('an error lasts until the next sign of work; a subagent error does not count', async () => {
+  const { hooks, states } = await load({ HC_TERMINAL_ID: 't9' })
+  await hooks.event(ev('session.created', { sessionID: 'kid', info: { id: 'kid', parentID: 's1' } }))
+  await hooks.event(ev('session.error', { sessionID: 'kid' }))
+  await hooks.event(ev('session.idle', { sessionID: 's1' }))
+  await hooks.event(ev('session.error', { sessionID: 's1' }))
+  await hooks.event(ev('session.status', { sessionID: 's1', status: { type: 'idle' } }))
+  await hooks.event(ev('session.idle', { sessionID: 's1' }))
+  expect(states()).toEqual(['idle', 'idle', 'error'])
+  await hooks['chat.message']({ sessionID: 's1' })
+  await hooks.event(ev('session.idle', { sessionID: 's1' }))
+  expect(states()).toEqual(['idle', 'idle', 'error', 'working', 'idle'])
+  await hooks.event(ev('session.error', { sessionID: 's1' }))
+  await hooks.event(ev('session.status', { sessionID: 's1', status: { type: 'busy' } }))
+  await hooks.event(ev('session.idle', { sessionID: 's1' }))
+  await hooks.event(ev('session.error', { sessionID: 's1' }))
+  await hooks['tool.execute.before']({ sessionID: 's1' })
+  await hooks.event(ev('session.idle', { sessionID: 's1' }))
+  expect(states().slice(5)).toEqual(['error', 'working', 'idle', 'error', 'working', 'idle'])
 })
 
 test('outside an hc terminal the plugin does nothing', async () => {
