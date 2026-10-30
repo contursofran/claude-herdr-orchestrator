@@ -65,7 +65,7 @@ class Install(unittest.TestCase):
             work = json.load(f)["children"][0]["children"]
         self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-strip"])
         card = work[2]["children"][0]["floating"]
-        self.assertEqual([c["id"] for c in card], ["hrd-card"])
+        self.assertEqual([c["id"] for c in card], ["hrd-card", "hrd-sheet"])
         self.assertEqual((card[0]["edge"], card[0]["align"]), ("bottom", "center"))
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
 
