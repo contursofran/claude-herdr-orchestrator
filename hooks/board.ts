@@ -49,9 +49,9 @@ async function learnRepos($: EngineInterface, cwds: string[]): Promise<Links> {
   return out
 }
 
-// A worker whose last report said blocked, or that waits at a question after its report, is
+// A worker whose last report's header said blocked, or that waits at a question after its report, is
 // still waiting for someone: not finished, until it is answered (a prompt makes it running) or stopped.
-const waitsAfterReport = (j: Job) => j.status === 'reported' && !j.closed && (j.tail === 'blocked' || j.reportStatus === 'blocked')
+const waitsAfterReport = (j: Job) => j.status === 'reported' && !j.closed && (j.tail === 'blocked' || j.headerStatus === 'blocked')
 
 // Puts each shown worker's state into the band's atom. It makes no hc calls: a running
 // worker shows the state its wait or the sweep last saw (lastStatus), and a failed sweep

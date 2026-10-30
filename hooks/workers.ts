@@ -241,9 +241,20 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
     if (status === 'blocked' && job.tail === 'early') await blockedAfterReport($, job)
     return
   }
-  // It works again (the owner answered): its turn's end is the one to wait for next.
-  if (status === 'working') return arm($, job, 'finish')
+  // It works again (the owner answered): it is no longer blocked, and its turn's end is the one to wait for next.
+  if (status === 'working') return arm($, await answered($, job), 'finish')
   await endTail($, job)
+}
+
+// A reported job that works again was answered in its tab: it is no longer blocked (its turn is
+// still on, so the watch stays as an early report's). Returns the job as it is now.
+async function answered($: EngineInterface, job: Job) {
+  const { after } = await updateJob($, job.name, j =>
+    j.token === job.token && j.status === 'reported' && j.tail
+      ? { ...j, tail: j.tail === 'blocked' ? 'early' : j.tail, headerStatus: undefined }
+      : undefined,
+  )
+  return after ?? job
 }
 
 // A worker that reported early, then waits at an approval or question: the coordinator is told once.
@@ -398,6 +409,7 @@ async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | unde
   lastStatus.set(job.name, status)
   if (status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
   if (status !== 'working' && status !== 'blocked' && status !== 'error') return await endTail($, job)
+  if (status === 'working') job = await answered($, job)
   if (!armed.has(job.name)) arm($, job, status === 'working' ? 'finish' : 'resume')
 }
 
@@ -603,6 +615,7 @@ export async function deliver(
           tail,
           reportFile,
           reportStatus: status,
+          headerStatus: header?.status,
         }
       : undefined,
   )
@@ -971,7 +984,15 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
       return { result: `Stopped ${e.worker} while it was starting.${await belowTarget($)}` }
     }
   }
-  await patchJob($, job.name, { status: 'reported', reportStatus: 'stopped', endedAt: await $.clock.now(), tail: undefined })
+  // A worker that delivered a report keeps its status and file; one that did not is stopped.
+  // Either way it leaves Blocked at once.
+  await patchJob($, job.name, {
+    status: 'reported',
+    ...(job.status === 'running' || !job.reportFile ? { reportStatus: 'stopped' } : {}),
+    headerStatus: undefined,
+    endedAt: await $.clock.now(),
+    tail: undefined,
+  })
   try {
     await closeTerminal($, job.name)
   } catch (err) {

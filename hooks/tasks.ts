@@ -139,7 +139,7 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
     const ask = open.find(it => it.kind === 'ask')
 
     const stageOf = (j: Job): Stage => {
-      if (j.status === 'reported') return 'done'
+      if (j.status === 'reported') return rowOf.get(j.name)?.state === 'blocked' ? 'block' : 'done'
       const state = rowOf.get(j.name)?.state
       return state === 'waiting' ? 'wait' : state === 'blocked' || state === 'gone' ? 'block' : state === 'done' ? 'done' : 'run'
     }
@@ -161,7 +161,9 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
     const you: Stage = ask ? 'ask' : todo ? 'todo' : mine.some(it => it.kind !== 'know') ? 'done' : 'none'
     const stages: Stage[] = [...latest.map(j => (j ? stageOf(j) : 'none')), ci, you]
 
-    const blocked = running.find(j => stageOf(j) === 'block')
+    // A worker that reported but waits for someone (the band's Blocked) is not finished.
+    const stuck = list.filter(j => j.status === 'reported' && stageOf(j) === 'block')
+    const blocked = [...running, ...stuck].find(j => stageOf(j) === 'block')
     const working = running.filter(j => stageOf(j) === 'run').at(-1)
     const waiting = running.find(j => stageOf(j) === 'wait')
     const last = list.at(-1)!
@@ -211,7 +213,7 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
       now: said,
       ...((todo ?? ask) ? { item: (todo ?? ask)!.key } : {}),
       ...((isGone ? undefined : (blocked ?? working ?? waiting)) ? { tab: (blocked ?? working ?? waiting)!.name } : {}),
-      isFinished: running.length === 0 && open.length === 0,
+      isFinished: running.length === 0 && stuck.length === 0 && open.length === 0,
       isMerged,
     })
   }
