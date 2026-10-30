@@ -1473,6 +1473,53 @@ test('the branch is fetched too, and a failed fetch of it is ignored', async ($,
   expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x origin/main')
 })
 
+test('a repo with no origin remote fetches nothing and branches off the local base', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', '', 128, 'fatal: not a symbolic ref'),
+    git('-C /repo branch --show-current', 'trunk\n'),
+    git('check-ref-format --branch trunk'),
+    git('-C /repo remote get-url origin', '', 2, "error: No such remote 'origin'"),
+    git('-C /repo rev-parse --verify --quiet refs/heads/fix-x', '', 1),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x refs/heads/trunk'),
+  )
+  const r = await spawnBranch($)
+  expect(r.result).toContain('"cwd":"/repo-wt/fix-x"')
+  await settled()
+  expect(shell.some(c => c.includes(' fetch '))).toBe(false)
+  expect(shell).toContain('git -C /repo worktree add -b fix-x /repo-wt/fix-x refs/heads/trunk')
+})
+
+test('a repo with no origin remote reuses an existing local branch', async ($, on) => {
+  const { runs, shell } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo remote get-url origin', '', 2),
+    git('-C /repo rev-parse --verify --quiet refs/heads/fix-x', 'abc\n'),
+    git('-C /repo worktree add /repo-wt/fix-x fix-x'),
+  )
+  await spawnBranch($)
+  await settled()
+  expect(shell.some(c => c.includes(' fetch '))).toBe(false)
+  expect(shell).toContain('git -C /repo worktree add /repo-wt/fix-x fix-x')
+})
+
+test('a repo with an origin whose fetch fails still fails with the fetch error', async ($, on) => {
+  const { runs } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo remote get-url origin', 'git@example.com:x/y.git\n'),
+    git('-C /repo fetch origin main', '', 128, 'fatal: unable to access'),
+  )
+  await spawnBranch($)
+  await settled()
+  expect(JSON.stringify(runs.get('git -C /repo fetch origin main'))).toContain('unable to access')
+})
+
 test('a base that is not a valid branch name is denied before any git call that could take it as an option', async ($, on) => {
   const { runs, shell } = await start($, on)
   answerGit(runs, git('-C /repo rev-parse --show-toplevel', '/repo\n'), git('check-ref-format --branch --upload-pack=x', '', 1))
