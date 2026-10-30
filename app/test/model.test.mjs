@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { applyFile, boardId, debugLine, labelOf, openNeeds, resolveBoard } from '../mods/herdr-agents/model.js'
+import { applyFile, boardId, boardIdIn, debugLine, labelOf, openNeeds, resolveBoard } from '../mods/herdr-agents/model.js'
 
 const board = (session, terminal, extra = {}) => ({
   session,
@@ -187,6 +187,14 @@ test('boardId takes <session>.json in the board folder and nothing else', () => 
   assert.equal(boardId(dir, `${dir}/abc.actions/1-x.json`), null)
   assert.equal(boardId(dir, `${dir}/abc.actions`), null)
   assert.equal(boardId(dir, '/elsewhere/abc.json'), null)
+})
+
+test('boardIdIn: a path under the resolved folder (/tmp is /private/tmp) still gives the id', () => {
+  const dirs = ['/tmp/h/board', '/private/tmp/h/board']
+  assert.equal(boardIdIn(dirs, '/private/tmp/h/board/abc.json'), 'abc')
+  assert.equal(boardIdIn(dirs, '/tmp/h/board/abc.json'), 'abc')
+  assert.equal(boardIdIn(dirs, '/private/tmp/h/board/abc.actions/1-x.json'), null)
+  assert.equal(boardIdIn(dirs, '/elsewhere/abc.json'), null)
 })
 
 test('applyFile: a changed file replaces, a bad one keeps the last good copy, a removed one drops the board', () => {
