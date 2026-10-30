@@ -5,14 +5,14 @@
 #
 #   ./install.sh            # from a clone of this repo; run it again after a pull
 #
-# Needs node (to edit the JSON settings) and rsync; herdr runs the workers.
+# Needs node (to edit the JSON settings) and rsync; hc (herdr-core) runs the workers.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 claude=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 mods="$claude/mods"
 
-command -v herdr >/dev/null || echo "note: herdr is not on PATH; workers only start when Claude Code runs inside herdr."
+command -v hc >/dev/null || echo "note: hc is not on PATH; workers only start when Claude Code runs in an hc terminal. hc is herdr-core: https://github.com/herdrdev/herdr-core"
 mkdir -p "$mods/herdr-agents" "$mods/herdr-agents-view"
 
 # A mod is its manifest, its hooks, its subagents and its type contract. The engine writes

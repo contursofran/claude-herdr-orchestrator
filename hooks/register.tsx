@@ -44,7 +44,7 @@ export const register: Register = on => {
     if (isWorker) {
       // A worker's own session sweeps the workers it started, but only while one of them runs,
       // or while a reported one with an open tab is due to close (closeIdleMinutes). Until then it
-      // makes no herdr call, and none once the last tab is closed. Its report check does nothing
+      // makes no hc call, and none once the last tab is closed. Its report check does nothing
       // with no running job either. The other timers stay with the coordinator.
       const sweepIfNeeded = async () => {
         const all = Object.values(await jobs($))
@@ -75,7 +75,7 @@ export const register: Register = on => {
     // view "side": the sidebar instead of the band, opened once there is room for it.
     // A reload finds it open already.
     if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
-    // The band, the sidebar and the bridge's inbox, every TICK_MS with no herdr calls: refresh
+    // The band, the sidebar and the bridge's inbox, every TICK_MS with no hc calls: refresh
     // reads the states the waits and the sweep last saw. The report check comes first, so a
     // RESULT.md that landed is delivered at this tick, and the state file's block follows it.
     $.clock.every(

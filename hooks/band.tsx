@@ -81,6 +81,8 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
     done: { label: 'Done · report pending', color: 'success' },
     reported: { label: 'Reported', dim: true },
     gone: { label: 'Tab gone', color: 'error' },
+    unknown: { label: 'No status', dim: true },
+    error: { label: 'CLI error', color: 'error' },
   }
   const width = Math.max(0, ...rows.map(r => r.name.length)) + 3
   const running = rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length

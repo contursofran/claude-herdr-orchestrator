@@ -5,17 +5,33 @@ import { refresh } from './board'
 import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds } from './coordinator'
 import {
+  ADDRESS_LIKE,
   GONE_MISSES,
   INLINE_CHARS,
   INLINE_LINES,
   LOST_REPORT_MS,
   MESSAGE_CHARS,
   NAME,
+  PROMPT_CHECK_MS,
   PROMPT_TRIES,
   QUIET_BUSY_MS,
   QUIET_MS,
 } from './defaults'
-import { acceptFolderTrust, herdr, type HerdrAgent, lastStatus, notify } from './herdr'
+import {
+  closeTerminal,
+  type HcListed,
+  type HcSend,
+  type HcTerminal,
+  hc,
+  kindOf,
+  lastStatus,
+  listWorkers,
+  notify,
+  readScreen,
+  waitReady,
+  watch,
+  workerArgv,
+} from './hc'
 import { ask, openQuestions } from './owner'
 import { post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
@@ -25,12 +41,12 @@ import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
 import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, validBranch, worktreePath } from './worktrees'
 
-// Worker agents that run in herdr tabs. spawn opens a tab, starts the CLI there,
+// Worker agents that run as hc terminals, shown in a Herdr tab. spawn starts the CLI in one,
 // hands it the task and returns at once. When the worker ends its turn, its RESULT.md
 // is submitted to this session as a new prompt.
 //
-// herdr tells the mod when a worker settles: arm starts a `herdr agent wait` for it in
-// a child process, and the sweep (every SWEEP_MS, one `herdr agent list` for all
+// hc tells the mod when a worker settles: arm starts an `hc events` watch for it in
+// a child process, and the sweep (every SWEEP_MS, one `hc ls` for all
 // workers) catches what the waits miss. checkReports (every TICK_MS) delivers a RESULT.md once
 // it has stopped changing. Everything that may deliver, prompt or check a job goes through
 // serial, so a wait, a sweep and the report check never act on the same job twice.
@@ -81,9 +97,9 @@ export function reportReminder(job: Job) {
   return `When you are finished, report as before: write ${job.dir}/RESULT.md in one write, as your last step, with the first line exactly <!-- report ${job.token} -->, then the \`\`\`report header (status, pr, summary, ask) and your report. DECISION lines and WAIT.json work as in ${job.dir}/REPORTING.md.`
 }
 
-// Sends `text` to the worker and, once herdr sees it working, arms the wait for its turn
-// to end, which delivers its report.
-export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false) {
+// Sends `text` to the worker and, once hc sees it working, arms the watch for its turn
+// to end, which delivers its report. `force` types it over a question the worker waits at.
+export async function prompt($: EngineInterface, job: Job, lead: string, spawned = false, force = false) {
   const token = crypto.randomUUID().slice(0, 8)
   seenReport.delete(job.name)
   const next: Job = { ...job, token, status: 'running', endedAt: undefined, tail: undefined }
@@ -95,9 +111,9 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
   const rules = `${job.dir}/REPORTING.md`
   const full = spawned || !(await $.fs.exists(rules))
   if (full) await $.fs.write(rules, `TOKEN below is the token in the latest prompt you got.\n\n${reportRule(next, 'TOKEN')}`)
-  const lost = await send($, job.name, `${lead} ${full ? reportRule(next) : reportReminder(next)}`)
+  const lost = await send($, job.name, `${lead} ${full ? reportRule(next) : reportReminder(next)}`, force)
   if (lost === undefined) {
-    // Only once the worker works is its turn's end the one to wait for: herdr answers a wait at
+    // Only once the worker works is its turn's end the one to wait for: the watch answers at
     // once for a state the worker is already in, and the last turn's 'done' may still be there.
     lastStatus.set(next.name, 'working')
     arm($, next, 'finish')
@@ -107,25 +123,29 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
   }
 }
 
-// herdr types a prompt once the CLI looks ready, but a CLI still busy with its own
-// startup (many tabs starting at once) can drop it, leaving the worker at an empty
-// input box. With --wait, herdr fails with agent_prompt_stalled when no work starts
-// within 5 s; then text still in the input box is submitted, else the prompt is typed
-// again. Returns why it was not delivered, or undefined once work started.
-async function send($: EngineInterface, name: string, text: string): Promise<string | undefined> {
-  const started = ['--until', 'working', '--until', 'blocked']
-  const typeIt = () => herdr($, ['agent', 'prompt', name, text, '--wait', ...started, '--timeout', '15000'], 30_000)
+// hc types a prompt and reports whether work started within a few seconds, but a CLI still busy
+// with its own startup (many terminals starting at once) can drop it, leaving the worker at an empty
+// input box. When no work starts, text still in the input box is submitted, else the prompt is typed
+// again. Returns why it was not delivered, or undefined once work started. A statusless CLI
+// (started: null) counts as delivered; the quiet-screen rule catches it if it never works.
+async function send($: EngineInterface, name: string, text: string, force = false): Promise<string | undefined> {
+  const typeIt = () => hc<HcSend>($, ['send', name, text, ...(force ? ['--force'] : [])], 30_000)
+  const working = async () => {
+    const state = (await hc<HcTerminal>($, ['get', name])).status?.state
+    return state === 'working' || state === 'blocked'
+  }
   for (let i = 0; i < PROMPT_TRIES; i++) {
     try {
-      if (i === 0) await typeIt()
-      else if ((await $.process.run(['herdr', 'agent', 'read', name, '--lines', '40'])).stdout.includes(text.slice(0, 40))) {
-        await herdr($, ['agent', 'send-keys', name, 'enter'])
-        await herdr($, ['agent', 'wait', name, ...started, '--timeout', '5000'], 15_000)
-      } else await typeIt()
-      return undefined
+      if (i > 0 && (await readScreen($, name, 40)).includes(text.slice(0, 40))) {
+        await hc($, ['keys', name, 'enter'])
+        await $.clock.sleep(PROMPT_CHECK_MS)
+      } else if ((await typeIt()).started !== false) return undefined
+      if (await working()) return undefined
     } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code !== 'agent_prompt_stalled' && code !== 'timeout') throw err
+      const kind = kindOf(err)
+      if (kind === 'blocked') return 'it waits at an approval or question, so the text was not typed'
+      if (kind === 'finished' || kind === 'not_found') return 'its terminal is gone'
+      throw err
     }
   }
   return `its prompt was not delivered: no work started after ${PROMPT_TRIES} tries`
@@ -162,45 +182,31 @@ function serial(name: string, fn: () => Promise<void>): Promise<void> {
   return next
 }
 
-// Starts a herdr wait for the worker in a child process: for its turn to end ('finish':
-// done, idle or blocked) or for its next turn to start ('resume': working or blocked).
-// The child lives until herdr answers. A child that could not start, or whose hook was
-// let go, leaves the worker to the sweep, which arms a new one.
+// Starts a watch for the worker in a child process (`hc events`, see watch): for its turn to end
+// ('finish': done, idle, blocked or error) or for its next turn to start ('resume': working,
+// blocked or error). The child lives until the status comes. A child that could not start, whose
+// terminal finished, or whose hook was let go, leaves the worker to the sweep, which arms a new one.
 export function arm($: EngineInterface, job: Job, mode: 'finish' | 'resume') {
   const held = armed.get(job.name)
   if (held && held.token === job.token && held.mode === mode) return
   const id = ++armIds
   armed.set(job.name, { token: job.token, mode, id })
-  const until =
-    mode === 'finish' ? ['--until', 'done', '--until', 'idle', '--until', 'blocked'] : ['--until', 'working', '--until', 'blocked']
+  const until = mode === 'finish' ? ['done', 'idle', 'blocked', 'error'] : ['working', 'blocked', 'error']
   void (async () => {
-    let out = ''
+    let status: string | undefined
     try {
-      for await (const piece of $.process.spawn({ argv: ['herdr', 'agent', 'wait', job.name, ...until] })) {
-        if (piece.stream === 'stdout') out += piece.text
-      }
-    } catch {
-      return
+      status = await watch($, job.name, until, () => armed.get(job.name)?.id !== id)
     } finally {
       if (armed.get(job.name)?.id === id) armed.delete(job.name)
     }
-    // herdr prints one JSON line: its result, or an error (agent_not_found, agent_not_running…),
-    // and an error decides nothing.
-    let reply: { result?: { agent?: { agent_status?: string } }; error?: unknown }
-    try {
-      reply = JSON.parse(out)
-    } catch {
-      return
-    }
-    const status = reply.result?.agent?.agent_status
-    if (!status || reply.error) return
+    if (!status) return
     lastStatus.set(job.name, status)
     void serial(job.name, () => settle($, job, mode, status))
   })()
 }
 
-// What a settled wait means for its job. The report decides what happened; herdr's state
-// only moves the job along: a blocked worker is reported at once, and one that ends its
+// What a settled wait means for its job. The report decides what happened; hc's status
+// only moves the job along: a blocked worker and a CLI error are reported at once, and one that ends its
 // turn without a report is waited on for its next turn. The sweep judges a quiet one.
 async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', status: string) {
   const current = (await jobs($))[job.name]
@@ -209,6 +215,7 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
   if (!current || current.status !== 'running' || current.token !== job.token) return
   if (await reported($, current)) return await deliver($, current, 'done')
   if (status === 'blocked') return await deliver($, current, 'blocked')
+  if (status === 'error') return await deliver($, current, 'error', QUIET_MS, 'its CLI reported an error')
   // A resume wait only ends once the worker works again; its turn's end is the one to wait for next.
   if (mode === 'resume') return arm($, current, 'finish')
   const now = await $.clock.now()
@@ -218,11 +225,11 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
   arm($, current, 'resume')
 }
 
-// A reported job whose turn was not over (see Job.tail), when herdr's wait for it settles.
+// A reported job whose turn was not over (see Job.tail), when hc's watch for it settles.
 async function settleTail($: EngineInterface, job: Job, status: string) {
   if (await fresh($, job)) return await deliver($, job, 'done')
-  if (status === 'blocked') {
-    if (job.tail === 'early') await blockedAfterReport($, job)
+  if (status === 'blocked' || status === 'error') {
+    if (status === 'blocked' && job.tail === 'early') await blockedAfterReport($, job)
     return
   }
   // It works again (the owner answered): its turn's end is the one to wait for next.
@@ -236,11 +243,11 @@ async function blockedAfterReport($: EngineInterface, job: Job) {
     j.token === job.token && j.status === 'reported' && j.tail === 'early' ? { ...j, tail: 'blocked' } : undefined,
   )
   if (!after) return
-  await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
+  notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   arm($, after, 'resume')
   await post(
     $,
-    `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\nAfter its report, the worker waits at an approval or question in its herdr tab. Ask the person to answer it there, or send the answer with the message tool. Its report above still stands; a new RESULT.md from this turn is delivered as a further report.\n</herdr-agent>`,
+    `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\nAfter its report, the worker waits at an approval or question in its herdr tab. Ask the person to answer it there; the message tool can answer a question, but not a permission request. Its report above still stands; a new RESULT.md from this turn is delivered as a further report.\n</herdr-agent>`,
     true,
   )
 }
@@ -259,7 +266,7 @@ async function endTail($: EngineInterface, job: Job) {
 // while it may still be finishing its turn, once the file has been the same for a whole tick
 // (seenReport), so a report written in parts is not sent half done. The wait and the sweep
 // stay for a blocked worker and for a turn that ends with no report; a report found there is
-// delivered at once, as the worker has stopped writing. It makes no herdr call: one exists
+// delivered at once, as the worker has stopped writing. It makes no hc call: one exists
 // check, and a read once the file is there. Not awaited, so a step queued behind a slow one
 // does not hold up the band's tick.
 export async function checkReports($: EngineInterface) {
@@ -286,21 +293,22 @@ export async function checkReports($: EngineInterface) {
   }
 }
 
-// RESULT.md is the completion signal: herdr's lifecycle state alone is not
+// RESULT.md is the completion signal: hc's status alone is not
 // (a Claude worker running its own subagents reads as done while it works).
 // A blocked worker is reported at once; a quiet one after QUIET_MS, or QUIET_BUSY_MS
 // while it waits on background work of its own. The sweep, every SWEEP_MS, does this for
-// all running workers with one `herdr agent list`. A tab herdr no longer lists counts as
-// gone only after GONE_MISSES sweeps in a row, and a failed list decides nothing.
+// all running workers with one `hc ls`. A worker hc no longer lists live counts as gone only
+// after GONE_MISSES sweeps in a row, and a failed list decides nothing. A worker whose CLI
+// reports no status reads as 'unknown', and the quiet-screen rule judges it.
 export async function sweep($: EngineInterface, closeMinutes: number) {
   const now = await $.clock.now()
-  let agents: HerdrAgent[] | undefined
+  let agents: HcListed[] | undefined
   try {
-    agents = (await herdr<{ agents: HerdrAgent[] }>($, ['agent', 'list'])).agents
+    agents = await listWorkers($)
   } catch {
     agents = undefined
   }
-  const byName = new Map<string, HerdrAgent>()
+  const byName = new Map<string, HcListed>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
   for (const job of Object.values(await jobs($))) {
     if (job.status !== 'running' && !job.tail) continue
@@ -309,7 +317,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
       if (!current) return
       const a = byName.get(job.name)
       // With no agent list the turn's end was not seen: a report found then stays a tail until a list call succeeds.
-      const early = agents === undefined || a?.agent_status === 'working'
+      const early = agents === undefined || a?.status === 'working'
       if (current.status === 'reported') return current.tail ? await sweepTail($, current, agents, a, early) : undefined
       if (await reported($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
       // A CLI error is not evidence of anything.
@@ -321,22 +329,22 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
         return
       }
       misses.delete(job.name)
-      lastStatus.set(job.name, a.agent_status)
-      if (a.agent_status === 'blocked') return await deliver($, current, 'blocked')
-      if (!armed.has(job.name)) arm($, current, a.agent_status === 'working' ? 'finish' : 'resume')
-      if (await waiting($, current, a.agent_status, now)) {
+      const status = a.status ?? 'unknown'
+      lastStatus.set(job.name, status)
+      if (status === 'blocked') return await deliver($, current, 'blocked')
+      if (status === 'error') return await deliver($, current, 'error', QUIET_MS, 'its CLI reported an error')
+      if (!armed.has(job.name)) arm($, current, status === 'working' ? 'finish' : 'resume')
+      if (await waiting($, current, status, now)) {
         quiet.delete(job.name)
         return
       }
-      if (a.agent_status === 'working') {
+      if (status === 'working') {
         quiet.delete(job.name)
         return
       }
       let seen: string
       try {
-        const ran = await $.process.run(['herdr', 'pane', 'read', a.pane_id, '--source', 'visible'])
-        if (ran.exitCode !== 0) return
-        seen = ran.stdout
+        seen = await readScreen($, job.name)
       } catch {
         return
       }
@@ -345,7 +353,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
         quiet.set(job.name, { token: current.token, screen: seen, since: now })
         return
       }
-      if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, a.agent_status, now - q.since)
+      if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, status, now - q.since)
     })
   }
   if (closeMinutes > 0) await closeIdle($, closeMinutes, agents)
@@ -353,8 +361,8 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
 }
 
 // A reported job still watched (see Job.tail), as the sweep sees it. No quiet-screen rule:
-// the report is out, so only herdr's state says whether the turn goes on.
-async function sweepTail($: EngineInterface, job: Job, agents: HerdrAgent[] | undefined, a: HerdrAgent | undefined, early: boolean) {
+// the report is out, so only hc's status says whether the turn goes on.
+async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | undefined, a: HcListed | undefined, early: boolean) {
   if (await fresh($, job)) return await deliver($, job, 'done', QUIET_MS, undefined, { early })
   if (agents === undefined) return
   if (!a) {
@@ -377,10 +385,11 @@ async function sweepTail($: EngineInterface, job: Job, agents: HerdrAgent[] | un
     return
   }
   misses.delete(job.name)
-  lastStatus.set(job.name, a.agent_status)
-  if (a.agent_status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
-  if (a.agent_status !== 'working' && a.agent_status !== 'blocked') return await endTail($, job)
-  if (!armed.has(job.name)) arm($, job, a.agent_status === 'working' ? 'finish' : 'resume')
+  const status = a.status ?? 'unknown'
+  lastStatus.set(job.name, status)
+  if (status === 'blocked' && job.tail === 'early') return await blockedAfterReport($, job)
+  if (status !== 'working' && status !== 'blocked' && status !== 'error') return await endTail($, job)
+  if (!armed.has(job.name)) arm($, job, status === 'working' ? 'finish' : 'resume')
 }
 
 // A Claude worker waiting on its own background shell, monitor or subagent keeps a
@@ -481,7 +490,7 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
   return true
 }
 
-// `why` says why a worker stopped when herdr's status alone doesn't (a prompt that never arrived).
+// `why` says why a worker stopped when hc's status alone doesn't (a prompt that never arrived).
 // `opts.early`: the worker may still be in its turn, so its job stays watched (Job.tail).
 export async function deliver(
   $: EngineInterface,
@@ -556,18 +565,20 @@ export async function deliver(
   } else if (status === 'blocked' && !why) {
     tail = 'blocked'
     body =
-      'The worker is waiting at an approval or question in its herdr tab. Ask the person to answer it there, or send the answer with the message tool.'
-    await notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
+      'The worker is waiting at an approval or question in its herdr tab. Ask the person to answer it there; the message tool can answer a question, but not a permission request.'
+    notify($, `${job.name} is blocked`, 'It waits at an approval or question in its herdr tab.')
   } else {
+    // A CLI error, like a block, may pass: a report it writes after recovering is delivered too.
+    if (status === 'error') tail = 'blocked'
     let lines = ''
     try {
-      lines = (await $.process.run(['herdr', 'agent', 'read', job.name, '--lines', '40'])).stdout.trim()
+      lines = (await readScreen($, job.name, 40)).trim()
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
     await $.fs.write(screen, lines.slice(-4000))
     reportFile = screen
     await archive($, job.dir, screen.slice(job.dir.length + 1), lines.slice(-4000))
-    body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. The last 40 lines of its terminal are in ${screen}.`
+    body = `The worker stopped (${error ?? `${status}, screen unchanged for ${Math.round(quietMs / 60_000)} min`}) without writing RESULT.md. Its screen and 40 lines of history above it are in ${screen}.`
   }
 
   // Patch the job as it is now: a message queued or a stop during the awaits above must stay.
@@ -587,7 +598,7 @@ export async function deliver(
       : undefined,
   )
   if (!after) return
-  // A worker blocked at a question may carry on once the owner answers: its next turn is the one to watch.
+  // A worker blocked at a question, or whose CLI errored, may carry on: its next turn is the one to watch.
   if (tail === 'blocked') arm($, after, 'resume')
   // An early report leaves the turn's end to be waited on (a no-op while that wait is still armed).
   if (tail === 'early') arm($, after, 'finish')
@@ -614,7 +625,7 @@ export async function deliver(
   )
 }
 
-// session.start: each running worker gets its wait back, since a reload killed the children.
+// session.start: each running worker gets its watch back, since a reload killed the children.
 export function resumeWatching($: EngineInterface, list: Job[]) {
   for (const job of list) {
     if (job.status === 'starting') void serial(job.name, () => startFailed($, job, new Error('the mod reloaded while it started')))
@@ -640,7 +651,8 @@ async function currentBranch($: EngineInterface, cwd: string) {
 
 export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   const { worker, profile, task, branch } = e
-  if (!NAME.test(worker)) return { deny: `worker must match ${NAME}` }
+  if (!NAME.test(worker) || ADDRESS_LIKE.test(worker))
+    return { deny: `worker must match ${NAME} and not look like a terminal address (t7, t1b)` }
   if (!!e.cwd === !!branch) return { deny: 'give exactly one of cwd (an existing folder) or branch (a new worktree)' }
   if (!branch && (e.repo || e.base)) return { deny: 'repo and base go with branch; cwd alone names an existing folder' }
   const off = await turnedOff($)
@@ -654,7 +666,20 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
     }
   const known = (await jobs($))[worker]
   if (known && active(known)) return { deny: `worker ${worker} is still running; use message or stop` }
-  if (!(await $.env.get('HERDR_SOCKET_PATH'))) return { deny: 'this session is not running inside herdr' }
+  // The coordinator's own terminal says which Herdr space the workers' tabs go to.
+  const self = await $.env.get('HC_TERMINAL_ID')
+  if (!self)
+    return {
+      deny: 'this session is not in an hc terminal. Start it in the Herdr app or with: hc run --bg claude. hc is herdr-core: https://github.com/herdrdev/herdr-core',
+    }
+  let space: string | undefined
+  try {
+    space = (await hc<HcTerminal>($, ['get', self])).labels?.['herdr.space']
+  } catch (err) {
+    return {
+      deny: `cannot reach hc: ${err instanceof Error ? err.message : String(err)}. hc is herdr-core: https://github.com/herdrdev/herdr-core`,
+    }
+  }
 
   let cwd = e.cwd ?? ''
   let tree: NewTree | undefined
@@ -676,7 +701,8 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
     for (const j of Object.values(await jobs($))) {
       if (j.name === worker || j.cwd !== cwd || reviewsOnly(j.profile)) continue
       try {
-        await herdr($, ['agent', 'get', j.name])
+        // A finished terminal stays readable to hc get, so only a live one is a writer.
+        if ((await hc<HcTerminal>($, ['get', j.name])).state !== 'live') continue
       } catch {
         continue
       }
@@ -693,20 +719,20 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   await saveJob($, job)
   // The tab, the CLI and the first prompt take many seconds: they run on, and the result of the start
   // (the first report, or a failed one) reaches the coordinator as a message.
-  void serial(worker, () => startWorker($, job, task, p, tree))
+  void serial(worker, () => startWorker($, job, task, p, space, tree))
   void refresh($)
   return {
-    result: `${JSON.stringify({ worker, cwd, status: 'starting', ...(branch ? { branch } : {}) })}\nStarting ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}". Its report, or a failed report if it does not start, arrives as a <herdr-agent> message.`,
+    result: `${JSON.stringify({ worker, cwd, status: 'starting', ...(branch ? { branch } : {}) })}\nStarting ${worker} (${profile}, ${p.kind}) in herdr tab "${worker}". Its report, or a failed report if it does not start, arrives as a <herdr-agent> message.${space ? '' : ` Not in a Herdr space: watch it with hc attach ${worker}.`}`,
   }
 }
 
 // The background half of spawn. Each step that takes long is followed by a check that the job is still
-// 'starting': a stop meanwhile ends it, and the tab it made is closed.
-async function startWorker($: EngineInterface, job: Job, task: string, p: Profile, tree?: NewTree) {
+// 'starting': a stop meanwhile ends it, and the terminal it made is closed.
+async function startWorker($: EngineInterface, job: Job, task: string, p: Profile, space: string | undefined, tree?: NewTree) {
   const { name: worker, cwd, dir } = job
-  const closeTab = async (tab: string) => {
+  const close = async () => {
     try {
-      await herdr($, ['tab', 'close', tab])
+      await closeTerminal($, worker)
     } catch {}
   }
   try {
@@ -715,38 +741,23 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     await excludeFromGit($, cwd)
     // The role comes last, so a profile's env cannot drop it. A worker's own session
     // reads it (see session.start).
-    const env = [...Object.entries(p.env ?? {}), ['HERDR_AGENTS_ROLE', 'worker']].flatMap(([k, v]) => ['--env', `${k}=${v}`])
-    const made = await herdr<{ tab: { tab_id: string }; root_pane: { pane_id: string } }>($, [
-      'tab',
-      'create',
-      '--cwd',
-      cwd,
+    const env: [string, string][] = [...Object.entries(p.env ?? {}), ['HERDR_AGENTS_ROLE', 'worker']]
+    // With a space the terminal is adopted into the coordinator's Herdr space, in a tab of its own.
+    const labels = ['herdr-agents.role=worker', ...(space ? [`herdr.space=${space}`, `herdr.tab=hrd-${worker}`] : [])].flatMap(l => [
       '--label',
-      worker,
-      '--no-focus',
-      ...env,
+      l,
     ])
-    const tab = made.tab.tab_id
-    const pane = made.root_pane.pane_id
-    const saved = await updateJob($, worker, j => (j.status === 'starting' ? { ...j, tab, pane } : undefined))
-    if (!saved.after) return await closeTab(tab)
-    // A fresh tab's shell may still be starting; herdr then reports the
-    // pane busy, so try again for a few seconds.
-    for (let tries = 0; ; tries++) {
-      try {
-        await herdr($, ['agent', 'start', worker, '--kind', p.kind, '--pane', pane, '--timeout', '60000', '--', ...p.args])
-        break
-      } catch (err) {
-        if (String(err).includes('blocked during startup') && (await acceptFolderTrust($, worker, pane, cwd))) break
-        if (tries >= 10 || !String(err).includes('not an available shell')) throw err
-        await $.clock.sleep(1000)
-      }
-    }
+    const argv = await workerArgv($, p.kind, p.args, env)
+    const made = await hc<{ address: string }>($, ['run', '--bg', '--no-parent', '--name', worker, '--cwd', cwd, ...labels, '--', ...argv])
+    const saved = await updateJob($, worker, j => (j.status === 'starting' ? { ...j, address: made.address } : undefined))
+    if (!saved.after) return await close()
+    if (space) void nameTab($, worker)
+    await waitReady($, worker, cwd, p.kind)
     const branch = await currentBranch($, cwd)
     const { before, after } = await updateJob($, worker, j =>
       j.status === 'starting' ? { ...j, status: 'running', ...(branch ? { branch } : {}), queued: [] } : undefined,
     )
-    if (!after) return await closeTab(tab)
+    if (!after) return await close()
     // Messages sent while it started go in with its task (see messageWorker).
     const held = before?.queued ?? []
     const extra =
@@ -760,8 +771,20 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
   }
 }
 
-// A start that failed (or was cut off by a reload): the screen of its tab is kept, the tab is closed
-// and the coordinator gets a failed report.
+// Names the worker's tab after it, where Herdr would call it by its number. Best effort: tried
+// twice, as the tab may not exist yet, and a failure only leaves the number.
+async function nameTab($: EngineInterface, worker: string) {
+  for (let i = 0; i < 2; i++) {
+    try {
+      const ran = await $.process.run(['herdr-app', 'do', 'tab.rename', '--id', `hrd-${worker}`, '--name', worker], { timeoutMs: 10_000 })
+      if (ran.exitCode === 0) return
+    } catch {}
+    if (i === 0) await $.clock.sleep(1000)
+  }
+}
+
+// A start that failed (or was cut off by a reload): the screen of its terminal is kept, the terminal is
+// closed and the coordinator gets a failed report.
 async function startFailed($: EngineInterface, job: Job, err: unknown) {
   const current = await latestJob($, job.name)
   if (!current) return
@@ -774,19 +797,18 @@ async function startFailed($: EngineInterface, job: Job, err: unknown) {
   }
   const now = await $.clock.now()
   let reportFile: string | undefined
-  if (current.pane && (await $.fs.exists(current.dir))) {
+  if (current.address && (await $.fs.exists(current.dir))) {
     try {
-      const ran = await $.process.run(['herdr', 'pane', 'read', current.pane, '--source', 'visible'])
-      const text = ran.stdout.slice(-4000)
+      const text = (await readScreen($, current.name)).slice(-4000)
       const file = `${current.dir}/SCREEN-start-${now}.txt`
       await $.fs.write(file, text)
       await archive($, current.dir, file.slice(current.dir.length + 1), text)
       reportFile = file
     } catch {}
   }
-  if (current.tab) {
+  if (current.address) {
     try {
-      await herdr($, ['tab', 'close', current.tab])
+      await closeTerminal($, current.name)
     } catch {}
   }
   const { before, after } = await updateJob($, job.name, j =>
@@ -798,7 +820,7 @@ async function startFailed($: EngineInterface, job: Job, err: unknown) {
   const reason = err instanceof Error ? err.message : String(err)
   const held = before?.queued ?? []
   const body = [
-    `The worker did not start: ${reason}.${reportFile ? ` The screen of its tab is in ${reportFile}.` : ''}${current.tab ? ' Its tab was closed.' : ''}`,
+    `The worker did not start: ${reason}.${reportFile ? ` The screen of its tab is in ${reportFile}.` : ''}${current.address ? ' Its tab was closed.' : ''}`,
     ...(held.length > 0 ? [`[${held.length} message(s) held for it were not sent: ${held.join(', ')}.]`] : []),
   ].join('\n')
   await post($, `<herdr-agent name="${job.name}" profile="${job.profile}" status="failed">\n${body}\n</herdr-agent>`, true)
@@ -815,6 +837,20 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     }
   const text = e.text.trim()
   if (!text) return { deny: 'the message is empty' }
+  // hc refuses to type over a worker that waits at an approval or question. A question may be answered
+  // (forced); a permission, auth or unknown prompt is the person's to answer in its tab.
+  let force = false
+  if (job.status !== 'starting') {
+    try {
+      const now = await hc<HcTerminal>($, ['get', job.name])
+      const waits = now.state === 'live' && now.status?.state === 'blocked' ? now.status : undefined
+      if (waits?.kind === 'question') force = true
+      else if (waits)
+        return {
+          deny: `${e.worker} waits at ${waits.kind ? `a ${waits.kind} prompt` : 'an approval or question'} that only the person can answer. Ask them to answer it in its herdr tab.`,
+        }
+    } catch {}
+  }
   // The suffix keeps two messages sent in one millisecond apart.
   const path = `${job.dir}/MESSAGE-${await $.clock.now()}-${crypto.randomUUID().slice(0, 4)}.md`
   await $.fs.write(path, text)
@@ -826,13 +862,20 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     )
     return after !== undefined
   }
-  const typeIn = () =>
-    herdr($, [
-      'agent',
-      'prompt',
-      job.name,
-      `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
-    ])
+  // Returns why the text could not be typed, or undefined once it went in.
+  const typeIn = async () => {
+    try {
+      await hc($, [
+        'send',
+        job.name,
+        `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
+        ...(force ? ['--force'] : []),
+      ])
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+  const typedFailed = (why: string) => ({ deny: `could not type the message into ${e.worker}: ${why}` })
   if (job.status === 'starting') {
     // It has no CLI yet: the message goes in with its first prompt (see startWorker).
     const { after } = await updateJob($, job.name, j =>
@@ -845,7 +888,8 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
     if (kind === 'claude') {
-      await typeIn()
+      const why = await typeIn()
+      if (why) return typedFailed(why)
       return { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
     }
     if (await hold()) return heldResult
@@ -854,15 +898,17 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // Told to read TASK.md again, a worker that read it for its first task took it
   // for that task resent, did not open it and asked its DECISION lines again.
   // In the job's own step, so it cannot land between a report and the prompt that follows it.
-  let result: { result: string } | undefined
+  let result: { result: string } | { deny: string } | undefined
   await serial(job.name, async () => {
     const latest = await latestJob($, job.name)
     if (!latest) return
     if (latest.status === 'running') {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
-        await typeIn()
-        result = { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
+        const why = await typeIn()
+        result = why
+          ? typedFailed(why)
+          : { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
       } else {
         const { after } = await updateJob($, job.name, j =>
           j.status === 'running' ? { ...j, queued: [...(j.queued ?? []), path] } : undefined,
@@ -891,6 +937,8 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
       text.length <= MESSAGE_CHARS
         ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${text}\n\nDo what it says.`
         : `New message from your coordinator in ${path}, a file you have not read yet. It is not your earlier task again: it answers or follows your last report. Read it now and do what it says.`,
+      false,
+      force,
     )
     result = { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
   })
@@ -906,9 +954,9 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
       j.status === 'starting' ? { ...j, status: 'reported', reportStatus: 'stopped', endedAt, closed: true, tail: undefined } : undefined,
     )
     if (after) {
-      if (after.tab) {
+      if (after.address) {
         try {
-          await herdr($, ['tab', 'close', after.tab])
+          await closeTerminal($, job.name)
         } catch {}
       }
       return { result: `Stopped ${e.worker} while it was starting.${await belowTarget($)}` }
@@ -916,8 +964,7 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
   }
   await patchJob($, job.name, { status: 'reported', endedAt: await $.clock.now(), tail: undefined })
   try {
-    const agent = await herdr<{ agent: HerdrAgent }>($, ['agent', 'get', job.name])
-    await herdr($, ['tab', 'close', agent.agent.tab_id])
+    await closeTerminal($, job.name)
   } catch (err) {
     return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}` }
   }
@@ -928,9 +975,9 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
 // A reported worker keeps its tab, and its CLI, for follow-ups, so finished workers
 // piled up in herdr. Once one has sat idle `minutes` since its report, its tab is
 // closed; a later follow-up goes to a fresh worker. One with a question still open,
-// or that herdr shows working or blocked, keeps its tab. `agents` is the sweep's list:
+// or that hc shows working or blocked, keeps its tab. `agents` is the sweep's list:
 // undefined when that call failed, and then no tab is closed.
-export async function closeIdle($: EngineInterface, minutes: number, agents?: HerdrAgent[]) {
+export async function closeIdle($: EngineInterface, minutes: number, agents?: HcListed[]) {
   if (agents === undefined) return
   const now = await $.clock.now()
   const asking = new Set((await openQuestions($)).map(d => d.from))
@@ -938,16 +985,20 @@ export async function closeIdle($: EngineInterface, minutes: number, agents?: He
   for (const job of Object.values(await jobs($))) {
     if (job.status !== 'reported' || job.tail || job.closed || asking.has(job.name)) continue
     if (job.endedAt === undefined || now - job.endedAt < minutes * 60_000) continue
-    // A tab herdr no longer lists is marked closed without a close call.
+    // A worker hc no longer lists live is marked closed; its finished terminal, if it left one, is removed.
     const agent = agents.find(a => a.name === job.name)
     if (agent) {
-      if (agent.agent_status === 'working' || agent.agent_status === 'blocked') continue
+      if (agent.status === 'working' || agent.status === 'blocked') continue
       try {
-        await herdr($, ['tab', 'close', agent.tab_id])
+        await closeTerminal($, job.name)
       } catch {
         continue
       }
       closed.push(job.name)
+    } else {
+      try {
+        await hc($, ['rm', job.name])
+      } catch {}
     }
     // A message may have woken it meanwhile.
     await updateJob($, job.name, j => (j.status === 'reported' ? { ...j, closed: true } : undefined))

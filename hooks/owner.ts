@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Decision, Settled, Todo } from '../types'
 import { SETTLED_MS } from './defaults'
-import { notify } from './herdr'
+import { notify } from './hc'
 import { post } from './outbox'
 
 // What waits on the person: questions (ask_owner, workers' DECISION: lines) and
@@ -67,7 +67,7 @@ export async function ask(
       ...(quiet ? { quiet } : {}),
     },
   ])
-  if (!quiet) await notify($, `Decision D${id} needed (${from})`, question)
+  if (!quiet) notify($, `Decision D${id} needed (${from})`, question)
   return id
 }
 
@@ -78,9 +78,8 @@ export async function pingQuiet($: EngineInterface, pick: (d: Decision) => boole
     due = list.filter(d => d.quiet && pick(d))
     return due.length ? list.map(d => (due.includes(d) ? { ...d, quiet: false } : d)) : list
   })
-  if (due.length === 1) await notify($, `Decision D${due[0]!.id} needed (${due[0]!.from})`, due[0]!.question)
-  else if (due.length > 1)
-    await notify($, `${due.length} decisions need you`, due.map(d => `D${d.id} ${d.title ?? d.question}`).join(' · '))
+  if (due.length === 1) notify($, `Decision D${due[0]!.id} needed (${due[0]!.from})`, due[0]!.question)
+  else if (due.length > 1) notify($, `${due.length} decisions need you`, due.map(d => `D${d.id} ${d.title ?? d.question}`).join(' · '))
 }
 
 // The person picked an answer on the band: unpin it and hand it to the model.
@@ -108,7 +107,7 @@ export async function pin($: EngineInterface, text: string, kind: Todo['kind'], 
   let id = 0
   await update($, lastTodo, n => (id = n + 1))
   await update($, todos, list => [...list, { id, kind, text, from, at }])
-  if (kind === 'do') await notify($, `For you: T${id}`, text, false)
+  if (kind === 'do') notify($, `For you: T${id}`, text)
   else $.ui.toast(`T${id}: ${text}`)
   return { id, isNew: true }
 }
@@ -178,9 +177,9 @@ export async function settle($: EngineInterface, e: DecidedArgs) {
       ...gone.map(d => ({ id: d.id, from: d.from, question: d.question, ...(d.title ? { title: d.title } : {}), answer, by, at })),
     ])
     const names = gone.map(d => `D${d.id}${d.title ? ` ${d.title}` : ''}`).join(', ')
-    // A question the person was already pinged for gets a silent notification;
+    // A question the person was already pinged for gets a toast;
     // a quiet one they never heard of only shows on the band.
-    if (by === 'coordinator' && gone.some(d => !d.quiet)) await notify($, `${names} settled by coordinator`, answer, false)
+    if (by === 'coordinator' && gone.some(d => !d.quiet)) notify($, `${names} settled by coordinator`, answer)
     else $.ui.toast(`${names} settled by ${by}: ${answer}`)
   }
   const missing = [...ids].filter(id => !gone.some(d => d.id === id)).map(id => `D${id}`)

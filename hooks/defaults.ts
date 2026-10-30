@@ -12,8 +12,10 @@ export const PRUNE_MINUTES = 30
 // How long a reported worker's tab may sit idle before it is closed (`closeIdleMinutes`); 0 keeps it.
 export const CLOSE_IDLE_MINUTES = 30
 
-// A worker's name: also its herdr tab's label.
-export const NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
+// A worker's name: also its hc terminal's name (hc takes 32 characters at most) and its tab's label.
+export const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/
+// hc reads a name shaped like a terminal's address (t7, t1b) as that address, so workers cannot have one.
+export const ADDRESS_LIKE = /^t\d[0-9a-z]*$/
 // A report without a header (see report.ts) longer than this goes to the coordinator as its first line and its file's path.
 export const INLINE_LINES = 6
 export const INLINE_CHARS = 700
@@ -29,9 +31,11 @@ export const QUIET_MS = 5 * 60_000
 // The same for a worker whose status lines show background work of its own (a shell,
 // a monitor, a subagent): a dev server it left running must not hide it for good.
 export const QUIET_BUSY_MS = 60 * 60_000
-// How often a prompt is sent or submitted again when herdr sees no work start after it.
+// How often a prompt is sent or submitted again when hc sees no work start after it.
 export const PROMPT_TRIES = 3
-// How often the sweep reads herdr for every running worker at once (one `herdr agent list`).
+// How long to wait after pressing Enter on a prompt left in the input box before checking that work started.
+export const PROMPT_CHECK_MS = 5000
+// How often the sweep reads hc for every running worker at once (one `hc ls`).
 export const SWEEP_MS = 60_000
 // How many sweeps in a row must miss a worker's tab before it is reported gone: one failed
 // or late list does not end a job.

@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import { target, wrappingUp } from './config'
-import { notify } from './herdr'
+import { notify } from './hc'
 import { notesFolder, notesInstructions } from './notes'
 import { cmd } from './session'
 import { active, jobs } from './state'
@@ -14,7 +14,7 @@ export async function belowTarget($: EngineInterface) {
     const left = all.filter(active).length
     if (left > 0)
       return `\n\n[Wrapping up: ${left} worker${left === 1 ? '' : 's'} still out. The owner stopped new work: start no new workers (a reviewer for an open PR is allowed); send fixes with message and finish their PRs.]`
-    await notify($, 'herdr workers all finished', `Every worker has finished; none start until ${cmd('wrap-up')} off.`)
+    notify($, 'herdr workers all finished', `Every worker has finished; none start until ${cmd('wrap-up')} off.`)
     const folder = await notesFolder($)
     const notes = folder ? ` Before you stop:\n${notesInstructions(folder)}\n` : ' '
     return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand.${notes}Then stop. The owner ends it with ${cmd('wrap-up')} off.]`

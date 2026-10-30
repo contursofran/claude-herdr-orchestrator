@@ -1,11 +1,11 @@
 import type { EngineInterface } from 'claude-code'
-import { herdr, type HerdrAgent } from './herdr'
+import { closeTerminal, type HcListed, listTerminals } from './hc'
 import { session } from './session'
 import { dropOldJobs, jobs } from './state'
 
 // Every `pruneMinutes`, and on the prune command: removes the linked worktrees of the
 // repos this session's workers used once their branch's PR is merged on GitHub, the
-// tree is clean and no worker there is working or blocked. Closes those workers' tabs
+// tree is clean and no terminal there is working or blocked. Closes those workers' terminals
 // and deletes the local branch. Ignored files (node_modules, target) go with the tree;
 // anything uncommitted keeps it.
 let pruning = false
@@ -29,10 +29,17 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
     }
     if (commons.size === 0) return done
 
-    let agents: HerdrAgent[] = []
+    // Every live terminal in a tree keeps it while it works, whoever started it; only the workers
+    // this mod started (labelled) are closed.
+    let agents: HcListed[]
+    const mine = new Set<string>()
     try {
-      agents = (await herdr<{ agents?: HerdrAgent[] }>($, ['agent', 'list'])).agents ?? []
-    } catch {}
+      agents = await listTerminals($)
+      for (const w of await listTerminals($, ['herdr-agents.role=worker'])) mine.add(w.address)
+    } catch {
+      // Without both lists nothing is known about who is in a tree: no pass.
+      return done
+    }
     const inside = (wt: string) => agents.filter(a => a.cwd === wt || String(a.cwd ?? '').startsWith(`${wt}/`))
 
     for (const common of commons) {
@@ -48,7 +55,8 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
       for (const { path, branch } of trees) {
         if (!path || !branch || !(await $.fs.exists(path))) continue
         const here = inside(path)
-        if (here.some(a => a.agent_status === 'working' || a.agent_status === 'blocked')) continue
+        // Only a labelled worker that is idle, done or error is safe to close; any other terminal keeps the tree.
+        if (here.some(a => !mine.has(a.address) || !['idle', 'done', 'error'].includes(a.status ?? ''))) continue
         if ((await run(['git', '-C', path, 'status', '--porcelain'])) !== '') continue
         const remotes = (await run(['git', '-C', path, 'remote', '-v'])) ?? ''
         const slug = remotes.match(/github\.com[:/]([^/\s]+\/[^\s]+?)(?:\.git)?\s/)?.[1]
@@ -74,8 +82,9 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
         if ((await run(['git', '-C', path, 'rev-parse', 'HEAD'])) !== mergedHead) continue
 
         for (const a of here) {
+          if (!mine.has(a.address)) continue
           try {
-            await herdr($, ['tab', 'close', a.tab_id])
+            await closeTerminal($, a.address)
           } catch {}
         }
         if ((await run(['git', `--git-dir=${common}`, 'worktree', 'remove', path], 300_000)) === undefined) continue
