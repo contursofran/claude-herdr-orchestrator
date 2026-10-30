@@ -4,7 +4,7 @@
 // Workers the coordinator keeps busy (`target`).
 export const TARGET = 4
 // Context tokens past which the coordinator saves its state and is compacted (`resetAt`).
-export const RESET_AT = 200_000
+export const RESET_AT = 250_000
 // What every slash command starts with (`commandPrefix`).
 export const PREFIX = 'hrd-'
 // How often merged worktrees are pruned (`pruneMinutes`); 0 turns it off.
