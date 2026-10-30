@@ -7,7 +7,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { listOrder } from "./model.js";
+import { listOrder, parkedNote } from "./model.js";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 
 function find(node, id) {
@@ -237,11 +237,17 @@ export class AgentsList {
     list = ordered;
     setAgentOrder(list.map((a) => a.address));
 
+    // A worker parked on WAIT.json is idle to Herdr, like a finished one: a dim line under its row says what it waits for.
+    const parkedOf = (a) => (a.status === "idle" ? parkedNote(boards.list(), all, a.address) : null);
     const withKids = (a, i) => {
       const subs = collapsed ? [] : this.tree(all, a.address);
       const r = row(a, i, subs);
-      if (this.folded.has(a.address)) return [r];
-      return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
+      const parked = collapsed ? null : parkedOf(a);
+      const note = parked
+        ? [h_flex().id(`ag-wait-${a.address}`).px(8).pb(4).flex_none().text_size(11).text_color(t.dim).child(div().flex_1().min_w(0).truncate().child(`\u23f8 ${parked}`))]
+        : [];
+      if (this.folded.has(a.address)) return [r, ...note];
+      return [r, ...note, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
     };
 
     // The fold chevron; folded, the count too, colored by the most urgent one.
@@ -304,7 +310,8 @@ export class AgentsList {
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
       const when = this.since(a);
-      const idle = a.status === "idle" && !a.focused;
+      const parked = parkedOf(a);
+      const idle = a.status === "idle" && !a.focused && !parked;
       const isPinned = this.pins.includes(a.address);
       const pin = div()
         .id(`pin-${a.address}`)

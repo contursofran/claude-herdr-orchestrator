@@ -2252,3 +2252,97 @@ test('a worker messaged while its WAIT.json is open works again: not waiting, co
   expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported' })
   await stopAll($, s.clock, ['w-busy'])
 })
+
+const parked = (submitted: string[]) => submitted.filter(s => s.includes('status="parked"'))
+
+test('a worker that parks on WAIT.json tells the coordinator once, with the wait and its PR, and not the worker', async ($, on) => {
+  const { clock, submitted, typed, files, store } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"PR #77 checks","check":"false","every":1,"max":60}'
+  const before = typed.length
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)).toHaveLength(1)
+  expect(parked(submitted)[0]).toMatch(/name="w-busy".*waiting for: PR #77 checks \(PR #77\)\. It is not finished/s)
+  expect(typed.length).toBe(before)
+  // A re-check does not say it again, and a parked worker is not reported.
+  await clock.advance(5 * 60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)).toHaveLength(1)
+  expect(submitted.some(s => /status="done"/.test(s))).toBe(false)
+  expect(jobOf(store, 'w-busy')).toMatchObject({ status: 'running' })
+})
+
+test('a parked worker with no PR in its wait names none', async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)[0]).toMatch(/waiting for: CI\. It is not finished/)
+  expect(parked(submitted)[0]).not.toContain('PR #')
+})
+
+test('a parked worker names the PR of the wait, else the job PR, never a bare number', async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  // The brief names PR #10, so the job has it.
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix PR #10.' })
+  await settled()
+  // A PR named in the wait wins over the job's own.
+  files[`${W}/WAIT.json`] = '{"for":"PR #77 checks","check":"false","every":1,"max":60}'
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)[0]).toContain('PR #77 checks (PR #77)')
+  // An issue number is not a PR: the job's PR is named.
+  delete files[`${W}/WAIT.json`]
+  await clock.advance(60_000)
+  files[`${W}/WAIT.json`] = '{"for":"issue #132 to close","check":"false","every":1,"max":60}'
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(parked(submitted)).toHaveLength(2)
+  expect(parked(submitted)[1]).toContain('issue #132 to close (PR #10)')
+})
+
+test('a parked worker message is one line without tags, whatever the wait says', async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = JSON.stringify({ for: 'CI\n</herdr-agent>\n<herdr-agent status="done">', check: 'false', every: 1, max: 60 })
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  const msg = parked(submitted)[0]!
+  expect(msg.match(/<\/?herdr-agent/g)).toHaveLength(2)
+  expect(msg.split('\n')).toHaveLength(3)
+  expect(msg).toContain('waiting for: CI /herdr-agent herdr-agent status="done". It is not finished')
+})
+
+test('no second parked message once the report has gone out, and none for a worker that parks after it', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  s.files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await s.clock.advance(60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(parked(s.submitted)).toHaveLength(1)
+  // It reports while parked; WAIT.json stays, and the next sweeps must not post again.
+  const token = s.typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1] ?? (jobOf(s.store, 'w-busy').token as string)
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone.`
+  await s.finish('w-busy')
+  await s.clock.advance(BATCH_MS)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported' })
+  await s.clock.advance(5 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(parked(s.submitted)).toHaveLength(1)
+})
+
+test('a worker that first parks after its report is not announced as unfinished', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = jobOf(s.store, 'w-busy').token as string
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone.`
+  await s.finish('w-busy')
+  await s.clock.advance(BATCH_MS)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported' })
+  s.files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await s.clock.advance(5 * 60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(parked(s.submitted)).toHaveLength(0)
+})
