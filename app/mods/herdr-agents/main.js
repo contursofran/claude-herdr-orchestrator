@@ -6,7 +6,7 @@ import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
 import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, resolveBoard } from './model.js'
 import { pinbar, pinsView } from './pinbar.js'
-import { makePopupState, popupView, releasePopup, takeKeyboard } from './popup.js'
+import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
@@ -46,7 +46,7 @@ export default class HerdrAgents extends View {
       // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
       // `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
-      this.keys = takeKeyboard(cx)
+      this.popup = makePopupState(cx)
       this.watchAges(cx)
       return
     }
@@ -138,7 +138,7 @@ export default class HerdrAgents extends View {
   render(cx) {
     if (props()?.role === 'version') return versionView(this.version)
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
-    if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.keys))
+    if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup))
     if (props()?.role === 'board')
       return popupView(
         this.boards.list().find(b => b.session === props().session),
