@@ -1,7 +1,7 @@
-import { notify, setShared, shared } from 'herdr'
+import { nextCommand, notify, setShared, shared } from 'herdr'
 import { send } from './board.js'
 import { Outbox } from './outbox.js'
-import { deriveBar, doneAction, markRead, newBarState, newestPin, pruneRead } from './model.js'
+import { deriveBar, doneAction, markRead, newBarState, newestPin, pinStepDir, pruneRead, stepPin } from './model.js'
 
 const FLASH_MS = 2200 // 1.1 s, twice
 
@@ -15,6 +15,27 @@ export class PinCtl {
     this.bar = newBarState() // see deriveBar()
     this.flashId = null
     this.pruned = false
+    this.shown = null // the list and current pin of the last draw, for the keys
+  }
+
+  /** Keys: ctrl-cmd-[ and ctrl-cmd-] in layout:coordinator send herdr-agents.prevpin / nextpin here. */
+  listen(cx) {
+    cx.spawn(async cx => {
+      for (;;) {
+        const dir = pinStepDir(String(await nextCommand()))
+        if (dir && this.shown) this.step(this.shown.list, this.shown.current, dir, cx)
+        cx.notify()
+      }
+    })
+  }
+
+  /** Move to the previous or next pin, wrapping, and mark it read (as a click on its segment does). */
+  step(list, current, dir, cx) {
+    const id = stepPin(list, current, dir)
+    if (!id) return
+    this.bar = { ...this.bar, sel: id }
+    this.mark(id)
+    cx?.notify()
   }
 
   /** Called with the boards after each change. Drops read marks of boards that are gone, once; settles sent actions. */
@@ -44,6 +65,7 @@ export class PinCtl {
     })
     this.bar = state
     if (!board) return view
+    this.shown = { list, current: view.current }
     if (flashStart) {
       this.flashId = flashStart
       cx.timer.after(FLASH_MS, cx => {
@@ -64,6 +86,7 @@ export class PinCtl {
         this.mark(id)
         cx.notify()
       },
+      onStep: (dir, cx) => this.step(list, view.current, dir, cx),
       onRead: (id, cx) => {
         pick(null)
         this.mark(id)

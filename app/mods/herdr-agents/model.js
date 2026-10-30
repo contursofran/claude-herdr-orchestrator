@@ -199,7 +199,29 @@ export function slimLine(list) {
 
 /** The segments: one per pin, in board order, with the kind the bar draws (current, unread, read). */
 export function segments(list, current) {
-  return list.map(p => ({ id: p.id, kind: current && p.id === current.id ? 'current' : p.unread ? 'unread' : 'read' }))
+  return list.map(p => ({ id: p.id, title: p.title, kind: current && p.id === current.id ? 'current' : p.unread ? 'unread' : 'read' }))
+}
+
+/** The id of the pin `dir` (1 next, -1 previous) from `current`, wrapping round; null with fewer than 2 pins. */
+export function stepPin(list, current, dir) {
+  if (list.length < 2) return null
+  const at = Math.max(
+    0,
+    list.findIndex(p => p.id === current?.id),
+  )
+  return list[(at + dir + list.length) % list.length].id
+}
+
+/** 1 for `herdr-agents.nextpin`, -1 for `herdr-agents.prevpin`, else null. */
+export function pinStepDir(name) {
+  const m = /(?:^|\.)(next|prev)pin$/.exec(String(name))
+  return m ? (m[1] === 'next' ? 1 : -1) : null
+}
+
+/** The empty row's line: `No pins`, then `· 2 working` from the board's summary (zeros and missing left out). */
+export function emptyLine(board) {
+  const busy = board?.summary?.busy
+  return typeof busy === 'number' && busy > 0 ? `No pins · ${busy} working` : 'No pins'
 }
 
 /** Pin ids in `list` that were not in `prev` (a Set, or null on the first call, when nothing is new). */
@@ -323,6 +345,8 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
     view: {
       mode,
       current,
+      many: list.length > 1,
+      empty: emptyLine(board),
       segments: segments(list, current),
       slim: slimLine(list),
       meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
