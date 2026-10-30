@@ -8,13 +8,14 @@ export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
 export class Boards {
   constructor() {
     this.files = {}
+    this.texts = {}
   }
 
   list() {
     return Object.values(this.files)
   }
 
-  /** One full read, then only the files the watcher reports. No timers: the plugin writes on its own 3 s tick. */
+  /** One full read, then only the files the watcher reports. No timers: the plugin writes when something changes. */
   start(cx, onChange) {
     cx.spawn(async cx => {
       const dir = boardDir()
@@ -34,8 +35,9 @@ export class Boards {
         const paths = await changed
         changed = watchFolder(dir)
         const ids = new Set(paths.map(p => boardIdIn(dirs, p)).filter(Boolean))
-        for (const id of ids) await this.load(dir, id)
-        if (ids.size) onChange(cx)
+        let moved = false
+        for (const id of ids) if (await this.load(dir, id)) moved = true
+        if (moved) onChange(cx)
       }
     })
   }
@@ -54,20 +56,23 @@ export class Boards {
         const paths = await changed
         changed = watchFolder(dir)
         if (!touchesBoard(session, paths)) continue
-        await this.load(dir, session)
-        onChange(cx)
+        if (await this.load(dir, session)) onChange(cx)
       }
     })
   }
 
+  /** True when the file's text differs from the last read: the watcher also reports writes that change nothing. */
   async load(dir, id) {
     let text = null
     try {
       text = await readTextFile(`${dir}/${id}.json`)
     } catch {
-      return // unreadable right now: keep what we have
+      return false // unreadable right now: keep what we have
     }
+    if (text === this.texts[id]) return false
+    this.texts[id] = text
     this.files = applyFile(this.files, id, text)
+    return true
   }
 }
 

@@ -1047,3 +1047,46 @@ test('parkedNote: a worker parked on WAIT.json shows what it waits for; finished
   assert.equal(parkedNote(boards, terminals, 't9'), null)
   assert.equal(parkedNote(undefined, undefined, 't1'), null)
 })
+
+test('parkedNote: a board with `since` keeps its note whole; an older board loses the clock in front', async () => {
+  const { parkedNote } = await import('../mods/herdr-agents/model.js')
+  const terms = [{ address: 'a', name: 'w' }]
+  const with_ = w => [{ workers: [{ name: 'w', state: 'waiting', ...w }] }]
+  assert.equal(parkedNote(with_({ note: 'PR checks', since: 5 }), terms, 'a'), 'PR checks')
+  assert.equal(parkedNote(with_({ note: '10:30 · standup', since: 5 }), terms, 'a'), '10:30 · standup')
+  assert.equal(parkedNote(with_({ note: '02:13 · PR checks' }), terms, 'a'), 'PR checks')
+  assert.equal(parkedNote(with_({ note: '02:13 · PR checks', since: null }), terms, 'a'), 'PR checks')
+})
+
+test('drawnKey: each copy changes only with what it draws', async () => {
+  const { drawnKey } = await import('../mods/herdr-agents/model.js')
+  const base = {
+    session: 's',
+    at: 1,
+    coordinator: { terminal: 't' },
+    workers: [{ name: 'w', state: 'waiting', note: 'CI', since: 5, startedAt: 1 }],
+    tasks: [{ key: 'k', who: { text: 'w 1m' } }],
+    needs: [],
+  }
+  const other = { ...base, session: 'o' }
+  const key = (role, b, session) => drawnKey(role, b, session)
+  for (const role of ['agents', 'board', 'pinbar', 'strip', 'card']) {
+    assert.equal(key(role, [{ ...base, at: 2 }], 's'), key(role, [base], 's'), `${role}: the time of a write draws nothing`)
+  }
+  // A task row's minute: only the pop-up draws those.
+  const minute = { ...base, tasks: [{ key: 'k', who: { text: 'w 2m' } }] }
+  assert.notEqual(key('board', [minute], 's'), key('board', [base], 's'))
+  for (const role of ['agents', 'pinbar', 'strip', 'card']) assert.equal(key(role, [minute], 's'), key(role, [base], 's'), role)
+  // The pop-up draws one board, whichever other one moves.
+  assert.equal(key('board', [base, { ...other, needs: [1] }], 's'), key('board', [base, other], 's'))
+  assert.notEqual(key('pinbar', [base, { ...other, needs: [1] }], 's'), key('pinbar', [base, other], 's'))
+  // The agents list draws the workers' lines and who is a coordinator, not the needs.
+  const need = { ...base, needs: [{ key: 'D1' }] }
+  assert.equal(key('agents', [need], 's'), key('agents', [base], 's'))
+  assert.notEqual(key('strip', [need], 's'), key('strip', [base], 's'))
+  const note = { ...base, workers: [{ ...base.workers[0], note: 'PR' }] }
+  assert.notEqual(key('agents', [note], 's'), key('agents', [base], 's'))
+  const coord = { ...base, coordinator: { terminal: 'x' } }
+  assert.notEqual(key('agents', [coord], 's'), key('agents', [base], 's'))
+  assert.notEqual(key('agents', [base, other], 's'), key('agents', [base], 's'), 'a board gone or new')
+})

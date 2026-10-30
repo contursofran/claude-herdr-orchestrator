@@ -263,6 +263,18 @@ test('every board change settles the card outbox, so a failed send shows (the pa
   assert.deepEqual(calls.at(-1), ['pin', 1])
 })
 
+test('onBoardsChanged redraws when the picture changed or a sent action settled, and otherwise not', () => {
+  const run = (drawn, settled) => {
+    let notified = 0
+    const parts = { pinbar: true, pin: { onBoards: () => settled }, card: null, strip: null }
+    onBoardsChanged(parts, [], { notify: () => notified++ }, () => drawn)
+    return notified
+  }
+  assert.equal(run(false, false), 0)
+  assert.equal(run(true, false), 1)
+  assert.equal(run(false, true), 1)
+})
+
 test("D25's whole text and both options reach the card, and so do six long options with their impacts", () => {
   const d25 = JSON.parse(readFileSync(new URL('../fixtures/d25.json', import.meta.url), 'utf8'))
   const v = cardView(d25, 'D25', { now: 1790000000000 })

@@ -4,7 +4,7 @@ import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
 import { onBoardsChanged } from './cardstate.js'
-import { HEARTBEAT_MS, resolveBoard } from './model.js'
+import { HEARTBEAT_MS, drawnKey, resolveBoard } from './model.js'
 import { pinbar } from './pinbar.js'
 import { popupView } from './popup.js'
 import { PinCtl } from './pinctl.js'
@@ -26,14 +26,15 @@ export default class HerdrAgents extends View {
       this.agentsList = new AgentsList()
       if (props()?.sortMenu) return
       this.boards = new Boards()
-      this.boards.start(cx, cx => cx.notify())
+      this.boards.start(cx, cx => this.drawnChanged() && cx.notify())
       this.agentsList.init(cx)
       return
     }
     this.boards = new Boards()
     if (props()?.role === 'board') {
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
-      this.boards.startOne(cx, props().session, props().board, cx => cx.notify())
+      this.boards.startOne(cx, props().session, props().board, cx => this.drawnChanged() && cx.notify())
+      this.drawnChanged() // the board the strip passed is what the first draw shows
       return
     }
     this.last = null
@@ -45,7 +46,9 @@ export default class HerdrAgents extends View {
     this.part = props()?.role === 'strip' ? new StripState() : null
     this.beating = pinbarCopy
     this.boards.start(cx, cx => {
-      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx)
+      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx, () =>
+        this.drawnChanged(),
+      )
       // The first read says which coordinators are live: tell the plugin now, not 30 s later.
       if (this.beating && !this.started) {
         this.started = true
@@ -56,6 +59,14 @@ export default class HerdrAgents extends View {
     if (pinbarCopy) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
+  }
+
+  /** Whether what this copy draws from the boards changed since it last asked. */
+  drawnChanged() {
+    const key = drawnKey(props()?.role, this.boards.list(), props()?.session)
+    if (key === this.drawn) return false
+    this.drawn = key
+    return true
   }
 
   beat(cx) {

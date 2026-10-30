@@ -8,8 +8,9 @@ import { boardAct, boardInputs, boardSnapshot, type BoardAction } from './side'
 // is one press of a sidebar button, done on the next pass and removed. What came of the
 // last few is in the snapshot's `actions`.
 
-// What the snapshot last written was built from, and what came of the last actions.
+// What the snapshot last written was built from, the snapshot itself without its time, and what came of the last actions.
 let written = ''
+let shown = ''
 let results: { id: string; ok: boolean; message: string }[] = []
 
 async function paths($: EngineInterface) {
@@ -25,11 +26,20 @@ export async function publishBoard($: EngineInterface) {
   const inputs = (await boardInputs($)) + JSON.stringify(results)
   if (inputs === written) return
   const snap = { ...(await boardSnapshot($)), actions: results }
+  // The inputs hold the minute and a wait's last check: when they move and the snapshot says the same, there is nothing to tell (#151).
+  const same = JSON.stringify({ ...snap, at: 0 })
+  if (same === shown) {
+    written = inputs
+    return
+  }
   await $.process.run(['mkdir', '-p', inbox])
   // Written beside it and moved over it, so a reader never sees half a file.
   await $.fs.write(`${file}.tmp`, JSON.stringify(snap, null, 2))
   const moved = await $.process.run(['mv', '-f', `${file}.tmp`, file])
-  if (moved.exitCode === 0) written = inputs
+  if (moved.exitCode === 0) {
+    written = inputs
+    shown = same
+  }
 }
 
 async function takeActions($: EngineInterface, inbox: string) {

@@ -44,6 +44,22 @@ export function applyFile(boards, id, text) {
   }
 }
 
+/** What one copy of the mod draws from the boards, as text: a board change that leaves this the same needs no redraw, and every
+ *  redraw of a mod redraws the whole window (#151). `at` is left out everywhere: it says only that the file was written.
+ *  The agents list draws coordinators and parked workers; the pop-up its own board; the pin bar, strip and card no task rows. */
+export function drawnKey(role, boards, session) {
+  const list = boards ?? []
+  if (role === 'agents')
+    return JSON.stringify(
+      list.map(b => [b.session, b.coordinator?.terminal, (b.workers ?? []).map(w => [w?.name, w?.state, w?.note, w?.since])]),
+    )
+  if (role === 'board') {
+    const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
+    return JSON.stringify(board)
+  }
+  return JSON.stringify(list.map(({ at: _at, tasks: _tasks, ...b }) => b))
+}
+
 /** The value of one label on a terminal; core terminals carry `labels` as an object (`labels["herdr.space"]`). */
 export function labelOf(terminal, key) {
   const labels = terminal?.labels
@@ -75,7 +91,7 @@ function choose(candidates, last) {
  * started by hand in a coordinator's terminal inherits its HC_TERMINAL_ID and writes a board of its own, and a
  * space can hold two coordinators). The board shown in a space stays shown, whatever rule found it, while its
  * file exists and still matches; otherwise the newest `at` wins, and equal ones go by session id.
- * Without that, boards rewritten every 3 s would swap places on every write.
+ * Without that, boards rewritten side by side would swap places on every write.
  */
 export function resolveBoard(boards, terminals, focus, last = null) {
   const picks = last ?? {}
@@ -437,13 +453,13 @@ export function parkedNote(boards, terminals, address) {
   if (!name) return null
   for (const b of boards ?? []) {
     const w = (b.workers ?? []).find(x => x?.name === name && x.state === 'waiting')
-    if (w)
-      return (
-        String(w.note ?? '')
-          .split('\n')[0]
-          .trim()
-          .replace(/^(\d{1,2}:\d{2}|\d+h\d{2}) · /, '') || 'waiting'
-      )
+    if (w) {
+      const line = String(w.note ?? '')
+        .split('\n')[0]
+        .trim()
+      // Only a board from before `since` has a clock in front of its note.
+      return (typeof w.since === 'number' ? line : line.replace(/^(\d{1,2}:\d{2}|\d+h\d{2}) · /, '')) || 'waiting'
+    }
   }
   return null
 }

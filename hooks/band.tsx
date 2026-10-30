@@ -115,7 +115,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
     const l = ids
       ? { label: `Waiting for ${ids.join(', ')}`, color: 'claude', dim: false }
       : r.state === 'waiting'
-        ? { label: `⏸ ${r.note ?? 'Waiting'}`, dim: true }
+        ? { label: `⏸ ${r.since === undefined ? '' : `${elapsed(now - r.since)} · `}${r.note ?? 'Waiting'}`, dim: true }
         : (look[r.state] ?? { label: r.state, dim: true })
     return (
       <Text key={r.name} wrap="truncate-end">
