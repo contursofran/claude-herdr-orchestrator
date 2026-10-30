@@ -55,6 +55,7 @@ import glob
 import json
 import os
 import re
+import shlex
 import statistics
 import time
 from datetime import datetime
@@ -128,6 +129,10 @@ NOT_PROMPTS = ("<bash-input>", "<bash-stdout>", "<bash-stderr>", "<local-command
 MERGE_CMD = re.compile(r"\bgh\s+pr\s+merge\s+(?:\S*/pull/)?(\d+)")
 MERGE_REPO = re.compile(r"(?:--repo|-R)[ =]\s*[\"']?([\w.-]+/[\w.-]+)")
 MERGE_VERSION = re.compile(r"(?:--subject|-t)[ =]\s*[\"']?Version\b")
+LOCAL_MERGE = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?merge\b([^;&|\n]*)")
+MERGE_VALUE_FLAGS = ("-m", "--message", "-F", "--file", "-s", "--strategy", "-X", "--strategy-option")
+MERGE_ENDS = ("--abort", "--continue", "--quit")
+BASE_BRANCH = re.compile(r"(?:(?:origin|upstream)/)?(?:main|master|trunk|develop)$")
 MERGED_EVENT = re.compile(r'<herdr-pipeline\b([^>]*\bevent="merged"[^>]*)>')
 
 
@@ -150,6 +155,32 @@ def merges(cmd):
         rest = cmd[m.end() : found[i + 1].start() if i + 1 < len(found) else len(cmd)]
         repo = MERGE_REPO.search(rest)
         out.append((repo.group(1) if repo else "", int(m.group(1)), bool(MERGE_VERSION.search(rest))))
+    return out
+
+
+def local_merges(cmd):
+    """The branches a Bash command merges with `git merge`, for repos with no `gh pr merge` (no remote).
+
+    A merge of a base branch (main, origin/main, ...) is a catch-up into a worker branch, not a landed slice; so is
+    --abort/--continue/--quit. The command cannot say which branch is checked out, so merging a branch into another
+    worker branch is counted like any other.
+    """
+    out = []
+    for m in LOCAL_MERGE.finditer(cmd):
+        try:
+            words = shlex.split(m.group(1))
+        except ValueError:  # an unbalanced quote
+            words = m.group(1).split()
+        if any(w in MERGE_ENDS for w in words):
+            continue
+        skip = False
+        for w in words:
+            if skip:
+                skip = False
+            elif w in MERGE_VALUE_FLAGS:
+                skip = True
+            elif not w.startswith("-") and not BASE_BRANCH.match(w):
+                out.append(w)
     return out
 
 
@@ -369,7 +400,7 @@ class Session:
         self.worker = None
         self.quiet = 0
         self.kinds = {k: {"prompts": 0, "turns": 0} for k in KINDS}  # prompts that woke the coordinator, and model turns after them
-        self.merged = set()  # (repo, number) of each worker-built PR merged in the window
+        self.merged = set()  # (repo, number) of each worker-built PR merged in the window; ("", branch) for a local `git merge`
 
     def reports_in(self, ts, tag, text):
         """Adds a report for every <herdr-agent> block in the prompt; returns the last, which takes the reaction."""
@@ -488,6 +519,7 @@ def scan(path, since):
             elif name == "Bash":
                 cmd = str(args.get("command") or "")
                 keys = [(repo, n) for repo, n, version in merges(cmd) if not version]
+                keys += [("", branch) for branch in local_merges(cmd)]  # (repo, branch): a local merge has no PR number
                 if keys:
                     merging[b.get("id")] = keys
                 if WORKTREE_ADD.search(cmd):

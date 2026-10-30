@@ -965,6 +965,38 @@ class PerMergedPr(unittest.TestCase):
         s = self.run_session(build)
         self.assertEqual(s.merged, {("", 5), ("o/r", 12)})
 
+    def test_a_local_git_merge_counts_once_per_branch(self):
+        def build(c):
+            c.assistant(10, "l0", OPUS, usage(inp=1), [call("g1", "Bash", command="git merge --no-ff agent/m5.7a-view-core -m 'Merge m5.7a'")])
+            c.result(11, "g1")
+            c.assistant(12, "l1", OPUS, usage(inp=1), [call("g2", "Bash", command="cd /r && git merge --ff-only agent/m5.7a-view-core && git merge --squash agent/m6")])
+            c.result(13, "g2")
+        s = self.run_session(build)
+        self.assertEqual(s.merged, {("", "agent/m5.7a-view-core"), ("", "agent/m6")})
+
+    def test_a_catch_up_merge_of_the_base_branch_is_not_counted(self):
+        def build(c):
+            for i, cmd in enumerate(["git merge main", "git -C wt merge origin/main --no-edit", "git merge --abort", "git merge --continue"]):
+                c.assistant(10 + 2 * i, f"c{i}", OPUS, usage(inp=1), [call(f"g{i}", "Bash", command=cmd)])
+                c.result(11 + 2 * i, f"g{i}")
+        s = self.run_session(build)
+        self.assertEqual(s.merged, set())
+
+    def test_a_local_git_merge_that_errors_is_not_counted(self):
+        def build(c):
+            c.assistant(10, "e0", OPUS, usage(inp=1), [call("g1", "Bash", command="git merge agent/m7")])
+            c.result(11, "g1", is_error=True)  # conflict: not merged
+        s = self.run_session(build)
+        self.assertEqual(s.merged, set())
+
+    def test_local_merges_give_t_per_pr(self):
+        def build(c):
+            c.assistant(10, "p0", OPUS, usage(inp=1), [call("g1", "Bash", command="git merge agent/m1")])
+            c.result(11, "g1")
+        row = hm.coordinator_row(self.run_session(build))
+        self.assertEqual(row["merged_prs"], 1)
+        self.assertIsNotNone(row["mech_turns_per_pr"])
+
     def test_no_merged_pr_gives_none_not_a_division_error(self):
         s = self.run_session(lambda c: None)
         row = hm.coordinator_row(s)
