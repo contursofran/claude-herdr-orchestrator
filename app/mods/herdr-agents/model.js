@@ -10,6 +10,16 @@ export function boardId(dir, path) {
   return m ? m[1] : null
 }
 
+/** boardId against several spellings of the same folder (the one asked for and its resolved path,
+ *  as the watcher may report either when the folder is reached through a link such as /tmp). */
+export function boardIdIn(dirs, path) {
+  for (const dir of dirs) {
+    const id = boardId(dir, path)
+    if (id) return id
+  }
+  return null
+}
+
 /** The boards after one file changed. `text` is the file's new content, or null when it is gone.
  *  A file that does not parse keeps the last good copy; a removed file drops the board. */
 export function applyFile(boards, id, text) {
