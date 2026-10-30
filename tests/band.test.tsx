@@ -256,6 +256,31 @@ test('a report with status: blocked shows Blocked, and a message to the worker e
   expect(await band()).not.toMatch(/Blocked/)
 })
 
+test('a blocked report delivered early stays Blocked while its turn finishes', async ($, on) => {
+  const { clock, files, emit, typed } = await start($, on)
+  files['/repo/COORDINATOR-STATE.md'] = '# S\n'
+  await spawn($, ['w-a'])
+  await emit('w-a', 'working')
+  const token = typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  files['/repo-w-a/.herdr-agents/w-a/RESULT.md'] =
+    `<!-- report ${token} -->\n\`\`\`report\nstatus: blocked\nsummary: needs an answer\n\`\`\`\nWhich branch?`
+  // Delivered early: the worker still works, finishing its last message.
+  await clock.advance(12_000)
+  const band = async () => {
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const text = (await ui.find({ key: 'col0' }))?.text ?? ''
+    await ui.unmount()
+    return text
+  }
+  expect(await band()).toMatch(/Blocked/)
+  // A sweep sees it working: that is its report's turn, not an answer.
+  await clock.advance(60_000)
+  expect(await band()).toMatch(/Blocked/)
+  await emit('w-a', 'done')
+  await clock.advance(3000)
+  expect(await band()).toMatch(/Blocked/)
+})
+
 test('stopping a worker whose report said blocked ends Blocked and keeps its report line', async ($, on) => {
   const { band, clock, files } = await blockedReport($, on)
   await clock.advance(3000)

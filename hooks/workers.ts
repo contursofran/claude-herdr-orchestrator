@@ -246,13 +246,13 @@ async function settleTail($: EngineInterface, job: Job, status: string) {
   await endTail($, job)
 }
 
-// A reported job that works again was answered in its tab: it is no longer blocked (its turn is
-// still on, so the watch stays as an early report's). Returns the job as it is now.
+// A blocked report (tail 'blocked') whose worker works again was answered in its tab: it is no longer
+// blocked (its turn is still on, so the watch stays as an early report's). A job with tail 'early' is left
+// as it is: its worker working means the turn it reported in is still on, not that anyone answered it.
+// Returns the job as it is now.
 async function answered($: EngineInterface, job: Job) {
   const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && j.tail
-      ? { ...j, tail: j.tail === 'blocked' ? 'early' : j.tail, headerStatus: undefined }
-      : undefined,
+    j.token === job.token && j.status === 'reported' && j.tail === 'blocked' ? { ...j, tail: 'early', headerStatus: undefined } : undefined,
   )
   return after ?? job
 }
