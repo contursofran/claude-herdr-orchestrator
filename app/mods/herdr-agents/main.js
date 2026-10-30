@@ -4,12 +4,16 @@ import { AgentsList } from './agents.js'
 import { Boards } from './board.js'
 import { resolveBoard } from './model.js'
 import { pinbar } from './pinbar.js'
+import { PinCtl } from './pinctl.js'
 import { StripState, strip } from './strip.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
 // Role `agents` is the agents list (agents.js), which keeps state of its own. Roles still to come (card, board,
-// sheet, pins) draw nothing.
-const roles = { pinbar, strip }
+// sheet, pins) draw nothing. Each role takes what it needs from the same bag.
+const roles = {
+  pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
+  strip: (board, x) => strip(board, x.strip),
+}
 
 export default class HerdrAgents extends View {
   init(_props, cx) {
@@ -24,9 +28,12 @@ export default class HerdrAgents extends View {
     }
     this.boards = new Boards()
     this.last = null
+    this.pin = new PinCtl()
+    const pinbarCopy = props()?.role === 'pinbar'
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
     this.boards.start(cx, cx => {
+      if (pinbarCopy) this.pin.onBoards(this.boards.list())
       this.part?.observe(cx, this.boards.list())
       cx.notify()
     })
@@ -41,6 +48,10 @@ export default class HerdrAgents extends View {
     const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
     this.last = found.pick
     if (this.part) this.part.board = found.board
-    return draw(found.board, { part: this.part, boards: this.boards.list(), terminals: terminals() })
+    return draw(found.board, {
+      pin: this.pin,
+      cx,
+      strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
+    })
   }
 }
