@@ -723,6 +723,21 @@ test('the report rule keeps temp files, PR bodies included, in the job folder', 
   await stopAll($, clock, ['w-env'])
 })
 
+test('the report rule carries a WAIT.json example for CI that is valid JSON', async ($, on) => {
+  const { clock, typed, files } = await start($, on, claudeX)
+  await spawnX($)
+  const rules = files['/repo/wt/.herdr-agents/w-env/REPORTING.md']
+  const example = rules.match(/\{"for": "CI on PR #123".*\}/)?.[0] ?? ''
+  expect(typed[0]).toContain(example)
+  expect(JSON.parse(example)).toEqual({
+    for: 'CI on PR #123',
+    check: `gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!="pending")' | grep -q true`,
+    every: 3,
+    max: 45,
+  })
+  await stopAll($, clock, ['w-env'])
+})
+
 test('the report rule puts the repo and owner rules on attribution over a session reminder', async ($, on) => {
   const { clock, typed, files } = await start($, on, claudeX)
   await spawnX($)
