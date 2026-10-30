@@ -129,10 +129,14 @@ export async function repoTop($: EngineInterface, repo?: string) {
   return r.ok && r.out ? r.out : undefined
 }
 
-// The branch origin/HEAD points to; main when the repo has none.
+// The branch origin/HEAD points to; else, only in a repo with no origin remote, the branch the checkout is on; else main.
 export async function defaultBase($: EngineInterface, top: string) {
   const r = await git($, ['-C', top, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-  return (r.ok && r.out.replace(/^origin\//, '')) || 'main'
+  const head = r.ok && r.out.replace(/^origin\//, '')
+  if (head) return head
+  if ((await git($, ['-C', top, 'remote', 'get-url', 'origin'])).ok) return 'main'
+  const on = await git($, ['-C', top, 'branch', '--show-current'])
+  return (on.ok && on.out) || 'main'
 }
 
 // The quick, local checks before a worktree is made. Returns a denial reason, or whether the folder
@@ -166,20 +170,24 @@ export async function validBranch($: EngineInterface, name: string) {
 }
 
 // Fetches the base and the branch, and adds the worktree: on the local branch if there is one, else on origin's, else a
-// new branch off origin/<base>. Throws with git's error.
+// new branch off origin/<base>. A repo with no origin remote fetches nothing and branches off the local <base>.
+// Throws with git's error.
 export async function createWorktree($: EngineInterface, top: string, branch: string, base: string, path: string) {
   // Both names are checked again here: a name that starts with - would reach git as an option.
   for (const name of [base, branch]) if (!(await validBranch($, name))) throw new Error(`${name} is not a valid branch name`)
-  const fetched = await git($, ['-C', top, 'fetch', 'origin', base], 120_000)
-  if (!fetched.ok) throw new Error(`git fetch origin ${base} failed: ${fetched.err || fetched.out}`)
-  // The branch may live only on the remote, or be older here; a failure (no such branch yet) is fine.
-  if (branch !== base) await git($, ['-C', top, 'fetch', 'origin', branch], 120_000)
+  const remote = (await git($, ['-C', top, 'remote', 'get-url', 'origin'])).ok
+  if (remote) {
+    const fetched = await git($, ['-C', top, 'fetch', 'origin', base], 120_000)
+    if (!fetched.ok) throw new Error(`git fetch origin ${base} failed: ${fetched.err || fetched.out}`)
+    // The branch may live only on the remote, or be older here; a failure (no such branch yet) is fine.
+    if (branch !== base) await git($, ['-C', top, 'fetch', 'origin', branch], 120_000)
+  }
   const has = async (ref: string) => (await git($, ['-C', top, 'rev-parse', '--verify', '--quiet', ref])).ok
   const args = (await has(`refs/heads/${branch}`))
     ? ['worktree', 'add', path, branch]
-    : (await has(`refs/remotes/origin/${branch}`))
+    : remote && (await has(`refs/remotes/origin/${branch}`))
       ? ['worktree', 'add', '-b', branch, path, `origin/${branch}`]
-      : ['worktree', 'add', '-b', branch, path, `origin/${base}`]
+      : ['worktree', 'add', '-b', branch, path, remote ? `origin/${base}` : `refs/heads/${base}`]
   const added = await git($, ['-C', top, ...args], 120_000)
   if (!added.ok) throw new Error(`git ${args.join(' ')} failed: ${added.err || added.out}`)
 }
