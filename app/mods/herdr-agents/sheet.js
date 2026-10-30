@@ -305,12 +305,20 @@ export function sheetBlock(boards, ctl, cx) {
         .px(20)
         .py(14)
         .child(header(view, board, close, cx))
-        .when(!narrow, el =>
-          el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)),
-        )
+        .when(!narrow, el => el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)))
         .when(narrow, el =>
           el.child(
-            div().id('sheet-scroll').flex_1().min_h_0().overflow_y_scrollbar().flex().flex_col().gap(12).child(waiting).child(right).child(left),
+            div()
+              .id('sheet-scroll')
+              .flex_1()
+              .min_h_0()
+              .overflow_y_scrollbar()
+              .flex()
+              .flex_col()
+              .gap(12)
+              .child(waiting)
+              .child(right)
+              .child(left),
           ),
         )
         .child(

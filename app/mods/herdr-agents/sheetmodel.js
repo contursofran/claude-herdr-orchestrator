@@ -183,9 +183,7 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
     waitingOn: waitingOn(board, key),
     why: whyText(need, fileText),
     whyFile: whyFile(board, need),
-    source: [need?.from, { excerpt: 'excerpt', file: 'RESULT.md' }[whySource(need)], ageText(need?.at, now)]
-      .filter(Boolean)
-      .join(' · '),
+    source: [need?.from, { excerpt: 'excerpt', file: 'RESULT.md' }[whySource(need)], ageText(need?.at, now)].filter(Boolean).join(' · '),
     refs: sheetRefs(board, need),
     ask: askTarget(board),
   }
@@ -267,5 +265,7 @@ export function sheetMore(view, size) {
 /** The line under the sheet: which keys do what, and first of all (it may be cut) that there is more to scroll to. */
 export function sheetHint({ options = 0, paged = false, more = false } = {}) {
   const n = Math.min(Math.max(Number(options) || 0, 0), 3)
-  return [more ? 'scroll for more' : '', n ? `${n === 1 ? '1' : `1-${n}`} choose` : '', paged ? '← → page' : '', 'esc closes'].filter(Boolean).join(' · ')
+  return [more ? 'scroll for more' : '', n ? `${n === 1 ? '1' : `1-${n}`} choose` : '', paged ? '← → page' : '', 'esc closes']
+    .filter(Boolean)
+    .join(' · ')
 }
