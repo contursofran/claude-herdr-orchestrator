@@ -285,6 +285,8 @@ declare module 'claude-code' {
       orchestrating: boolean
       settings: SettingsView
       side: SideView
+      // whether the Herdr app mod drew this session's board at the last check; changing it redraws the band
+      appmod: { shown: boolean }
     }
   }
 }

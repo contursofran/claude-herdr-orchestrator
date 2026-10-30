@@ -36,10 +36,11 @@ test('app/keys.json: the strip keys sit in layout:coordinator, ctrl-cmd-1..6, an
     ...[1, 2, 3, 4, 5, 6].map(n => [`ctrl-cmd-${n}`, `herdr-agents.pick${n}`]),
     ['ctrl-cmd-[', 'herdr-agents.prevpin'],
     ['ctrl-cmd-]', 'herdr-agents.nextpin'],
+    ['ctrl-cmd-b', 'herdr-agents.board'],
   ])
   const r = mergeKeys({ global: { 'cmd-1': 'tab.select:1' } }, wanted)
   assert.equal(r.keys['layout:coordinator']['ctrl-cmd-3'], 'herdr-agents.pick3')
-  assert.equal(r.added.length, 8)
+  assert.equal(r.added.length, 9)
   // Run again over the result: nothing more to add, nothing skipped.
   const again = mergeKeys(r.keys, wanted)
   assert.deepEqual([again.added, again.skipped], [[], []])

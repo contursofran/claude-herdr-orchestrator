@@ -1,17 +1,23 @@
 import { div, svg } from 'gpui-kit'
-import { nextCommand, notify, playSound, shared, terminals } from 'herdr'
+import { closeOverlay, nextCommand, notify, openOverlay, playSound, run, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
   counts,
   flashing,
+  isBoardCommand,
   isUnseen,
   nextPick,
   observeArrivals,
   otherCount,
+  overlayPlan,
   pickAt,
   pickNumber,
+  POPUP_W,
+  popupHeight,
+  popupSpot,
   stripItems,
+  workRows,
 } from './model.js'
 import { Arrivals } from './arrivals.js'
 import { closeCard, openCard } from './cardctl.js'
@@ -78,6 +84,10 @@ export class StripState {
     cx.spawn(async cx => {
       for (;;) {
         const name = String(await nextCommand())
+        if (isBoardCommand(name)) {
+          openBoardPopup(this.board)
+          continue
+        }
         const n = pickNumber(name)
         if (!n) continue
         const item = pickAt(stripItems(this.board), n)
@@ -96,8 +106,46 @@ export class StripState {
     const current = shared('hrd.pick')
     const next = nextPick(current, board.session, item.key, toggle)
     if (!next) closeCard()
-    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) openCard(board, item)
+    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) {
+      // One overlay at a time: the pop-up goes before the card opens.
+      if (overlayPlan('card', { popup: Boolean(popupId), card: false }).closePopup) closeBoardPopup()
+      openCard(board, item)
+    }
   }
+}
+
+/** Open the work table above the strip, right aligned. Only the owner's click or key calls this. One overlay at a
+ *  time: an open card goes first. The popup's root has a fixed size, so its height is
+ *  worked out here from the rows and handed over as a prop. */
+let popupId = null
+
+/** Close the pop-up if one is up (its id may be stale when the pop-up closed itself). */
+function closeBoardPopup() {
+  if (!popupId) return
+  try {
+    closeOverlay(popupId)
+  } catch {}
+  popupId = null
+}
+
+export function openBoardPopup(board) {
+  if (!board) return
+  const height = popupHeight(workRows(board).length)
+  const view = window.viewport_size()
+  const plan = overlayPlan('popup', { popup: Boolean(popupId), card: Boolean(shared('hrd.open')) })
+  // The card took the keyboard: closing it gives it back to the terminal that had it.
+  if (plan.closeCard) closeCard(plan.refocus)
+  // A second open replaces the first instead of stacking on it.
+  if (plan.closePopup) closeBoardPopup()
+  popupId = openOverlay({
+    mod: 'herdr-agents',
+    kind: 'popup',
+    frame: 'none',
+    width: POPUP_W,
+    height,
+    at: popupSpot(view.width, view.height, height),
+    props: { role: 'board', session: board.session, height },
+  })
 }
 
 function tab(item, board, state, now) {
@@ -173,8 +221,26 @@ function count(name, n) {
     .child(String(n))
 }
 
-/** A pill on the right: no action yet for `board` (S7) and `⌘J` (S9). */
+/** A pill on the right: no action yet for `⌘J` (S9). */
 const pill = text => div().h(24).px(8).flex().items_center().rounded(5).text_color(look.muted).child(text)
+
+/** `board ▴`: opens the work table above it. */
+const boardPill = board =>
+  div()
+    .id('strip-board')
+    .h(24)
+    .px(8)
+    .flex()
+    .items_center()
+    .rounded(5)
+    .text_color(look.muted)
+    .cursor_pointer()
+    .hover(el => el.bg(look.pillHover))
+    .on_mouse_down('left', (_e, cx) => {
+      openBoardPopup(board)
+      cx.notify()
+    })
+    .child('board ▴')
 
 /** The strip's row: tabs for what needs the owner, then counts. Always the same height so nothing resizes the terminal. */
 export function strip(board, ctx = {}) {
@@ -218,7 +284,7 @@ export function strip(board, ctx = {}) {
         .child(count('waiting', c.waiting))
         .child(count('blocked', c.blocked)),
     )
-    .child(pill('board ▾'))
+    .child(boardPill(board))
     .child(pill('⌘J'))
   return root.child(tabs).child(right)
 }
