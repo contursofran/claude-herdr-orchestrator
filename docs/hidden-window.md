@@ -69,6 +69,6 @@ The front app, sampled about every 270 ms through every run (21 runs, 920 sample
 - Keys and the mouse can't reach it: hover, clicks and key handling still need a real window. Use `herdr-app do` for the rest.
 - The window is never really active, so whatever asks if the person is looking at it gets no.
 - It has the default size on the main display; one display was tested.
-- It needs the display awake. While the display sleeps, the app logs `could not create display link` and `shot` keeps returning the same frame, even though `do` commands succeed. A window started during sleep stayed stale; waking the display with a window already running was not tested.
+- It needs the display awake. While the display sleeps, the app logs `could not create display link` and `shot` keeps returning the same frame, even though `do` commands succeed. A window started during sleep stayed stale; waking the display with a window already running was not tested. `start` and `run herdr-app shot` warn when that line is in the window's log; the line stays there after the display wakes, and a display that sleeps later may not add one, so the warning is a hint, not proof either way.
 - "Nothing on screen" rests on what the window server reports, not on looking at the screen. Mission Control and Stage Manager were not checked.
 - The hooks fit this app version; `start` warns on another. After an update, if the front app ever moves, the app exits instead of staying in front and `run` says the window is not running; check the numbers above again before relying on it.

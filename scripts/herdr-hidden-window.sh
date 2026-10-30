@@ -169,6 +169,12 @@ check_hidden() {
   fi
 }
 
+warn_if_no_display_link() {
+  if grep -q 'could not create display link' "$dir/app.log" 2>/dev/null; then
+    echo "Warning: the display is asleep or locked: shots will be stale until it wakes." >&2
+  fi
+}
+
 warn_on_other_version() {
   local version
   version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$real/Contents/Info.plist")
@@ -195,6 +201,7 @@ start() {
       "${window_env[@]}" node "$here/app/keys.mjs" "$dir/app" >/dev/null
       "${window_env[@]}" herdr-app do layout.switch --name coordinator >/dev/null
       check_hidden
+      warn_if_no_display_link
       closing_on_failure=0
       echo "Window $name is up (pid $(cat "$dir/pid"))."
       return
@@ -289,6 +296,7 @@ run)
   shift
   [[ $# -gt 0 ]] || die "run needs a command."
   running || die "Window $name is not running: start it first."
+  if [[ ${1:-} == herdr-app && ${2:-} == shot ]]; then warn_if_no_display_link; fi
   exec "${window_env[@]}" "$@"
   ;;
 *)
