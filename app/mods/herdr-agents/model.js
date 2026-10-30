@@ -692,6 +692,16 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
 
+/** Which terminal gets the keyboard when the pop-up goes (`from`: {back, space} saved at open), or null. Null when a row
+ *  already chose (`leaving`), in another space, or when the owner clicked another terminal to dismiss it. */
+export function popupRefocus(from, now, leaving) {
+  if (leaving || !canRefocus(from, now?.space)) return null
+  return now?.terminal && now.terminal !== from.back ? null : from.back
+}
+
+/** The pop-up's keys: Esc closes; a key held down and every other key do nothing. */
+export const popupKeyAction = (key, held) => (!held && String(key ?? '').toLowerCase() === 'escape' ? 'close' : 'ignore')
+
 /** The card floats over the main block, so it is sized from the window: `CARD_W` at most, and clear of the sidebars
  *  (`SIDE` px each side) when the window is narrow; at most `CARD_MAX_H_PCT`% of the window's height, the rest scrolls.
  *  `viewport` is {width, height}; without one the card keeps its full width and a modest height. */
