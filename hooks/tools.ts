@@ -22,7 +22,11 @@ export async function spawnSpec($: EngineInterface): Promise<ToolSpec> {
     inputSchema: {
       type: 'object',
       properties: {
-        worker: { type: 'string', description: 'Unique short name: lowercase letters, digits and dashes. Also the tab label.' },
+        worker: {
+          type: 'string',
+          description:
+            'Unique short name of at most 32 characters: lowercase letters, digits and dashes, not shaped like a terminal address (t7). Also the tab label.',
+        },
         profile: { type: 'string', description: 'A profile name.' },
         cwd: {
           type: 'string',
@@ -56,7 +60,7 @@ export async function registerTools($: EngineInterface) {
   await $.tool.register({
     name: 'message',
     description:
-      'Send a follow-up to a herdr worker started with spawn, such as a correction or an answer. Review fixes go to a fresh builder instead (stop, then spawn). It continues in the same tab with its context; its next report arrives as a <herdr-agent> message. Works while the worker is busy too: a Claude worker takes it at its next step, others get it the moment they report.',
+      'Send a follow-up to a herdr worker started with spawn, such as a correction or an answer. Review fixes go to a fresh builder instead (stop, then spawn). It continues in the same tab with its context; its next report arrives as a <herdr-agent> message. Works while the worker is busy too: a Claude worker takes it at its next step, others get it the moment they report. A worker blocked at a question can be answered; one blocked at a permission or auth prompt cannot, the person answers that in its tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,7 +80,7 @@ export async function registerTools($: EngineInterface) {
   await $.tool.register({
     name: 'ask_owner',
     description: [
-      'Pin a question only the person can answer (a product rule, a design choice, an approval) above their prompt, with a herdr notification.',
+      'Pin a question only the person can answer (a product rule, a design choice, an approval) above their prompt, with a toast.',
       'Use it for every such question instead of leaving it inside a status message, where it gets lost among reports.',
       'Questions workers write as "DECISION:" lines are pinned already. Give short options: the person picks one on the band and it comes back as a <herdr-decision> prompt, already unpinned.',
       'Returns its id (D1, D2…); call decided with their answer when they answer in chat instead.',

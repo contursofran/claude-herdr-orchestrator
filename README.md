@@ -14,11 +14,11 @@ Install it from the plugin marketplace, at a Claude Code prompt (details under [
 
 ### Workers in herdr tabs, on any model
 
-The coordinator starts each worker in its own herdr tab, in its own git worktree, with a profile (`spawn` with `branch` fetches the base and creates the worktree at `../<repo>-wt/<branch>` itself; `cwd` reuses an existing folder, e.g. for a fix round): the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker's tab gets `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers; for the workers it started, it sweeps and checks their reports only while one of them runs, and closes their tabs once they sit idle after their reports.
+The coordinator starts each worker in its own herdr tab, in its own git worktree, with a profile (`spawn` with `branch` fetches the base and creates the worktree at `../<repo>-wt/<branch>` itself; `cwd` reuses an existing folder, e.g. for a fix round): the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker is an hc terminal (`hc run --no-parent`, labelled so Herdr shows it in a tab of the coordinator's space) with `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers; for the workers it started, it sweeps and checks their reports only while one of them runs, and closes their tabs once they sit idle after their reports.
 
 ### Reports come back by themselves
 
-When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. herdr tells the mod the moment a worker ends its turn (`herdr agent wait`), and a `RESULT.md` is delivered within 6 seconds of landing, once the file has stopped changing, even while its worker is still finishing its turn (a non-Claude worker's messages wait for the end of its turn, and a block after its report is reported too). A sweep each minute, with one `herdr agent list` for all workers, catches anything missed; a single failed herdr call never ends a job. The `<herdr-agent>` tag carries the worker's status: `done`, `blocked`, `failed` (also a worker that did not start) or `gone` (its tab is gone, with the messages held for it that were not sent). Reports, your answers and ticked to-dos that arrive within a few seconds, or while the coordinator is busy, reach it as one prompt.
+When a worker finishes, its `RESULT.md` comes back to the coordinator as a prompt; no polling, no copying. It shows in the chat as one dim line (ctrl+o for the full report). Workers start `RESULT.md` with a short header (status, PR, a 3-line summary); the coordinator gets the summary and the file's path, and reads the rest only when it needs to. Reports without a header are shortened to a pointer when long. hc tells the mod the moment a worker ends its turn (`hc events`), and a `RESULT.md` is delivered within 6 seconds of landing, once the file has stopped changing, even while its worker is still finishing its turn (a non-Claude worker's messages wait for the end of its turn, and a block after its report is reported too). A sweep each minute, with one `hc ls` for all workers, catches anything missed; a single failed hc call never ends a job. The `<herdr-agent>` tag carries the worker's status: `done`, `blocked`, `error` (its CLI reported an error), `failed` (also a worker that did not start) or `gone` (its tab is gone, with the messages held for it that were not sent). Reports, your answers and ticked to-dos that arrive within a few seconds, or while the coordinator is busy, reach it as one prompt.
 
 ### To-dos pinned for you
 
@@ -28,7 +28,7 @@ What only you can do (test a build, merge a PR, restart something) is pinned at 
 
 ### Decisions, with options and a recommendation
 
-Questions that are yours (a product rule, a design choice, an approval) wait on the panel with their options and the recommended one starred, and herdr pings you. Answer with `1`–`4` from an empty prompt, with alt+d and the arrows, or with a click; `o` gives your own answer. A `#12` links to that issue or PR.
+Questions that are yours (a product rule, a design choice, an approval) wait on the panel with their options and the recommended one starred, and the panel toasts you; Herdr's own sound and toast cover a worker that blocks or finishes. Answer with `1`–`4` from an empty prompt, with alt+d and the arrows, or with a click; `o` gives your own answer. A `#12` links to that issue or PR.
 
 ![A decision with three options, the recommended one starred](docs/images/panel-decision.png)
 
@@ -84,14 +84,14 @@ What the sidebar shows is also kept in `~/.herdr-agents/board/<session id>.json`
 
 ## Install
 
-You need [herdr](https://herdr.dev) and Claude Code. At the prompt of a Claude Code session:
+You need the [Herdr](https://herdr.dev) app with `hc` ([herdr-core](https://github.com/herdrdev/herdr-core)) and Claude Code. At the prompt of a Claude Code session:
 
 ```
 /plugin install herdr-agents --marketplace contursofran/claude-herdr-orchestrator
 /plugin install herdr-agents-view@claude-herdr-orchestrator
 ```
 
-Answer `y` to add the marketplace, then pick the user scope. The first installs the mod and its planner, builder and reviewer subagents; the second draws worker reports as one line. Start new sessions inside herdr to use it.
+Answer `y` to add the marketplace, then pick the user scope. The first installs the mod and its planner, builder and reviewer subagents; the second draws worker reports as one line. Start new sessions inside a Herdr terminal (or with `hc run --bg claude`) to use it.
 
 The first time the coordinator uses one of the mod's tools (`spawn`, `ask_owner`, …), Claude Code asks; choose "don't ask again", or allow them all at once in `~/.claude/settings.json`:
 
@@ -114,7 +114,7 @@ Each release bumps the version in `plugin.json`. Run `claude plugin update herdr
 1. **Rules.** Add the section in [`templates/AGENTS.md`](templates/AGENTS.md) to the repo's `AGENTS.md` (or `CLAUDE.md`) and fill it in: base branch, checks, how to update a branch, commit identity, who merges, what needs you. Every worker reads it, so this is where repo-specific rules go, not the subagents.
 2. **Settings (optional).** A `.claude/herdr-agents.json` in the folder you coordinate from overrides `~/.claude/herdr-agents.json` for that folder, e.g. `{"target": 2}`.
 3. **Start.** Inside herdr, open the repo folder and run `claude --model opus --effort medium`, then `/hrd-orchestrate <goal>`, e.g. `/hrd-orchestrate the issues labelled ready`. The session gets the coordinator playbook (state file, worktree per worker, builder → reviewer with a planner for big work, when to ask you) and starts workers.
-4. **Stop.** `/hrd-wrap-up` (or the panel's Wrap up button) starts no new workers and lets the running ones finish; you get a herdr notification when the last one is done. `/hrd-wrap-up off` (Keep going) resumes.
+4. **Stop.** `/hrd-wrap-up` (or the panel's Wrap up button) starts no new workers and lets the running ones finish; you get a toast when the last one is done. `/hrd-wrap-up off` (Keep going) resumes.
 
 One coordinator per folder: its notes live in `COORDINATOR-STATE.md` there (the mod keeps its Workers block current itself), and wrap-up applies to the coordinators of that folder.
 
@@ -157,7 +157,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `wrapUp` | off | `true` wraps up every coordinator on the machine; `/hrd-wrap-up off` clears it. |
 | `view` | `band` | Where the workers and what needs you show: `band` above the prompt or `side`, the sidebar, opened at the start of each session. Only one shows; `/hrd-side` switches for the session. |
 
-Built-in profiles, the playbook's steps: `planner`, `builder`, `reviewer` (the subagents above) and `debugger` (Opus medium, full tools, for root-cause hunts and fixes that failed twice). A profile of the same name under `profiles` changes its model or flags and keeps its place in the playbook; `/hrd-help` marks it customized. Any other name is a profile of your own. A profile is `{"kind": "claude" | "codex" | "opencode", "args": [...], "env": {...}, "note": "..."}`; `kind` is the CLI herdr starts and `args` its flags. Other CLIs or models are a profile away:
+Built-in profiles, the playbook's steps: `planner`, `builder`, `reviewer` (the subagents above) and `debugger` (Opus medium, full tools, for root-cause hunts and fixes that failed twice). A profile of the same name under `profiles` changes its model or flags and keeps its place in the playbook; `/hrd-help` marks it customized. Any other name is a profile of your own. A profile is `{"kind": "claude" | "codex" | "opencode", "args": [...], "env": {...}, "note": "..."}`; `kind` is the CLI hc starts and `args` its flags. Workers start through your login shell (`$SHELL -ilc`), so the PATH your rc files set applies; codex always runs with `--no-daemon`, which hc needs. Other CLIs or models are a profile away:
 
 ```json
 {
@@ -211,7 +211,7 @@ npm run check                   # formatting, type check, both manifests, tests
 | `links.ts` | `#123` links to the right repo, for the panel and the sidebar. |
 | `settings.tsx` | `/hrd-config`. |
 | `commands.ts`, `tools.ts` | The slash commands and the coordinator's tools. |
-| `worktrees.ts`, `herdr.ts` | Pruning merged worktrees; the herdr CLI. |
+| `worktrees.ts`, `hc.ts` | Pruning merged worktrees; the hc CLI. |
 
 Each module keeps its own state (atoms in `$.state`) and offers functions to the others. Tests live in `tests/`, one file per area over a shared `harness.tsx`.
 

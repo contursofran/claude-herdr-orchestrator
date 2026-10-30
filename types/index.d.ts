@@ -10,9 +10,8 @@ export type Job = {
   // 'starting' while spawn's background start makes the tab and the CLI (no token yet); 'running' until
   // the worker settles; 'reported' once its report was delivered
   status: 'starting' | 'running' | 'reported'
-  // the herdr tab and pane of the worker, set while it starts
-  tab?: string
-  pane?: string
+  // the worker's hc address (t7), set once hc has started its terminal
+  address?: string
   // message files held for a non-Claude worker until it reports
   queued?: string[]
   // the WAIT.json the worker is waiting on, read once (see waiting)
@@ -77,7 +76,7 @@ export type OutboxItem = { text: string; report?: true }
 // `workers: 'list'` (Details) shows every worker; compact shows the first few.
 export type View = { tab: 'workers' | 'decisions'; selected: number | null; workers?: 'list' }
 
-// One line of the band above the prompt; `state` is herdr's agent_status, or
+// One line of the band above the prompt; `state` is the status its CLI reported to hc, or
 // 'reported' once the report reached the session, 'waiting' while it waits on WAIT.json.
 // `repo` is the GitHub repo (owner/name) of the worker's folder, for links.
 export type Row = { name: string; profile: string; state: string; startedAt: number; endedAt?: number; note?: string; repo?: string }
@@ -118,7 +117,7 @@ export type SideView = {
 // `at` to save its state, and the mod compacts once it has.
 export type Reset = { stage: 'saving'; at: number }
 
-// A worker profile: the CLI herdr starts (`kind`), its flags, extra environment, and a
+// A worker profile: the CLI hc starts (`kind`), its flags, extra environment, and a
 // short description for the spawn tool and the guides.
 export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string }
 

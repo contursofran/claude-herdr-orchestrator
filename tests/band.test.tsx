@@ -117,7 +117,7 @@ test('a #123 links to the issue or PR of the repo named before it', async ($, on
 
 // It runs 10 minutes of ticks and sweeps, which a busy CI runner can take most of the default 5 s over.
 test(
-  'the band reads worker states from the waits and the sweep, under 3 herdr calls per worker-minute',
+  'the band reads worker states from the waits and the sweep, under 3 hc calls per worker-minute',
   { timeoutMs: 20_000 },
   async ($, on) => {
     const { clock, calls, emit } = await start($, on)
@@ -126,11 +126,11 @@ test(
     for (const name of names) await emit(name, 'working')
     calls.length = 0
     await clock.advance(10 * 60_000)
-    // No `agent get` per worker any more: one `agent list` a minute is all the herdr calls there are.
-    expect(calls.filter(c => c[2] === 'get')).toEqual([])
+    // No `hc get` per worker: one `hc ls` a minute is all the hc calls there are.
+    expect(calls.filter(c => c[1] === 'get')).toEqual([])
     expect(calls.length / (names.length * 10)).toBeLessThan(3)
     // Exactly the sweep's list each minute: the 3 s ticks, the band and the report check add no call.
-    expect(calls.map(c => c.join(' '))).toEqual(Array(10).fill('herdr agent list'))
+    expect(calls.map(c => c.join(' '))).toEqual(Array(10).fill('hc ls --label herdr-agents.role=worker --json'))
 
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
     const shown = [(await ui.find({ key: 'col0' }))?.text, (await ui.find({ key: 'col1' }))?.text].join('\n')
@@ -144,10 +144,10 @@ test("one failed sweep keeps the band's last state", async ($, on) => {
   const { clock, fail } = await start($, on)
   await spawn($, ['w-busy'])
   await clock.advance(60_000)
-  // herdr is down for the next minute: the sweep's list and every `agent get` fail. The band keeps
+  // hc is down for the next minute: the sweep's list and every `hc get` fail. The band keeps
   // the state it last saw, and no failed call shows the worker gone.
   fail.list = 100
-  // Only for the undone-change check: an agent get per row would turn these failed gets into Tab gone.
+  // Only for the undone-change check: an hc get per row would turn these failed gets into Tab gone.
   fail.get = 100
   await clock.advance(60_000)
   fail.list = 0
@@ -159,7 +159,7 @@ test("one failed sweep keeps the band's last state", async ($, on) => {
   await stopAll($, clock, ['w-busy'])
 })
 
-test('a status a wait or the sweep sees reaches the band row, with no agent get', async ($, on) => {
+test('a status a wait or the sweep sees reaches the band row, with no hc get', async ($, on) => {
   const { clock, calls, emit, status } = await start($, on)
   await spawn($, ['w-x'])
   await emit('w-x', 'working')
@@ -181,13 +181,13 @@ test('a status a wait or the sweep sees reaches the band row, with no agent get'
   status['w-x'] = 'blocked'
   await clock.advance(60_000)
   expect(await band()).toMatch(/^● w-x +reviewer +\S+ +Reported$/)
-  expect(calls.filter(c => c[2] === 'get')).toEqual([])
+  expect(calls.filter(c => c[1] === 'get')).toEqual([])
   await stopAll($, clock, ['w-x'])
 })
 
-test('a starting worker shows as starting until its tab is made', async ($, on) => {
+test('a starting worker shows as starting until its terminal is made', async ($, on) => {
   const { clock, gate, emit } = await start($, on)
-  const release = gate(argv => argv[1] === 'tab' && argv[2] === 'create')
+  const release = gate(argv => argv[0] === 'hc' && argv[1] === 'run')
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-x', profile: 'builder', cwd: '/repo-w-x', task: 'x' })
   await clock.settle()
   await clock.advance(3000)

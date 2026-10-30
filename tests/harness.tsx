@@ -4,7 +4,7 @@ import type { Engine, MockClock, Mounted } from 'claude-code/testing'
 import type { Settings } from '../types'
 
 // What the tests share: the band's render props, and start(), which stands in for the
-// engine beneath the mod (herdr, git, the file system) and starts a session in /repo.
+// engine beneath the mod (hc, git, the file system) and starts a session in /repo.
 
 export const BAND = {
   plugin: 'herdr-agents',
@@ -21,26 +21,50 @@ export const settled = () => latest!.settle()
 // rejection (a command that cannot start).
 export type Answer = { exitCode: number; stdout?: string; stderr?: string; reject?: string }
 
-// herdr's state for the workers the tests name; a worker that starts without one is idle.
+// hc's status for the workers the tests name; a worker that starts without one is idle. A CLI boots
+// idle and takes this status with the first prompt it is sent; the stored jobs' workers have it from the start.
 const STATUS: Record<string, string> = { 'w-busy': 'working', 'w-done': 'done', 'w-stuck': 'blocked' }
 
-// The JSON herdr prints for a wait that ended with a status, and for a failed call.
-const answer = (name: string, status: string) =>
-  JSON.stringify({ result: { agent: { agent_status: status, name, pane_id: `p-${name}`, tab_id: `t-${name}` } } })
-const failure = (code: string, message: string) => JSON.stringify({ error: { code, message } })
+// The exit code hc gives each kind of error (hc's manual); any other kind exits 1.
+const EXIT: Record<string, number> = { not_found: 3, blocked: 9, status_mismatch: 10, finished: 11, invalid_params: 6 }
 
-// A `herdr agent wait` the fake holds until its worker shows one of its `until` states, or
-// until herdr would end it (end: its exit code and output).
-type Wait = { name: string; until: string[]; end: (code: number, out: string) => void }
+// A terminal the fake hc knows: the ones `hc run` started, the stored jobs' workers, and what a test adds.
+type Term = {
+  name: string
+  address: string
+  cwd: string
+  labels: Record<string, string>
+  argv: string[]
+  finished: boolean
+  removed: boolean
+}
+
+// An `hc events` child the fake holds open: the lines it still has to yield, and the wake-up of its reader.
+type Stream = { name: string; queue: string[]; wake?: () => void }
+
+// Splits the arguments of an hc call into positionals, flags (repeated ones keep every value) and what follows `--`.
+const VALUED = new Set(['--name', '--cwd', '--label', '--timeout', '--lines', '--parent', '--terminal'])
+function parseArgs(args: string[]) {
+  const dash = args.indexOf('--')
+  const head = dash >= 0 ? args.slice(0, dash) : args
+  const pos: string[] = []
+  const flags: Record<string, string[]> = {}
+  for (let i = 0; i < head.length; i++) {
+    const a = head[i]!
+    if (!a.startsWith('--')) pos.push(a)
+    else (flags[a] ??= []).push(VALUED.has(a) ? (head[++i] ?? '') : '')
+  }
+  return { pos, flags, rest: dash >= 0 ? args.slice(dash + 1) : [] }
+}
 
 // Hooks that stand for the engine beneath the mod; returns the prompts the mod submitted
-// to this session, the ones it typed into workers' tabs and the tabs it closed, and each
-// worker's screen (by pane) and PR (by owner/name#123), which the test sets.
+// to this session, the ones it typed into workers' terminals and the terminals it killed, and each
+// worker's screen (by name) and PR (by owner/name#123), which the test sets.
 // `stored` is what $.store holds at the start, as an earlier load of the mod left it; `env` is
-// merged over the session's environment (HOME, the herdr socket).
-// The herdr fake: `calls` is every herdr argv the mod ran, `status` herdr's state per worker,
-// and `emit`, `finish`, `kill` move a worker's wait (see below). `fail` makes the next
-// calls fail, `gone` lists the workers herdr no longer knows.
+// merged over the session's environment (HOME, the coordinator's hc terminal).
+// The hc fake: `calls` is every hc argv the mod ran, `status` hc's status per worker,
+// and `emit`, `kill` and `gone` move a worker's events stream (see below). `fail` makes the next
+// calls fail, `gone` lists the workers hc no longer knows.
 export async function start(
   $: Engine,
   on: On,
@@ -51,46 +75,87 @@ export async function start(
   const submitted: string[] = []
   const typed: string[] = []
   const closed: string[] = []
+  const removed: string[] = []
   const screens: Record<string, string> = {}
   // What `gh pr view` reports for each PR, by owner/name#123; the test sets it.
   const prs: Record<string, unknown> = {}
-  // How many more `agent prompt --wait` calls fail with agent_prompt_stalled, by worker; the test sets it.
+  // How many more `hc send` calls report started: false, by worker; the test sets it.
   const stalls: Record<string, number> = {}
   // How many more prompts this session refuses (its `$.prompt.submit` throws); the test sets it.
   const refuse = { next: 0 }
-  // Every herdr call the mod makes, in order: the CLI's process.run argv and the process.spawn ones.
+  // Every hc call the mod makes, in order: the CLI's process.run argv (with the --json the wrapper adds)
+  // and the process.spawn ones; `hcEnvs` is the env each of them carried.
   const calls: string[][] = []
-  // The commands the mod runs that are not herdr's (git, install.sh, the bridge's file moves), joined by spaces, in order;
+  const hcEnvs: (Record<string, string> | undefined)[] = []
+  // Any call to the old `herdr` CLI: the mod makes none, and the fake answers it with exit 127.
+  const herdrCalls: string[][] = []
+  // The commands the mod runs that are not hc's (git, herdr-app, install.sh, the bridge's file moves), joined by spaces, in order;
   // `runs` answers the ones a test names.
   const shell: string[] = []
   const runs = new Map<string, Answer[]>()
-  // herdr's status for each worker it knows: the stored jobs' workers from the start, then each
-  // `agent start`, then what emit sets.
+  // What was typed into workers and with which keys, in order: `hc send` (text, force) and `hc keys`.
+  const sends: { name: string; text: string; force: boolean }[] = []
+  const keyed: string[][] = []
+  // hc's status for each worker it knows: the stored jobs' workers from the start, then each
+  // `hc run`, then what emit sets.
   const status: Record<string, string> = {}
-  // How many more `agent list`, `agent get`, `pane read` and `agent start` calls fail, by the next calls; the test sets them.
-  const fail = { list: 0, get: 0, pane: 0, start: 0 }
-  const waits: Wait[] = []
-  const end = (match: (w: Wait) => boolean, code: number, out: string) => {
-    for (const w of waits.filter(match)) {
-      waits.splice(waits.indexOf(w), 1)
-      w.end(code, out)
+  // Workers whose program reports no status (hc get says null, hc ls leaves it out, hc send says started: null).
+  const noStatus = new Set<string>()
+  // What a blocked worker waits for (permission, question, auth), by worker; hc get reports it as the status's kind.
+  const blockedKind: Record<string, string> = {}
+  // The replies of the next `hc wait` calls for a worker (merged over the default one), in order: how a CLI boots.
+  const waitReplies: Record<string, Record<string, unknown>[]> = {}
+  // How many more `hc rm` calls for a worker fail with `live` after its kill (a program slow to die).
+  const stubborn: Record<string, number> = {}
+  // The status a worker takes once keys are sent to it (the Enter that submits a prompt left in its input box), by worker.
+  const onKeys: Record<string, string> = {}
+  // The coordinator's own terminal (HC_TERMINAL_ID): its labels place the workers' tabs; clear them for a coordinator outside a space.
+  const self = { labels: { 'herdr.space': 'sp1', 'herdr.tab': 'tb1' } as Record<string, string> }
+  // How many more `hc ls`, `hc get`, `hc read`, `hc run` and `herdr-app do tab.rename` calls fail; the test sets them.
+  const fail = { list: 0, get: 0, pane: 0, start: 0, rename: 0 }
+  // Whether the events streams yield each line in two pieces (a piece is not a line).
+  const pieces = { split: false }
+  const terms = new Map<string, Term>()
+  // The workers that have been sent their first prompt.
+  const prompted = new Set<string>()
+  let addresses = 10
+  const addTerm = (name: string, cwd: string, labels: Record<string, string>, argv: string[] = []) => {
+    terms.set(name, { name, address: `t${++addresses}`, cwd, labels, argv, finished: false, removed: false })
+    return terms.get(name)!
+  }
+  const streams: Stream[] = []
+  const push = (name: string, msg: unknown) => {
+    for (const s of streams.filter(x => x.name === name)) {
+      s.queue.push(`${JSON.stringify(msg)}\n`)
+      s.wake?.()
     }
   }
-  // The workers herdr no longer knows: adding one ends its pending waits as herdr would.
+  const event = (name: string, type: string, data: unknown = {}) =>
+    push(name, { method: 'event', params: { type, terminal: name, seq: 1, data } })
+  // The workers hc no longer knows: adding one ends its streams' terminal as hc does (a finished event).
   class Gone extends Set<string> {
     add(name: string): this {
       super.add(name)
-      end(w => w.name === name, 1, failure('agent_not_found', `no agent named ${name}`))
+      event(name, 'finished')
       return this
     }
   }
   const gone = new Gone()
+  const find = (ref: string) => [...terms.values()].find(t => t.name === ref || t.address === ref)
+  // The terminal a ref names, unless hc no longer knows it.
+  const known = (ref: string) => {
+    const t = find(ref)
+    return t && !t.removed && !gone.has(t.name) ? t : undefined
+  }
   const clock = mock.clock(on, { now: 1_000_000 })
   latest = clock
-  // The workers the stored jobs name are herdr's already, listed at their status.
+  // The workers the stored jobs name are hc's already, listed at their status.
   for (const [key, value] of Object.entries(stored))
     if (key.startsWith('jobs:'))
-      for (const name of Object.keys((value as { jobs?: object }).jobs ?? {})) status[name] = STATUS[name] ?? 'idle'
+      for (const [name, job] of Object.entries((value as { jobs?: Record<string, { cwd: string }> }).jobs ?? {})) {
+        status[name] = STATUS[name] ?? 'idle'
+        addTerm(name, job.cwd, { 'herdr-agents.role': 'worker' })
+      }
   // $.store, answered here rather than by mock.store, so the test can read what the mod kept in it.
   // Values go in and come out as JSON, as the engine keeps them.
   const store = new Map<string, unknown>(Object.entries(stored).map(([k, v]) => [k, JSON.parse(JSON.stringify(v))]))
@@ -107,7 +172,7 @@ export async function start(
   // A turn the test starts or ends with $.turn: the plugin's hooks see it, and these answer it.
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
-  mock.env(on, { HOME: '/home/t', HERDR_SOCKET_PATH: '/tmp/herdr.sock', ...env })
+  mock.env(on, { HOME: '/home/t', HC_TERMINAL_ID: 't1', HC_TERMINAL_SOCKET: '/tmp/hc.sock', SHELL: '/bin/zsh', ...env })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   // The spec of each tool the mod registered, and how often.
   const tools: Record<string, { description: string }> = {}
@@ -184,6 +249,24 @@ export async function start(
     const { Text } = $.ui.resolve(e)
     return <Text>engine band</Text>
   })
+  // What hc prints for a terminal, as `hc get` and the events snapshot show it.
+  const terminal = (t: Term) => {
+    const word = status[t.name]
+    return {
+      address: t.address,
+      name: t.name,
+      cwd: t.cwd,
+      state: t.finished ? 'finished' : 'live',
+      status:
+        !word || noStatus.has(t.name) || t.finished
+          ? null
+          : { state: word, ...(blockedKind[t.name] && word === 'blocked' ? { kind: blockedKind[t.name] } : {}) },
+      labels: t.labels,
+      keep: false,
+      reported: true,
+      foreground: null,
+    }
+  }
   on('process.run', async (_, e) => {
     const hold = gates.find(g => !g.used && g.match([...e.argv]))
     if (hold) {
@@ -191,8 +274,11 @@ export async function start(
       await hold.held
     }
     const [cmd, sub, verb, name = ''] = e.argv
-    if (cmd === 'herdr') calls.push([...e.argv])
-    if (cmd !== 'herdr') shell.push(e.argv.join(' '))
+    if (cmd === 'hc') {
+      calls.push([...e.argv])
+      hcEnvs.push(e.init?.env)
+    } else if (cmd === 'herdr') herdrCalls.push([...e.argv])
+    else shell.push(e.argv.join(' '))
     // The commands the test answers, in order: the last answer repeats.
     const told = runs.get(e.argv.join(' '))
     if (told) {
@@ -208,10 +294,133 @@ export async function start(
         },
       }
     }
-    const exit = (exitCode: number, stdout = '') => ({
-      value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+    const exit = (exitCode: number, stdout = '', stderr = '') => ({
+      value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false },
     })
-    const ok = (result: unknown) => exit(0, JSON.stringify({ result }))
+    // hc prints errors on stderr as {error:{kind,message,hint}} and exits by kind.
+    const err = (kind: string, message: string) => exit(EXIT[kind] ?? 1, '', JSON.stringify({ error: { kind, message, hint: '' } }))
+    if (cmd === 'herdr') return exit(127, '', 'herdr: command not found')
+    if (cmd === 'herdr-app') {
+      if (fail.rename > 0) {
+        fail.rename--
+        return exit(1)
+      }
+      return exit(0, '{}')
+    }
+    if (cmd === 'hc') {
+      const { pos, flags, rest } = parseArgs(e.argv.slice(2).filter(a => a !== '--json'))
+      const ref = pos[0] ?? ''
+      const t = known(ref)
+      const unreachable = () => err('unavailable', 'hc cannot reach its core')
+      const ok = (result: unknown) => exit(0, JSON.stringify(result))
+      const missing = () => err('not_found', `no terminal ${ref}`)
+      if (sub === 'run') {
+        if (fail.start > 0) {
+          fail.start--
+          return err('spawn_failed', 'the program would not start')
+        }
+        const wanted = flags['--name']?.[0] ?? ''
+        const taken = known(wanted)
+        if (taken && !taken.finished) return err('name_taken', `${wanted} is taken`)
+        const labels = Object.fromEntries((flags['--label'] ?? []).map(l => [l.split('=')[0]!, l.slice(l.indexOf('=') + 1)]))
+        const made = addTerm(wanted, flags['--cwd']?.[0] ?? '', labels, rest)
+        status[wanted] = 'idle'
+        gone.delete(wanted)
+        return ok({ address: made.address, agent: rest.at(-1), cwd: made.cwd, name: wanted, state: 'live', turn: 0 })
+      }
+      if (sub === 'ls') {
+        if (fail.list > 0) {
+          fail.list--
+          return unreachable()
+        }
+        const wanted = (flags['--label'] ?? []).map(l => [l.split('=')[0]!, l.slice(l.indexOf('=') + 1)] as const)
+        const terminals = [...terms.values()]
+          .filter(x => !x.removed && !gone.has(x.name) && wanted.every(([k, v]) => x.labels[k] === v))
+          .map(x => ({
+            address: x.address,
+            name: x.name,
+            cwd: x.cwd,
+            state: x.finished ? 'finished' : 'live',
+            ...(status[x.name] && !noStatus.has(x.name) && !x.finished ? { status: status[x.name] } : {}),
+            turn: 0,
+          }))
+        return ok({ terminals, hidden_finished: 0, machines: [] })
+      }
+      if (sub === 'get') {
+        if (fail.get > 0) {
+          fail.get--
+          return unreachable()
+        }
+        // The coordinator's own terminal is not one of the workers.
+        if (ref === 't1') return ok({ address: 't1', name: null, state: 'live', status: null, labels: self.labels })
+        return t ? ok(terminal(t)) : missing()
+      }
+      if (sub === 'read') {
+        if (fail.pane > 0) {
+          fail.pane--
+          return unreachable()
+        }
+        return t ? ok({ text: screens[t.name] ?? '', complete: true, how: 'screen' }) : missing()
+      }
+      if (sub === 'wait') {
+        if (!t) return missing()
+        const reply = waitReplies[t.name]?.shift()
+        const word = noStatus.has(t.name) ? null : (status[t.name] ?? null)
+        // A word the worker is in answers at once (hc wait without --until); working or no word is a timeout.
+        const settled = word === 'idle' || word === 'done' || word === 'blocked' || word === 'error'
+        const base = t.finished
+          ? { ended: true, reason: 'exit', status: null, exit_code: 0 }
+          : { ended: settled, reason: settled ? 'status' : 'timeout', status: word }
+        return ok({ signal: null, exit_code: null, terminal: t.address, turn: 0, children: [], ...base, ...reply })
+      }
+      if (sub === 'send') {
+        if (!t) return missing()
+        if (t.finished) return err('finished', `${t.name} has finished`)
+        const force = '--force' in flags
+        if (status[t.name] === 'blocked' && !force && !noStatus.has(t.name)) return err('blocked', `${t.name} waits at a prompt`)
+        const text = pos[1] ?? ''
+        typed.push(text)
+        if (!prompted.has(t.name)) {
+          prompted.add(t.name)
+          status[t.name] = STATUS[t.name] ?? status[t.name]!
+        }
+        sends.push({ name: t.name, text, force })
+        const word = noStatus.has(t.name) ? null : (status[t.name] ?? null)
+        if (stalls[t.name]) {
+          stalls[t.name]! -= 1
+          return ok({ started: false, status: word, turn: 0 })
+        }
+        return ok({ started: word === null ? null : true, status: word, turn: 0 })
+      }
+      if (sub === 'keys') {
+        if (!t) return missing()
+        keyed.push([t.name, ...pos.slice(1)])
+        if (onKeys[t.name]) status[t.name] = onKeys[t.name]!
+        return ok({ status: status[t.name] ?? null, turn: 0 })
+      }
+      if (sub === 'kill') {
+        if (!t) return missing()
+        if (!t.finished) {
+          t.finished = true
+          closed.push(t.name)
+          event(t.name, 'finished')
+        }
+        return ok(terminal(t))
+      }
+      if (sub === 'rm') {
+        if (!t) return missing()
+        if (!t.finished) return err('live', `${t.name} is still running`)
+        if (stubborn[t.name]) {
+          stubborn[t.name]! -= 1
+          return err('live', `${t.name} is still running`)
+        }
+        t.removed = true
+        removed.push(t.name)
+        event(t.name, 'removed')
+        return ok({ removed: t.address })
+      }
+      return ok({})
+    }
     // /repo and /srv are GitHub checkouts; a folder in one (/repo/wt) is a worktree of it.
     const remote: Record<string, string> = { '/repo': 'acme/app-client', '/srv': 'acme/app-server' }
     const dir = `${e.argv[2] ?? ''}/`
@@ -234,81 +443,36 @@ export async function start(
         for (const f of Object.keys(files)) if (f === p || f.startsWith(`${p}/`)) delete files[f]
       return exit(0)
     }
-    if (cmd !== 'herdr') return exit(1)
-    if (sub === 'agent' && verb === 'prompt') {
-      typed.push(e.argv[4] ?? '')
-      if (stalls[name]) {
-        stalls[name]--
-        return exit(1, JSON.stringify({ error: { code: 'agent_prompt_stalled', message: 'no working state within 5000ms' } }))
-      }
-    }
-    if (sub === 'agent' && verb === 'start') {
-      if (fail.start > 0) {
-        fail.start--
-        return exit(1, failure('agent_start_failed', 'the CLI would not start'))
-      }
-      status[name] = STATUS[name] ?? 'idle'
-      gone.delete(name)
-      return ok({})
-    }
-    if (sub === 'agent' && verb === 'list') {
-      if (fail.list > 0) {
-        fail.list--
-        return exit(1, failure('server_not_running', 'herdr is not running'))
-      }
-      const agents = Object.keys(status)
-        .filter(n => !gone.has(n) && !closed.includes(`t-${n}`))
-        .map(n => ({ name: n, agent_status: status[n], pane_id: `p-${n}`, tab_id: `t-${n}` }))
-      return ok({ agents })
-    }
-    if (sub === 'agent' && verb === 'get') {
-      if (fail.get > 0) {
-        fail.get--
-        return exit(1, failure('server_not_running', 'herdr is not running'))
-      }
-      if (gone.has(name) || status[name] === undefined) return exit(1, failure('agent_not_found', `no agent named ${name}`))
-      if (closed.includes(`t-${name}`)) return exit(1)
-      return ok({ agent: { agent_status: status[name], pane_id: `p-${name}`, tab_id: `t-${name}` } })
-    }
-    if (sub === 'tab' && verb === 'close') {
-      closed.push(name)
-      end(w => `t-${w.name}` === name, 1, failure('agent_not_running', 'agent is no longer running in the target pane'))
-    }
-    if (sub === 'pane' && verb === 'read') {
-      if (fail.pane > 0) {
-        fail.pane--
-        return exit(1, failure('server_not_running', 'herdr is not running'))
-      }
-      return exit(0, screens[name] ?? '')
-    }
-    if (sub === 'tab' && verb === 'create') {
-      const label = e.argv[e.argv.indexOf('--label') + 1]
-      return ok({ tab: { tab_id: `t-${label}` }, root_pane: { pane_id: 'p1' } })
-    }
-    return ok({})
+    return exit(1)
   })
-  // `herdr agent wait` runs as a child process. Like herdr's wait, it answers at once when the worker
-  // is already in one of its --until states; otherwise it is held until emit, kill, a closed tab or
-  // gone ends it. Any other child exits 1.
+  // `hc events --terminal <name>` runs as a child process. Like hc's, it prints a snapshot line first, then one
+  // JSON-RPC line per change (emit, kill, gone), and never ends by itself: the mod leaves the loop. An unknown
+  // terminal is a not_found error on stderr with nothing on stdout. Any other child exits 1.
   on('process.spawn', async function* (_, e) {
     calls.push([...e.argv])
-    const [cmd, sub, verb, name = ''] = e.argv
-    if (cmd !== 'herdr' || sub !== 'agent' || verb !== 'wait') return { value: { code: 1, signal: null } }
-    const until = e.argv.flatMap((arg, i) => (arg === '--until' && e.argv[i + 1] !== undefined ? [e.argv[i + 1]!] : []))
-    const now = status[name]
-    if (now === undefined || gone.has(name)) {
-      yield { stream: 'stdout', text: failure('agent_not_found', `no agent named ${name}`) }
-      return { value: { code: 1, signal: null } }
+    hcEnvs.push(e.env)
+    const [cmd, sub] = e.argv
+    if (cmd !== 'hc' || sub !== 'events') return { value: { code: 1, signal: null } }
+    const name = e.argv[e.argv.indexOf('--terminal') + 1] ?? ''
+    const t = known(name)
+    if (!t) {
+      yield { stream: 'stderr', text: JSON.stringify({ error: { kind: 'not_found', message: `no terminal ${name}`, hint: '' } }) }
+      return { value: { code: 3, signal: null } }
     }
-    if (until.includes(now)) {
-      yield { stream: 'stdout', text: answer(name, now) }
-      return { value: { code: 0, signal: null } }
+    const stream: Stream = { name, queue: [`${JSON.stringify({ channel: 1, seq: 0, terminals: [terminal(t)] })}\n`] }
+    streams.push(stream)
+    try {
+      for (;;) {
+        while (stream.queue.length === 0) await new Promise<void>(resolve => (stream.wake = resolve))
+        const line = stream.queue.shift()!
+        if (pieces.split) {
+          yield { stream: 'stdout', text: line.slice(0, 10) }
+          yield { stream: 'stdout', text: line.slice(10) }
+        } else yield { stream: 'stdout', text: line }
+      }
+    } finally {
+      streams.splice(streams.indexOf(stream), 1)
     }
-    const reply = await new Promise<{ code: number; out: string }>(resolve =>
-      waits.push({ name, until, end: (code, out) => resolve({ code, out }) }),
-    )
-    yield { stream: 'stdout', text: reply.out }
-    return { value: { code: reply.code, signal: null } }
   })
   on('prompt.submit', (_, e) => {
     if (refuse.next > 0) {
@@ -318,10 +482,10 @@ export async function start(
     submitted.push(e.text)
     return { text: e.text }
   })
-  // A worker's status moves to `next`: the waits it ends answer with it, then the engine settles.
+  // A worker's status moves to `next`: its events stream says so, then the engine settles.
   const emit = async (name: string, next: string) => {
     status[name] = next
-    end(w => w.name === name && w.until.includes(next), 0, answer(name, next))
+    event(name, 'status', { status: { state: next }, records: {}, reported: true })
     await clock.settle()
   }
   // The worker took a turn and ended it.
@@ -329,9 +493,14 @@ export async function start(
     await emit(name, 'working')
     await emit(name, 'done')
   }
-  // The worker's tab is closed under its wait: the tab stays, the wait ends as herdr ends it.
+  // The worker's terminal finishes under its events stream: the stream says so and the mod leaves it.
   const kill = async (name: string) => {
-    end(w => w.name === name, 1, failure('agent_not_running', 'agent is no longer running in the target pane'))
+    event(name, 'finished')
+    await clock.settle()
+  }
+  // hc's keepalive on a worker's events stream.
+  const heartbeat = async (name: string) => {
+    push(name, { method: 'heartbeat' })
     await clock.settle()
   }
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -340,6 +509,7 @@ export async function start(
     submitted,
     typed,
     closed,
+    removed,
     screens,
     files,
     prs,
@@ -348,20 +518,35 @@ export async function start(
     refuse,
     store,
     calls,
+    hcEnvs,
+    herdrCalls,
     shell,
     runs,
+    sends,
+    keyed,
     recorded,
     registered,
     toasts,
     tools,
     toolCalls,
     status,
+    noStatus,
+    blockedKind,
+    onKeys,
+    waitReplies,
+    stubborn,
+    self,
     fail,
+    pieces,
+    terms,
+    addTerm,
+    streams,
     gone,
     gate,
     emit,
     finish,
     kill,
+    heartbeat,
   }
 }
 
