@@ -10,6 +10,13 @@
     "session": { "type": "string" },
     "cwd": { "type": "string", "description": "The coordinator's folder." },
     "at": { "type": "number", "description": "When it was written, ms since the epoch." },
+    "coordinator": {
+      "type": "object",
+      "description": "Optional, so older boards stay valid.",
+      "properties": {
+        "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." }
+      }
+    },
     "stageNames": {
       "type": "array",
       "items": { "type": "string" },
