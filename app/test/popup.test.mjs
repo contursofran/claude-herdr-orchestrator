@@ -6,6 +6,8 @@ import {
   boardSpace,
   isBoardCommand,
   overlayPlan,
+  popupKeyAction,
+  popupRefocus,
   projectName,
   popupHeight,
   popupSpot,
@@ -132,4 +134,47 @@ test("touchesBoard: only the pop-up's own board file counts, under either spelli
   assert.equal(touchesBoard('s1', ['/tmp/h/board/xs1.json']), false)
   assert.equal(touchesBoard('s1', []), false)
   assert.equal(touchesBoard('s1', undefined), false)
+})
+
+const source = name => readFileSync(new URL(`../mods/herdr-agents/${name}`, import.meta.url), 'utf8')
+
+test('popupKeyAction: Esc closes; a held key and every other key do nothing', () => {
+  assert.equal(popupKeyAction('escape'), 'close')
+  assert.equal(popupKeyAction('Escape'), 'close')
+  assert.equal(popupKeyAction('escape', true), 'ignore')
+  assert.equal(popupKeyAction('a'), 'ignore')
+  assert.equal(popupKeyAction(undefined), 'ignore')
+})
+
+test('the pop-up takes the keyboard when it opens and closes on Esc', () => {
+  const src = source('popup.js')
+  assert.match(src, /const h = cx\.focus_handle\(\)/)
+  assert.match(src, /makePopupState = cx => \(\{ h: takeKeyboard\(cx\)/)
+  assert.match(src, /await cx\.sleep\(60\)\s*h\.focus\(\)/)
+  assert.match(src, /\.track_focus\(ctl\.h\)/)
+  assert.match(
+    src,
+    /\.on_key_down\(e => \{\s*if \(popupKeyAction\(e\.keystroke \?\? e\.key, e\.is_held\) !== 'close'\) return\s*try \{\s*closeOverlay\(props\(\)\.overlay\)/,
+  )
+  assert.match(source('main.js'), /this\.popup = makePopupState\(cx\)/)
+})
+
+test('popupRefocus: the keyboard goes back to the terminal that had it', () => {
+  const from = { back: 't1', space: 'a' }
+  assert.equal(popupRefocus(from, { terminal: 't1', space: 'a' }), 't1')
+  assert.equal(popupRefocus(from, { terminal: null, space: 'a' }), 't1', 'nothing holds it: Esc or a click on no terminal')
+  assert.equal(popupRefocus(from, { terminal: 't1', space: 'a' }, true), null, 'a row chose where it goes')
+  assert.equal(popupRefocus(from, { terminal: 't2', space: 'a' }), null, 'the click outside picked another terminal')
+  assert.equal(popupRefocus(from, { terminal: 't1', space: 'b' }), null, 'the owner moved to another space')
+  assert.equal(popupRefocus({ back: null, space: 'a' }, { terminal: null, space: 'a' }), null)
+})
+
+test('every way of closing hands the keyboard back, and a row keeps its own target', () => {
+  assert.match(source('main.js'), /async close\(\) \{\s*if \(this\.popup\) releasePopup\(this\.popup\)/)
+  const src = source('popup.js')
+  assert.match(src, /run\('pane\.focus', \{ terminal \}\)/)
+  assert.match(src, /ctl\.leaving = true\s*(\/\/.*\s*)?closeOverlay/)
+  const strip = source('strip.js')
+  assert.match(strip, /const back = shared\('hrd\.open'\)\?\.back \?\? focused\(\)\?\.terminal \?\? null/)
+  assert.match(strip, /props: \{ role: 'board', session: board\.session, height, board, back, space \}/)
 })

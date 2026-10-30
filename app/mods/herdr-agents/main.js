@@ -6,7 +6,7 @@ import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
 import { HEARTBEAT_MS, resolveBoard } from './model.js'
 import { pinbar, pinsView } from './pinbar.js'
-import { popupView } from './popup.js'
+import { makePopupState, popupView, releasePopup, takeKeyboard } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
@@ -37,16 +37,11 @@ export default class HerdrAgents extends View {
       // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
       // `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
-      // Takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal.
-      this.keys = cx.focus_handle()
-      cx.spawn(async cx => {
-        await cx.sleep(60)
-        this.keys.focus()
-        cx.notify()
-      })
+      this.keys = takeKeyboard(cx)
       return
     }
     if (props()?.role === 'board') {
+      this.popup = makePopupState(cx)
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
       this.boards.startOne(cx, props().session, props().board, cx => cx.notify())
       return
@@ -87,13 +82,18 @@ export default class HerdrAgents extends View {
   }
 
   async close() {
+    if (this.popup) releasePopup(this.popup)
     if (this.beating) await clearBeat()
   }
 
   render(cx) {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
     if (props()?.role === 'pins') return pinsView(this.gone, this.keys)
-    if (props()?.role === 'board') return popupView(this.boards.list().find(b => b.session === props().session))
+    if (props()?.role === 'board')
+      return popupView(
+        this.boards.list().find(b => b.session === props().session),
+        this.popup,
+      )
     const draw = roles[props()?.role]
     if (!draw) return div()
     // Resolved while drawing, so it follows focus with no polling.
