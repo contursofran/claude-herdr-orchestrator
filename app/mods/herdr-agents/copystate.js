@@ -9,7 +9,7 @@ const spanText = s => (/^ .*[^ ].* $/.test(s) ? s.slice(1, -1) : s) // Markdown'
 export function commandsIn(text) {
   const found = []
   for (const m of String(text ?? '').matchAll(CODE)) {
-    const command = m[1] ? m[2] : spanText(m[4])
+    const command = m[1] ? m[2].replace(/\r\n/g, '\n').replace(/\r$/, '') : spanText(m[4])
     if (command.trim() && !found.includes(command)) found.push(command)
   }
   return found
@@ -24,15 +24,20 @@ export function copyTargets(text) {
 
 /** `text` as Markdown that draws as written: only its backticked parts are code, and a `*`, `#` or line break stays what it is. */
 export function pinMarkdown(text) {
-  const plain = s => s.replace(PUNCTUATION, '\\$&').replace(/\n/g, '  \n')
+  // Leading spaces or a tab would make an indented code block, where the escapes would show: write them as entities.
+  const plain = (s, lineStart) =>
+    s
+      .replace(PUNCTUATION, '\\$&')
+      .replace(lineStart ? /(^|\n)([ \t]+)/g : /(\n)([ \t]+)/g, (_m, nl, ws) => nl + ws.replace(/ /g, '&#32;').replace(/\t/g, '&#9;'))
+      .replace(/\n/g, '  \n')
   const value = String(text ?? '')
   let out = ''
   let at = 0
   for (const m of value.matchAll(CODE)) {
-    out += plain(value.slice(at, m.index)) + m[0]
+    out += plain(value.slice(at, m.index), at === 0 || value[at - 1] === '\n') + m[0]
     at = m.index + m[0].length
   }
-  return out + plain(value.slice(at))
+  return out + plain(value.slice(at), at === 0 || value[at - 1] === '\n')
 }
 
 /** Which copy key `keystroke` is: 'c', 'cmd-c' or null. Chords such as ctrl-cmd-1 or shift-c are not copy keys. */

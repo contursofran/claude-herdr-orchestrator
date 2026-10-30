@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { beforeEach, test } from 'node:test'
-import { app, findId } from './fake-gpui.mjs'
+import { app, findId, textOf } from './fake-gpui.mjs'
 
 // After the fake is registered: these import `gpui-kit` and `herdr`.
 const { COPIED_MS, CopyState, commandsIn, copyKey, copyTargets, pinMarkdown } = await import('../mods/herdr-agents/copystate.js')
@@ -9,8 +9,8 @@ const { card } = await import('../mods/herdr-agents/card.js')
 const { CardState } = await import('../mods/herdr-agents/cardstate.js')
 const { SheetState, sheetBlock } = await import('../mods/herdr-agents/sheet.js')
 const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
-const { cardHint, cardKeyAction } = await import('../mods/herdr-agents/model.js')
-const { sheetHint, sheetKeyAction } = await import('../mods/herdr-agents/sheetmodel.js')
+const { cardHint, cardKeyAction, panelHeight } = await import('../mods/herdr-agents/model.js')
+const { sheetHint, sheetKeyAction, sheetMore } = await import('../mods/herdr-agents/sheetmodel.js')
 
 /** A cx that records copies and redraws, and holds the timer until `fire()`. */
 function fakeCx() {
@@ -237,4 +237,103 @@ test('pin panel: Copy and c copy; the list of all pins has no copy key', () => {
 test('pin_for_owner tells the agent to put a command in backticks, with no new field', () => {
   const src = readFileSync(new URL('../../hooks/tools.ts', import.meta.url), 'utf8')
   assert.match(src, /Put a command to run in backticks/)
+})
+
+const mouse = (root, id, name, e) => findId(root, id).node.calls[name].at(-1)(e)
+const ARGS = { id: 's:K1', list: [], width: 900, height: 200, overlay: 'o1', session: 's' }
+
+test('panelHeight leaves room for the Copy rows, up to three', () => {
+  const none = panelHeight('', 900)
+  assert.equal(panelHeight('Rotate the key', 900), none + 36, 'the whole-text row')
+  assert.equal(panelHeight('Run `a`', 900), none + 36)
+  assert.equal(panelHeight('Run `a` `b` `c`', 900), none + 108)
+  assert.equal(panelHeight('Run `a` `b` `c` `d` `e`', 900), none + 108, 'more rows scroll')
+})
+
+test('sheetMore counts the Copy rows of a pin text', () => {
+  const view = { face: 'ask', options: [], pinText: 'x', why: '' }
+  const size = { narrow: false, w: 800, h: 190 }
+  assert.equal(sheetMore({ ...view, pinText: '' }, size), false)
+  assert.equal(sheetMore({ ...view, pinText: 'Run `a` `b`' }, size), true)
+})
+
+test('pinMarkdown: leading spaces or a tab never make a code block, and no backslash shows', () => {
+  assert.equal(pinMarkdown('a\n\n    b-c'), 'a  \n  \n&#32;&#32;&#32;&#32;b\\-c')
+  assert.equal(pinMarkdown('\tb'), '&#9;b')
+  assert.equal(pinMarkdown('x `a` \n  y'), 'x `a`   \n&#32;&#32;y')
+  assert.equal(pinMarkdown('run `a`\n   b'), 'run `a`  \n&#32;&#32;&#32;b')
+})
+
+test('commandsIn: a CRLF fence copies the command without the carriage return', () => {
+  assert.deepEqual(commandsIn('```sh\r\nls\r\npwd\r\n```'), ['ls\npwd'])
+})
+
+test('card: a drag in the text leaves cmd-c to the text view; a press on Copy ends that; c still copies', () => {
+  openOn()
+  const ctl = makeCard()
+  const root = card([board(`Run \`${CMD}\``)], ctl, { ...fakeCx(), spawn() {} })
+  const id = 'card-copy-T1-text'
+  const cx = fakeCx()
+  mouse(root, id, 'on_mouse_down', { position: { x: 0, y: 0 }, click_count: 1 })
+  mouse(root, id, 'on_mouse_move', { position: { x: 20, y: 0 } })
+  mouse(root, id, 'on_mouse_up', {})
+  keyOn(root, 'card-body', 'cmd-c', cx)
+  assert.deepEqual(cx.copied, [], 'left to the text view')
+  keyOn(root, 'card-body', 'c', cx)
+  assert.deepEqual(cx.copied, [CMD])
+  press(root, 'card-copy-T1-0', cx)
+  keyOn(root, 'card-body', 'cmd-c', cx)
+  assert.deepEqual(cx.copied, [CMD, CMD, CMD], 'the selection is gone after a press on Copy')
+  mouse(root, id, 'on_mouse_down', { position: { x: 0, y: 0 }, click_count: 1 })
+  mouse(root, id, 'on_mouse_up', {})
+  mouse(root, id, 'on_mouse_move', { position: { x: 90, y: 0 } })
+  keyOn(root, 'card-body', 'cmd-c', cx)
+  assert.equal(cx.copied.length, 4, 'a move after the release is not a drag')
+})
+
+test('card and sheet: a new pin forgets the old selection', () => {
+  openOn()
+  const ctl = makeCard()
+  ctl.copy.selected = true
+  card([board('Run `a`')], ctl, { ...fakeCx(), spawn() {} })
+  assert.equal(ctl.copy.selected, false)
+  app.store['hrd.sheet'] = { session: 's', key: 'T1', seq: 1 }
+  const sheet = new SheetState({ send() {}, notify() {}, handle: { focus() {} } })
+  sheet.copy.selected = true
+  sheetBlock([board('Run `a`')], sheet, { ...fakeCx(), spawn() {} })
+  assert.equal(sheet.copy.selected, false)
+})
+
+test('card and sheet footers say c copies when there is something to copy, and not otherwise', () => {
+  openOn()
+  const text = r => textOf(r).join(' ')
+  assert.match(text(card([board('Run `a`')], makeCard(), { ...fakeCx(), spawn() {} })), /c copies/)
+  assert.doesNotMatch(text(card([board('')], makeCard(), { ...fakeCx(), spawn() {} })), /c copies/)
+  app.store['hrd.sheet'] = { session: 's', key: 'T1', seq: 1 }
+  const sheet = () => new SheetState({ send() {}, notify() {}, handle: { focus() {} } })
+  assert.match(text(sheetBlock([board('Run `a`')], sheet(), { ...fakeCx(), spawn() {} })), /c copies/)
+  assert.doesNotMatch(text(sheetBlock([board('')], sheet(), { ...fakeCx(), spawn() {} })), /c copies/)
+})
+
+test('card: a pin with no text still closes on c', () => {
+  openOn()
+  const root = card([board('')], makeCard(), { ...fakeCx(), spawn() {} })
+  const cx = fakeCx()
+  keyOn(root, 'card-body', 'c', cx)
+  assert.deepEqual(cx.copied, [])
+  assert.equal(app.store['hrd.open'], null)
+})
+
+test('pin panel: the hint says c copies; a held c copies nothing and closes nothing', () => {
+  const list = [{ id: 's:K1', key: 'K1', title: 't', text: 'Run `npm ci`', at: 1 }]
+  app.props = { ...ARGS, view: 'panel', list }
+  const ctl = { h: {}, copy: new CopyState(), leaving: false }
+  const root = pinsView(new Set(), ctl)
+  assert.match(textOf(findId(root, 'pin-context')).join(' '), /c copies/)
+  const cx = fakeCx()
+  findId(root, 'pins-overlay').node.calls.on_key_down[0]({ keystroke: 'c', is_held: true }, cx)
+  assert.deepEqual(cx.copied, [])
+  assert.deepEqual(app.closed.filter(Boolean), [])
+  app.props = { ...ARGS, view: 'panel', list: [{ ...list[0], text: '' }] }
+  assert.doesNotMatch(textOf(findId(pinsView(new Set(), ctl), 'pin-context')).join(' '), /c copies/)
 })

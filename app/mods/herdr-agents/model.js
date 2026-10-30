@@ -1,4 +1,5 @@
 // The mod's logic, with no gpui-kit or herdr imports so node can test it (app/test).
+import { copyTargets } from './copystate.js'
 
 /** True when the watcher's `paths` include the board file of `session` (either spelling of the folder: /tmp may be
  *  reported as /private/tmp, so only the file name is compared). Files in <session>.actions/ and .tmp files do not count. */
@@ -982,6 +983,8 @@ const PINS_ALL_ROWS = 4 // more than this scroll
 const PINS_ALL_CHROME = 2 + 20 + 24 + 4 // border, padding, header, gap
 const PANEL_CHAR_W = 7.8 // a 13 px mono character
 const PANEL_MAX_LINES = 12
+const PANEL_COPY_ROW = 36 // a Copy row: 30 high (the panel's 20 px line, padding, border) and a 6 gap above it
+const PANEL_MAX_COPY_ROWS = 3 // more scroll
 const PANEL_FALLBACK_TOP = 80 // tabs 42 + pin bar 38, when the bar's own bounds are not known
 const PANEL_FALLBACK_SIDE = CARD_SIDE
 const PINS_MIN_H = 120 // an overlay never gets smaller than this, however small the window
@@ -1017,7 +1020,8 @@ export function panelHeight(text, width) {
   const lines = String(text ?? '')
     .split('\n')
     .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / per)), 0)
-  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + 12 + 18 + 12 + 28 + 14
+  const rows = Math.min(copyTargets(text).length, PANEL_MAX_COPY_ROWS)
+  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + rows * PANEL_COPY_ROW + 12 + 18 + 12 + 28 + 14
 }
 
 /** The drop panel's context line: who, age and tag, as far as the pin has them. */

@@ -1,4 +1,5 @@
 // The context sheet's logic (S9), with no gpui-kit or herdr imports so node can test it (app/test).
+import { copyTargets } from './copystate.js'
 import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, stripItems } from './model.js'
 
 const firstLine = text =>
@@ -265,10 +266,11 @@ export function sheetMore(view, size) {
   const width = size.narrow ? size.w - 40 : 420
   const options = view.options.reduce((sum, o) => sum + 44 + (o.impact ? 4 + LINE_H * textRows(o.impact, width) : 0), 0)
   const done = view.face === 'resolved' ? 8 + LINE_H : 0
+  const copies = view.pinText ? 30 * copyTargets(view.pinText).length : 0 // a Copy row: 24 and a gap
   // Above and below the scrolling part: padding, header and gaps, then the waiting line, column label and actions if outside.
-  if (!size.narrow) return options + done > size.h - 176
+  if (!size.narrow) return options + done + copies > size.h - 176
   const why = 24 + LINE_H * textRows(view.why || ' ', width - 28)
-  return LINE_H * 3 + 24 + options + done + why > size.h - 102
+  return LINE_H * 3 + 24 + options + done + why + copies > size.h - 102
 }
 
 /** The line under the sheet: which keys do what, and first of all (it may be cut) that there is more to scroll to. */

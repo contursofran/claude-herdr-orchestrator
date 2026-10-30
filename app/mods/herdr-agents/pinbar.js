@@ -1,7 +1,7 @@
 import { div, svg } from 'gpui-kit'
 import { closeOverlay, props, setShared, shared } from 'herdr'
 import { copyableText } from './copy.js'
-import { CopyState, copyKey } from './copystate.js'
+import { CopyState, copyKey, copyTargets } from './copystate.js'
 import {
   PINS_ALL_ROW_TEXT,
   ageText,
@@ -278,7 +278,7 @@ export function pinsView(gone, ctl, board = null) {
           .flex_none()
           .truncate()
           .text_color(color.dim)
-          .child(pin ? pinContext(pin, Date.now()) : ''),
+          .child(pin ? [pinContext(pin, Date.now()), copyTargets(pin.text).length ? 'c copies' : ''].filter(Boolean).join(' · ') : ''),
       )
       .child(
         div()

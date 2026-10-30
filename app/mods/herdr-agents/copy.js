@@ -18,7 +18,10 @@ const copyButton = (id, state, value) =>
     .text_color(color.text)
     .cursor_pointer()
     .hover(s => s.bg(look.hover))
-    .on_mouse_down('left', (_e, cx) => state.copy(cx, id, value))
+    .on_mouse_down('left', (_e, cx) => {
+      state.selected = false // the press is outside the text: its selection is gone
+      state.copy(cx, id, value)
+    })
     .child(state.copied === id ? 'Copied' : 'Copy')
 
 /** `text`, selectable with the mouse, and a Copy button per command under it (one for the whole text with none). */
