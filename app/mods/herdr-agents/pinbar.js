@@ -58,8 +58,8 @@ function segmentsRow(segments, ui) {
 /**
  * The pin bar's row: always there at its height so nothing resizes the terminal.
  *   board  the resolved board, or null (the row draws empty)
- *   ui     what main.js worked out: {mode, current, segments, slim, meta, waiting, flash} and the handlers
- *          onPick(id, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
+ *   ui     what main.js worked out: {mode, current, many, empty, segments, slim, meta, waiting, flash} and the handlers
+ *          onPick(id, cx), onStep(dir, cx), onRead(id, cx), onDone(pin, cx), onUndo(id, cx), onReopen(cx)
  * The caret and `all pins` belong to S8 (the drop panel and popover) and are not drawn here.
  */
 export function pinbar(board, ui) {
