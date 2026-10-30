@@ -8,7 +8,12 @@ const state = { props: null, store: {}, closed: [] }
 globalThis.__startFake = {
   View: class {},
   closeOverlay: id => state.closed.push(id),
-  openOverlay: () => 'o4',
+  focused: () => state.focused ?? null,
+  run: () => {},
+  openOverlay: o => {
+    state.opened = o
+    return 'o4'
+  },
   props: () => state.props,
   shared: k => state.store[k],
   setShared: (k, v) => {
@@ -124,6 +129,19 @@ test('a new strip copy replaces the board pop-up the last copy opened, by its sh
   openBoardPopup({ session: 's', items: [] })
   assert.deepEqual(state.closed, ['o3'])
   assert.equal(state.store['hrd.popup'], 'o4')
+})
+
+test('the board pop-up remembers the terminal to hand back; a card being replaced decides it', () => {
+  globalThis.window = { viewport_size: () => ({ width: 1280, height: 820 }) }
+  state.focused = { terminal: 't2', space: 'a' }
+  state.store = {}
+  openBoardPopup({ session: 's', items: [] })
+  assert.equal(state.opened.props.back, 't2')
+  assert.equal(state.opened.props.space, 'a')
+  state.store = { 'hrd.open': { back: 't1', space: 'b' } }
+  openBoardPopup({ session: 's', items: [] })
+  assert.equal(state.opened.props.back, 't1')
+  state.focused = null
 })
 
 test('an overlay copy takes the keyboard after its first draw', async () => {
