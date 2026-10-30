@@ -1,5 +1,7 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
+import type { Job } from '../types'
+import { active } from '../hooks/state'
 import { command, settled, spawn, start, stopAll, test } from './harness'
 
 // Starting workers: the rules spawn applies, from the built-in profiles in effect. A report
@@ -2223,4 +2225,29 @@ test('the idle close is not a stop: it marks the tab closed and nothing more', a
   await s.clock.advance(2 * 60_000)
   expect(jobOf(s.store, 'w-busy')).toMatchObject({ closed: true })
   expect(jobOf(s.store, 'w-busy').stopped).toBeUndefined()
+})
+
+test('a worker messaged while its WAIT.json is open works again: not waiting, counted, and back to reported when it reports (#105)', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":30,"max":600}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }])
+  await s.clock.advance(60_000)
+  expect(jobOf(s.store, 'w-busy').wait).toBeDefined()
+  await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-busy', text: 'Do this now.' })
+  // It works on the message: no wait is left to show it under Waiting or to keep it out of the count.
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'running' })
+  expect(jobOf(s.store, 'w-busy').wait).toBeUndefined()
+  const jobs = Object.values((s.store.get('jobs:session-1234') as { jobs: Record<string, Job> }).jobs)
+  expect(jobs.filter(j => active(j) && !j.wait).map(j => j.name)).toEqual(['w-busy'])
+  // Its WAIT.json is still on disk, and does not bring the wait back while it works; it reports again as any worker does.
+  await s.clock.advance(3 * 60_000)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'running' })
+  expect(jobOf(s.store, 'w-busy').wait).toBeUndefined()
+  const token = s.typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone again.`
+  await s.finish('w-busy')
+  await s.clock.advance(BATCH_MS)
+  expect(jobOf(s.store, 'w-busy')).toMatchObject({ status: 'reported' })
+  await stopAll($, s.clock, ['w-busy'])
 })
