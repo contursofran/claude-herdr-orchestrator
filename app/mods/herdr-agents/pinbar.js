@@ -6,9 +6,11 @@ import {
   allPinsHeight,
   markAllRead,
   markRead,
+  noteRows,
   orderPins,
   pinContext,
   popupKeyAction,
+  rowsSteady,
   stillOpen,
 } from './model.js'
 import { openPins } from './pinsctl.js'
@@ -206,7 +208,8 @@ export function closePinsOverlay() {
  * its board once read, takes out any pin resolved since. The popover's root shrinks as its pins go.
  *   gone    a Set of pin ids Done here, hidden at once (an undo shows them again on reopening)
  *   ctl     makePopupState (popup.js): the handle that takes the keyboard, so Esc reaches this overlay and not the terminal,
- *           and `leaving`, set when a row chooses where the keyboard goes; main.js's close() hands it back otherwise
+ *           and `leaving`, set when a row chooses where the keyboard goes; main.js's close() hands it back otherwise;
+ *           also where the popover notes when its rows last moved
  */
 export function pinsView(gone, ctl, board = null) {
   const p = props() ?? {}
@@ -292,6 +295,15 @@ export function pinsView(gone, ctl, board = null) {
 
   const ordered = orderPins(list)
   const now = Date.now()
+  noteRows(
+    ctl,
+    ordered.map(pin => pin.key),
+    now,
+  )
+  // Buttons fire on the press, so one aimed at a row that just moved up would hit the row now under the cursor: ignore it.
+  const onRow = act => (e, cx) => {
+    if (rowsSteady(ctl, Date.now())) act(e, cx)
+  }
   return root
     .bg(pinsLook.bg)
     .border(1)
@@ -349,11 +361,14 @@ export function pinsView(gone, ctl, board = null) {
                   .gap(8)
                   .cursor_pointer()
                   // A click on the title opens it as the drop panel, and marks it read.
-                  .on_mouse_down('left', () => {
-                    const next = markRead(shared('hrd.read') ?? {}, pin.id)
-                    setShared('hrd.read', next)
-                    openNext('panel', { id: pin.id })
-                  })
+                  .on_mouse_down(
+                    'left',
+                    onRow(() => {
+                      const next = markRead(shared('hrd.read') ?? {}, pin.id)
+                      setShared('hrd.read', next)
+                      openNext('panel', { id: pin.id })
+                    }),
+                  )
                   .child(
                     div()
                       .size(6)
@@ -396,17 +411,25 @@ export function pinsView(gone, ctl, board = null) {
                   .gap(4)
                   .when(pin.unread, el =>
                     el.child(
-                      ghostDown(`pin-read-${pin.key}`, 'mark read', (_e, cx) => {
-                        setShared('hrd.read', markRead(read, pin.id))
-                        cx.notify()
-                      }),
+                      ghostDown(
+                        `pin-read-${pin.key}`,
+                        'mark read',
+                        onRow((_e, cx) => {
+                          setShared('hrd.read', markRead(read, pin.id))
+                          cx.notify()
+                        }),
+                      ),
                     ),
                   )
                   .child(
-                    ghostDown(`pin-done-${pin.key}`, 'done', (_e, cx) => {
-                      done(pin, cx)
-                      if (list.length <= 1) close()
-                    }),
+                    ghostDown(
+                      `pin-done-${pin.key}`,
+                      'done',
+                      onRow((_e, cx) => {
+                        done(pin, cx)
+                        if (list.length <= 1) close()
+                      }),
+                    ),
                   ),
               ),
           ),
