@@ -46,7 +46,8 @@ test('the strip draws it in the right group, left of the counts, in the colour o
   assert.ok(text.indexOf('ctx 10k / 100k') < text.indexOf('board ▴'))
   assert.equal(findId(draw({ tokens: 10_000, limit: 100_000 }), 'count-working') !== null, true)
   const right = draw({ tokens: 10_000, limit: 100_000 }).node.kids.at(-1)
-  assert.equal(right.node.kids[0].node.calls.id[0], 'strip-context')
+  assert.equal(right.node.kids[0].node.calls.id[0], 'strip-divider')
+  assert.equal(right.node.kids[1].node.calls.id[0], 'strip-context')
 })
 
 test('the strip draws nothing for it without data, and no empty child', () => {
