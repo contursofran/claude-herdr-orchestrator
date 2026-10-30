@@ -54,7 +54,7 @@ class Install(unittest.TestCase):
 
     def test_with_the_app_the_mod_and_a_coordinator_layout_land_and_main_stays(self):
         os.makedirs(os.path.join(self.app, "layouts"))
-        main = {"id": "root", "children": [{"id": "work", "children": [{"id": "tabs"}, {"id": "work-body"}]}]}
+        main = {"id": "root", "children": [{"id": "work", "children": [{"id": "tabs"}, {"id": "work-body", "children": [{"id": "main"}]}]}]}
         with open(os.path.join(self.app, "layouts", "main.json"), "w") as f:
             json.dump(main, f)
         self.install()
@@ -63,8 +63,10 @@ class Install(unittest.TestCase):
             self.assertEqual(json.load(f), main)
         with open(os.path.join(self.app, "layouts", "coordinator.json")) as f:
             work = json.load(f)["children"][0]["children"]
-        self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-card", "hrd-strip"])
-        self.assertTrue(next(c for c in work if c["id"] == "hrd-card")["hidden"])
+        self.assertEqual([c["id"] for c in work], ["tabs", "hrd-pins", "work-body", "hrd-strip"])
+        card = work[2]["children"][0]["floating"]
+        self.assertEqual([c["id"] for c in card], ["hrd-card"])
+        self.assertEqual((card[0]["edge"], card[0]["align"]), ("bottom", "center"))
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
 
     def test_a_missing_or_odd_main_layout_prints_a_message_and_the_install_carries_on(self):

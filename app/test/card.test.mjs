@@ -2,38 +2,31 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
+  CARD_MIN_W,
+  CARD_SIDE,
+  CARD_W,
   SENT_HIDE_MS,
+  canRefocus,
+  cardSize,
   UNDO_MS,
   answerAction,
   cardFor,
-  cardHeight,
   cardHint,
   cardKeyAction,
   cardView,
   doneAction,
   nextItem,
   hiddenKeys,
-  openHeight,
   openState,
   readKey,
 } from '../mods/herdr-agents/model.js'
-import { CardState, onBoardsChanged } from '../mods/herdr-agents/cardstate.js'
+import { CardState, clearStaleOpen, onBoardsChanged } from '../mods/herdr-agents/cardstate.js'
 import { Outbox } from '../mods/herdr-agents/outbox.js'
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
 
 test('answerAction is the file the plugin takes', () => {
   assert.deepEqual(answerAction('D7', 'Cursor'), { action: 'answer', key: 'D7', answer: 'Cursor' })
-})
-
-test('cardHeight grows with the options of a decision, and each face has its own', () => {
-  assert.equal(cardHeight('ask', 2), 78 + 12 + 40 + 12 + 2 * 28 + 6)
-  assert.equal(cardHeight('ask', 3), cardHeight('ask', 2) + 34)
-  assert.equal(cardHeight('ask', 0), cardHeight('ask', 1), 'at least one row')
-  assert.equal(cardHeight('ask', 99), cardHeight('ask', 6), 'at most six rows')
-  assert.equal(cardHeight('do'), 170)
-  assert.equal(cardHeight('blocked'), 150)
-  assert.equal(cardHeight('resolved'), 118)
 })
 
 test('cardView: a decision shows its options and the recommended one', () => {
@@ -138,9 +131,15 @@ test('cardView: a sent answer with no outcome stops counting after SENT_HIDE_MS,
 })
 
 test('openState keeps the terminal to give back while a card is already open', () => {
-  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', seq: 0 })
-  assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), { session: 's', key: 'D8', back: 't1', seq: 0 })
-  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, seq: 0 })
+  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', space: null, seq: 0 })
+  assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), {
+    session: 's',
+    key: 'D8',
+    back: 't1',
+    space: null,
+    seq: 0,
+  })
+  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, space: null, seq: 0 })
 })
 
 function outbox() {
@@ -205,14 +204,12 @@ test('a second action for the same item is refused while the first waits', () =>
   assert.equal(t.timers.length, 3)
 })
 
-function state({ open = { session: 's', key: 'D7' } } = {}) {
-  const t = { runs: [], notes: [], sends: [], notified: 0, now: 1000 }
+function state() {
+  const t = { notes: [], sends: [], notified: 0, now: 1000 }
   const ctl = new CardState({
     send: async (session, action, id) => t.sends.push({ session, action, id }),
     notify: n => t.notes.push(n),
     handle: {},
-    run: (name, args) => t.runs.push([name, args]),
-    open,
   })
   ctl.outbox.now = () => t.now
   const jobs = []
@@ -225,9 +222,9 @@ function state({ open = { session: 's', key: 'D7' } } = {}) {
   return { t, ctl, cx }
 }
 
-test('a failed answer returns to the options and the card never resizes the terminal on the way', async () => {
+test('a failed answer returns to the options', async () => {
   const b = board()
-  const { t, ctl, cx } = state({ open: { session: b.session, key: 'D7' } })
+  const { t, ctl, cx } = state()
   const id = ctl.schedule(cx, b.session, answerAction('D7', 'Cursor'))
   assert.equal(cardFor([b], { session: b.session, key: 'D7' }, { queue: ctl.outbox.queue }).face, 'resolved')
   t.now += UNDO_MS + 50
@@ -243,19 +240,11 @@ test('a failed answer returns to the options and the card never resizes the term
     t.notes.map(n => [n.title, n.level]),
     [['Action failed', 'error']],
   )
-  assert.deepEqual(t.runs, [], 'no layout.resize, show or hide: only the owner changes the panel')
-  ctl.undo(ctl.schedule(cx, b.session, answerAction('D8', 'Light')))
-  assert.deepEqual(t.runs, [], 'nor does undo')
-})
-
-test('a card copy that starts with nothing open hides a panel left shown; with an item open it leaves the panel alone', () => {
-  assert.deepEqual(state({ open: null }).t.runs, [['layout.hide', { id: 'hrd-card' }]])
-  assert.deepEqual(state().t.runs, [])
 })
 
 test('every board change settles the card outbox, so a failed send shows (the parts main.js hands the boards to)', async () => {
   const b = board()
-  const { t, ctl, cx } = state({ open: { session: b.session, key: 'D7' } })
+  const { t, ctl, cx } = state()
   const id = ctl.schedule(cx, b.session, answerAction('D7', 'Cursor'))
   t.now += UNDO_MS + 50
   ctl.outbox.flush(cx)
@@ -274,12 +263,63 @@ test('every board change settles the card outbox, so a failed send shows (the pa
   assert.deepEqual(calls.at(-1), ['pin', 1])
 })
 
-test('openHeight does not count an old sent answer, so `next` sizes the panel for the options it draws', () => {
-  const b = board()
-  const entry = { id: 'a1', session: b.session, key: 'D7', action: answerAction('D7', 'Cursor'), at: 1000 }
-  const ask = cardHeight('ask', 2)
-  assert.equal(openHeight(b, 'D7', { sent: [entry], now: 1000 }), cardHeight('resolved'))
-  assert.equal(openHeight(b, 'D7', { sent: [entry], now: 1000 + SENT_HIDE_MS }), ask)
+test("D25's whole text and both options reach the card, and so do six long options with their impacts", () => {
+  const d25 = JSON.parse(readFileSync(new URL('../fixtures/d25.json', import.meta.url), 'utf8'))
+  const v = cardView(d25, 'D25', { now: 1790000000000 })
+  assert.equal(v.face, 'ask')
+  assert.match(v.text, /^The answer card is in your app\./)
+  assert.match(v.text, /leaves the terminal's size alone\.$/, 'the text is whole')
+  assert.deepEqual(v.options, ['Panel feels fine', 'Resize bothers me, float it'])
+  const long = cardView(d25, 'D26', { now: 1790000000000 })
+  assert.equal(long.options.length, 6)
+  assert.equal(long.impacts[0].length > 60, true)
+})
+
+test('the card never resizes, shows or hides a layout node: no layout.* call, no height rule', () => {
+  for (const f of ['card.js', 'cardctl.js', 'cardstate.js', 'model.js']) {
+    const src = readFileSync(new URL(`../mods/herdr-agents/${f}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(src, /layout\.(resize|show|hide)|cardHeight|openHeight/, f)
+  }
+})
+
+test('cardSize keeps the card inside a narrow window and caps its height, scrolling the rest', () => {
+  assert.deepEqual(cardSize({ width: 1200, height: 800 }), { w: CARD_W, maxH: 560 })
+  const narrow = cardSize({ width: 620, height: 800 })
+  assert.equal(narrow.w <= 620 - 2 * CARD_SIDE, true, 'clear of both sidebars')
+  assert.equal(cardSize({ width: 300, height: 800 }).w, CARD_MIN_W)
+  assert.equal(cardSize({ width: 1200, height: 360 }).maxH, 252)
+  assert.deepEqual(cardSize(null), { w: CARD_W, maxH: 400 }, 'no window size: the full width')
+})
+
+test('a card left open is forgotten at start, a missing one is left alone', () => {
+  const set = {}
+  const store = { 'hrd.open': { session: 's', key: 'D1' }, 'hrd.pick': { session: 's', key: 'D1' } }
+  assert.equal(
+    clearStaleOpen(
+      k => store[k],
+      (k, v) => (store[k] = v),
+    ),
+    true,
+  )
+  assert.equal(store['hrd.open'], null)
+  assert.equal(store['hrd.pick'], null)
+  assert.equal(
+    clearStaleOpen(
+      k => store[k],
+      (k, v) => (set[k] = v),
+    ),
+    false,
+  )
+  assert.deepEqual(set, {}, 'nothing is written when nothing was open')
+})
+
+test('closing hands the keyboard back only in the space the card was opened from', () => {
+  const open = openState(null, 's', 'D1', 't1', 1, 'space-a')
+  assert.equal(open.space, 'space-a')
+  assert.equal(canRefocus(open, 'space-a'), true)
+  assert.equal(canRefocus(open, 'space-b'), false)
+  assert.equal(canRefocus({ ...open, back: null }, 'space-a'), false)
+  assert.equal(openState(open, 's', 'D2', 't9', 2, 'space-b').space, 'space-a', 'a next card keeps the first space')
 })
 
 test('every open bumps the counter in the state, so reopening the same item is a new open', () => {

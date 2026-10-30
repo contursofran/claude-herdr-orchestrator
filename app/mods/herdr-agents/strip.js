@@ -84,7 +84,7 @@ export class StripState {
     })
   }
 
-  /** Select a tab and open the card for it (the owner's click or key: the only thing that resizes the terminal). A click
+  /** Select a tab and open the card for it (the owner's click or key). A click
    *  on the selected one deselects it and closes the card (`toggle`); a key never does, so a command that reaches the
    *  mod twice leaves it open. */
   pick(board, item, toggle = true) {
@@ -93,7 +93,7 @@ export class StripState {
     const current = shared('hrd.pick')
     const next = nextPick(current, board.session, item.key, toggle)
     if (!next) closeCard()
-    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) openCard(board, item, null, terminals())
+    else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) openCard(board, item)
   }
 }
 
