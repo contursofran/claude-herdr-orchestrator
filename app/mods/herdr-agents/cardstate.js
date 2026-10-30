@@ -54,6 +54,13 @@ export function clearStaleOpen(get, set) {
   return true
 }
 
+/** The same for a sheet left open by the last run ("hrd.sheet"). true if there was one. */
+export function clearStaleSheet(get, set) {
+  if (!get('hrd.sheet')) return false
+  set('hrd.sheet', null)
+  return true
+}
+
 /** At app start: forget what the last run left in shared. Overlay ids restart with each run, so an old one could name another
  *  overlay; a Done request left behind was never undoable and is not sent now. */
 export function clearStaleOverlays(get, set) {

@@ -294,6 +294,12 @@ test('the card never resizes, shows or hides a layout node: no layout.* call, no
   }
 })
 
+test('cardSize measures the window in the px the app scales by the zoom', () => {
+  assert.deepEqual(cardSize({ width: 800, height: 800 }, 2), { w: CARD_MIN_W, maxH: 280 })
+  assert.equal(cardSize({ width: 1000, height: 800 }, 1.2).w, 493)
+  assert.deepEqual(cardSize({ width: 1200, height: 800 }, undefined), cardSize({ width: 1200, height: 800 }))
+})
+
 test('cardSize keeps the card inside a narrow window and caps its height, scrolling the rest', () => {
   assert.deepEqual(cardSize({ width: 1200, height: 800 }), { w: CARD_W, maxH: 560 })
   const narrow = cardSize({ width: 620, height: 800 })

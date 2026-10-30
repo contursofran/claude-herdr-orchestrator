@@ -6,8 +6,9 @@ import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
 import { HEARTBEAT_MS, drawnKey, resolveBoard } from './model.js'
 import { pinbar, pinsView } from './pinbar.js'
-import { popupView } from './popup.js'
+import { makePopupState, popupView, releasePopup, takeKeyboard } from './popup.js'
 import { PinCtl } from './pinctl.js'
+import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
@@ -17,6 +18,7 @@ const roles = {
   pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
   strip: (board, x) => strip(board, x.strip),
   card: (_board, x) => card(x.strip.boards, x.card, x.cx),
+  sheet: (_board, x) => sheetBlock(x.strip.boards, x.sheet, x.cx),
 }
 
 export default class HerdrAgents extends View {
@@ -35,16 +37,11 @@ export default class HerdrAgents extends View {
       // The drop panel and the popover get their pins in props(): no Boards.start, so the first draw has its content.
       // `gone` are the pins Done here, hidden at once.
       this.gone = new Set()
-      // Takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal.
-      this.keys = cx.focus_handle()
-      cx.spawn(async cx => {
-        await cx.sleep(60)
-        this.keys.focus()
-        cx.notify()
-      })
+      this.keys = takeKeyboard(cx)
       return
     }
     if (props()?.role === 'board') {
+      this.popup = makePopupState(cx)
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
       this.boards.startOne(cx, props().session, props().board, cx => this.drawnChanged() && cx.notify())
       this.drawnChanged() // the board the strip passed is what the first draw shows
@@ -57,11 +54,12 @@ export default class HerdrAgents extends View {
     if (pinbarCopy && firstThisRun('hrd.pinbarStarted')) clearStaleOverlays(shared, setShared)
     // The card has an Outbox of its own: it settles it here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
+    this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
     this.beating = pinbarCopy
     this.boards.start(cx, cx => {
-      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx, () =>
+      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx, () =>
         this.drawnChanged(),
       )
       // The first read says which coordinators are live: tell the plugin now, not 30 s later.
@@ -95,13 +93,18 @@ export default class HerdrAgents extends View {
   }
 
   async close() {
+    if (this.popup) releasePopup(this.popup)
     if (this.beating) await clearBeat()
   }
 
   render(cx) {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
     if (props()?.role === 'pins') return pinsView(this.gone, this.keys)
-    if (props()?.role === 'board') return popupView(this.boards.list().find(b => b.session === props().session))
+    if (props()?.role === 'board')
+      return popupView(
+        this.boards.list().find(b => b.session === props().session),
+        this.popup,
+      )
     const draw = roles[props()?.role]
     if (!draw) return div()
     // Resolved while drawing, so it follows focus with no polling.
@@ -111,6 +114,7 @@ export default class HerdrAgents extends View {
     return draw(found.board, {
       pin: this.pin,
       card: this.card,
+      sheet: this.sheet,
       cx,
       strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
     })

@@ -46,7 +46,9 @@ export function applyFile(boards, id, text) {
 
 /** What one copy of the mod draws from the boards, as text: a board change that leaves this the same needs no redraw, and every
  *  redraw of a mod redraws the whole window (#151). `at` is left out everywhere: it says only that the file was written.
- *  The agents list draws coordinators and parked workers; the pop-up its own board; the pin bar, strip and card no task rows. */
+ *  The agents list draws coordinators and parked workers; the pop-up its own board; the sheet task rows too (the tasks waiting on
+ *  an item). The pin bar, strip and card draw no task rows, but the strip sizes the pop-up from how many there are, so the rows'
+ *  keys count and their text (a minute clock) does not. */
 export function drawnKey(role, boards, session) {
   const list = boards ?? []
   if (role === 'agents')
@@ -57,7 +59,8 @@ export function drawnKey(role, boards, session) {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
   }
-  return JSON.stringify(list.map(({ at: _at, tasks: _tasks, ...b }) => b))
+  if (role === 'sheet') return JSON.stringify(list.map(({ at: _at, ...b }) => b))
+  return JSON.stringify(list.map(({ at: _at, tasks, ...b }) => ({ ...b, rows: (tasks ?? []).map(t => [t?.key, t?.joined]) })))
 }
 
 /** The value of one label on a terminal; core terminals carry `labels` as an object (`labels["herdr.space"]`). */
@@ -207,17 +210,21 @@ export function currentPin(list, sel = null) {
   return newestPin(list.filter(p => p.unread))
 }
 
-/** 'empty' (no pins: the row stays, with a quiet line), 'full' (a pin to show) or 'slim' (pins, all read). */
-export function pinbarMode(list, sel = null) {
+/** 'empty' (no pins: the row stays, with a quiet line), 'full' (a pin to show) or 'slim' (pins, all read, or `slim`
+ *  asked for while the sheet is open: the row keeps its height). */
+export function pinbarMode(list, sel = null, slim = false) {
   if (list.length === 0) return 'empty'
+  if (slim) return 'slim'
   return currentPin(list, sel) ? 'full' : 'slim'
 }
 
-/** The slim line: `N pins · nothing new · last: <title>`. */
-export function slimLine(list) {
+/** The slim line: `N pins · nothing new · last: <title>`; with `showNew` (the sheet forced the row slim) unread pins are
+ *  counted instead: `N pins · M new · last: <title>`. */
+export function slimLine(list, showNew = false) {
   const last = newestPin(list)
   if (!last) return ''
-  return `${list.length} ${list.length === 1 ? 'pin' : 'pins'} · nothing new · last: ${last.title}`
+  const unread = showNew ? list.filter(p => p.unread).length : 0
+  return `${list.length} ${list.length === 1 ? 'pin' : 'pins'} · ${unread ? `${unread} new` : 'nothing new'} · last: ${last.title}`
 }
 
 /** The segments: one per pin, in board order, with the kind the bar draws (current, unread, read). */
@@ -359,7 +366,7 @@ export const newBarState = () => ({ session: null, sel: null, seen: null, flashe
  * Returns {state, view, list, flashStart}: the next state, the data pinbar() draws (without handlers), and the pin id
  * whose flash starts now (once per pin), else null.
  */
-export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0 } = {}) {
+export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0, slim = false } = {}) {
   if (!board) return { state: prev, view: { mode: 'empty', waiting: [] }, list: [], flashStart: null }
   const list = pins(board, read, hidden)
   let { session, sel, seen, flashed } = prev
@@ -371,7 +378,7 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
   if (newPinIds(seen, list).length) sel = null // a new pin takes the bar back from a picked one
   seen = new Set(list.map(p => p.id))
 
-  const mode = pinbarMode(list, sel)
+  const mode = pinbarMode(list, sel, slim)
   const current = currentPin(list, sel)
   let flashStart = null
   if (mode === 'full' && current.unread && !flashed.has(current.id)) {
@@ -389,7 +396,7 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
       many: list.length > 1,
       empty: emptyLine(board),
       segments: segments(list, current),
-      slim: slimLine(list),
+      slim: slimLine(list, slim),
       meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
       waiting: waiting
         .filter(q => q.session === board.session)
@@ -709,6 +716,20 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
 
+/** Which terminal gets the keyboard when the pop-up goes (`from`: {back, space} saved at open), or null. Null when a row
+ *  already chose (`leaving`), in another space, or when the owner clicked another terminal to dismiss it. */
+export function popupRefocus(from, now, leaving) {
+  if (leaving || !canRefocus(from, now?.space)) return null
+  return now?.terminal && now.terminal !== from.back ? null : from.back
+}
+
+/** The pop-up's keys: Esc closes; a key held down and every other key do nothing. */
+export const popupKeyAction = (key, held) => (!held && String(key ?? '').toLowerCase() === 'escape' ? 'close' : 'ignore')
+
+/** A window length in the px a mod writes: the app draws those, and the layout's rows and sidebars, `zoom` times as big,
+ *  while `viewport_size` is not scaled. */
+export const atZoom = (px, zoom) => Number(px) / (zoom > 0 ? zoom : 1)
+
 /** The card floats over the main block, so it is sized from the window: `CARD_W` at most, and clear of the sidebars
  *  (`SIDE` px each side) when the window is narrow; at most `CARD_MAX_H_PCT`% of the window's height, the rest scrolls.
  *  `viewport` is {width, height}; without one the card keeps its full width and a modest height. */
@@ -716,9 +737,9 @@ export const CARD_W = 560
 export const CARD_MIN_W = 220
 export const CARD_SIDE = 170
 export const CARD_MAX_H_PCT = 70
-export function cardSize(viewport) {
-  const vw = Number(viewport?.width)
-  const vh = Number(viewport?.height)
+export function cardSize(viewport, zoom = 1) {
+  const vw = atZoom(viewport?.width, zoom)
+  const vh = atZoom(viewport?.height, zoom)
   const w = vw > 0 ? Math.max(CARD_MIN_W, Math.min(CARD_W, Math.floor(vw - 2 * CARD_SIDE))) : CARD_W
   const maxH = vh > 0 ? Math.floor((vh * CARD_MAX_H_PCT) / 100) : 400
   return { w, maxH }
@@ -783,17 +804,18 @@ export function rowAction(row, terminals, space = null) {
 }
 
 /**
- * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card, pins}: booleans).
- * Opening the card closes the pop-up and the pins overlay; opening the pop-up or the pins overlay closes the others and,
- * when a card was open, hands the keyboard back (`refocus`), because the card took it. A second open of the same kind
- * replaces the first.
+ * What opening an overlay does to the others: one at a time. `open` is what is up now ({popup, card, pins, sheet}: booleans).
+ * The card and the sheet take the keyboard, so whichever of them is closed for another overlay hands it back (`refocus`).
+ * A second open of the same kind replaces the first.
  */
 export function overlayPlan(kind, open) {
   const popup = Boolean(open?.popup)
   const card = Boolean(open?.card)
   const pins = Boolean(open?.pins)
-  if (kind === 'card') return { closePopup: popup, closeCard: false, closePins: pins, refocus: false }
-  return { closePopup: popup, closeCard: card, closePins: pins, refocus: card }
+  const sheet = Boolean(open?.sheet)
+  if (kind === 'card') return { closePopup: popup, closeCard: false, closePins: pins, closeSheet: sheet, refocus: sheet }
+  if (kind === 'sheet') return { closePopup: popup, closeCard: card, closePins: pins, closeSheet: false, refocus: card }
+  return { closePopup: popup, closeCard: card, closePins: pins, closeSheet: sheet, refocus: card || sheet }
 }
 
 /** The action file for the header's wrap up / keep going: `on` is the state to set. */

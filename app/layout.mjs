@@ -26,6 +26,15 @@ const cardBlock = () => ({
   align: 'center',
 })
 
+/** The context sheet: a floating block over the `main` block, at the top edge, centred. Like the card it draws nothing
+ *  while closed, so the terminal's size never changes. */
+const sheetBlock = () => ({
+  id: 'hrd-sheet',
+  content: { mod: 'herdr-agents', props: { role: 'sheet' } },
+  edge: 'top',
+  align: 'center',
+})
+
 const findNode = (node, id) => {
   if (node?.id === id) return node
   for (const child of node?.children ?? []) {
@@ -62,6 +71,22 @@ export function addCard(layout) {
   const main = findNode(layout, 'main')
   if (!main) return changed
   main.floating = [...(main.floating ?? []), cardBlock()]
+  return true
+}
+
+/** Whether any node already floats a block with this `id` (the owner may have dragged it: its saved spot stays). */
+function hasFloating(node, id) {
+  if ((node?.floating ?? []).some(f => f?.id === id)) return true
+  return (node?.children ?? []).some(c => hasFloating(c, id))
+}
+
+/** Adds the floating `hrd-sheet` to the `main` block unless one floats already. true if the layout changed; nothing is
+ *  added when there is no `main` block. */
+export function addSheet(layout) {
+  if (hasFloating(layout, 'hrd-sheet')) return false
+  const main = findNode(layout, 'main')
+  if (!main) return false
+  main.floating = [...(main.floating ?? []), sheetBlock()]
   return true
 }
 
@@ -105,6 +130,7 @@ export function coordinatorLayout(main, version) {
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
   addCard(layout)
+  addSheet(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
@@ -121,7 +147,7 @@ export function writeCoordinatorLayout(home) {
       return 'exists'
     }
     // Both edits run: `||` would skip the second one.
-    const changed = [repointAgents(layout), addCard(layout)].some(Boolean)
+    const changed = [repointAgents(layout), addCard(layout), addSheet(layout)].some(Boolean)
     if (!changed) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
@@ -148,7 +174,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents list and answer card were brought up to date.'
+          ? 'Layout "coordinator" exists; only its agents list, answer card and sheet were brought up to date.'
           : result === 'updated-no-card'
             ? 'Layout "coordinator" exists; its agents list was updated and the old answer card row removed, but it has no "main" block to float a card over, so there is no answer card.'
             : 'Layout "coordinator" exists; left as it is.',

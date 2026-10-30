@@ -70,6 +70,7 @@ export class PinCtl {
       hidden: this.outbox.hidden(),
       waiting: board ? this.outbox.waiting(board.session) : [],
       now: Date.now(),
+      slim: Boolean(shared('hrd.sheet')), // the sheet is open: the row goes slim at the same height
     })
     this.bar = state
     if (!board) {

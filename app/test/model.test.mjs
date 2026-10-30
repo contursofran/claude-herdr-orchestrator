@@ -1070,13 +1070,19 @@ test('drawnKey: each copy changes only with what it draws', async () => {
   }
   const other = { ...base, session: 'o' }
   const key = (role, b, session) => drawnKey(role, b, session)
-  for (const role of ['agents', 'board', 'pinbar', 'strip', 'card']) {
+  for (const role of ['agents', 'board', 'sheet', 'pinbar', 'strip', 'card']) {
     assert.equal(key(role, [{ ...base, at: 2 }], 's'), key(role, [base], 's'), `${role}: the time of a write draws nothing`)
   }
   // A task row's minute: only the pop-up draws those.
   const minute = { ...base, tasks: [{ key: 'k', who: { text: 'w 2m' } }] }
   assert.notEqual(key('board', [minute], 's'), key('board', [base], 's'))
   for (const role of ['agents', 'pinbar', 'strip', 'card']) assert.equal(key(role, [minute], 's'), key(role, [base], 's'), role)
+  // The sheet lists the tasks waiting on an item, so a task row's text counts there too.
+  assert.notEqual(key('sheet', [minute], 's'), key('sheet', [base], 's'))
+  assert.equal(key('sheet', [{ ...base, at: 2 }], 's'), key('sheet', [base], 's'))
+  // The strip sizes the pop-up from the number of rows.
+  const added = { ...base, tasks: [...base.tasks, { key: 'k2' }] }
+  assert.notEqual(key('strip', [added], 's'), key('strip', [base], 's'))
   // The pop-up draws one board, whichever other one moves.
   assert.equal(key('board', [base, { ...other, needs: [1] }], 's'), key('board', [base, other], 's'))
   assert.notEqual(key('pinbar', [base, { ...other, needs: [1] }], 's'), key('pinbar', [base, other], 's'))

@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
+import { focused, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -21,6 +21,8 @@ import {
 } from './model.js'
 import { Arrivals } from './arrivals.js'
 import { closeCard, openCard } from './cardctl.js'
+import { closeSheet, openSheet } from './sheetctl.js'
+import { isSheetCommand, sheetTarget } from './sheetmodel.js'
 import { closePins, closePopupOverlay } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
@@ -89,6 +91,11 @@ export class StripState {
           openBoardPopup(this.board)
           continue
         }
+        if (isSheetCommand(name)) {
+          toggleSheet(this.board)
+          cx.notify()
+          continue
+        }
         const n = pickNumber(name)
         if (!n) continue
         const item = pickAt(stripItems(this.board), n)
@@ -109,9 +116,15 @@ export class StripState {
     if (!next) closeCard()
     else if (current?.session !== next.session || current?.key !== next.key || !shared('hrd.open')) {
       // One overlay at a time: the pop-up goes before the card opens.
-      const plan = overlayPlan('card', { popup: Boolean(shared('hrd.popup')), card: false, pins: Boolean(shared('hrd.pins')) })
+      const plan = overlayPlan('card', {
+        popup: Boolean(shared('hrd.popup')),
+        card: false,
+        pins: Boolean(shared('hrd.pins')),
+        sheet: Boolean(shared('hrd.sheet')),
+      })
       if (plan.closePopup) closePopupOverlay()
       if (plan.closePins) closePins()
+      if (plan.closeSheet) closeSheet(plan.refocus)
       openCard(board, item)
     }
   }
@@ -128,12 +141,17 @@ export function openBoardPopup(board) {
     popup: Boolean(shared('hrd.popup')),
     card: Boolean(shared('hrd.open')),
     pins: Boolean(shared('hrd.pins')),
+    sheet: Boolean(shared('hrd.sheet')),
   })
+  // The terminal to hand back; if the card holds the keyboard, the one the card will hand back. Read before anything closes.
+  const back = shared('hrd.open')?.back ?? focused()?.terminal ?? null
+  const space = focused()?.space ?? null
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
   if (plan.closePopup) closePopupOverlay()
   if (plan.closePins) closePins()
+  if (plan.closeSheet) closeSheet(plan.refocus)
   const overlay = openOverlay({
     mod: 'herdr-agents',
     kind: 'popup',
@@ -141,9 +159,29 @@ export function openBoardPopup(board) {
     width: POPUP_W,
     height,
     at: popupSpot(view.width, view.height, height),
-    props: { role: 'board', session: board.session, height, board },
+    props: { role: 'board', session: board.session, height, board, back, space },
   })
   setShared('hrd.popup', overlay)
+}
+
+/** ⌘J (and the pill): close the sheet if it is up, else open it on the item the card shows or the first open one. One
+ *  overlay at a time: an open card or pop-up goes first. Only the owner's click or key calls this. */
+export function toggleSheet(board) {
+  if (shared('hrd.sheet')) return closeSheet()
+  if (!board) return
+  const card = shared('hrd.open')
+  const key = sheetTarget(board, card?.session === board.session ? card.key : null)
+  if (!key) return
+  const plan = overlayPlan('sheet', {
+    popup: Boolean(shared('hrd.popup')),
+    card: Boolean(card),
+    pins: Boolean(shared('hrd.pins')),
+    sheet: false,
+  })
+  if (plan.closeCard) closeCard(plan.refocus)
+  if (plan.closePopup) closePopupOverlay()
+  if (plan.closePins) closePins()
+  openSheet(board, key)
 }
 
 function tab(item, board, state, now) {
@@ -219,8 +257,23 @@ function count(name, n) {
     .child(String(n))
 }
 
-/** A pill on the right: no action yet for `⌘J` (S9). */
-const pill = text => div().h(24).px(8).flex().items_center().rounded(5).text_color(look.muted).child(text)
+/** `⌘J`: opens or closes the context sheet. */
+const sheetPill = board =>
+  div()
+    .id('strip-sheet')
+    .h(24)
+    .px(8)
+    .flex()
+    .items_center()
+    .rounded(5)
+    .text_color(look.muted)
+    .cursor_pointer()
+    .hover(el => el.bg(look.pillHover))
+    .on_mouse_down('left', (_e, cx) => {
+      toggleSheet(board)
+      cx.notify()
+    })
+    .child('⌘J')
 
 /** `board ▴`: opens the work table above it. */
 const boardPill = board =>
@@ -283,6 +336,6 @@ export function strip(board, ctx = {}) {
         .child(count('blocked', c.blocked)),
     )
     .child(boardPill(board))
-    .child(pill('⌘J'))
+    .child(sheetPill(board))
   return root.child(tabs).child(right)
 }
