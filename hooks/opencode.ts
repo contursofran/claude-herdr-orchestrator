@@ -7,15 +7,16 @@ import type { EngineInterface } from 'claude-code'
 // permission they ask, which blocks the worker. HC_STATUS_TTY replaces /dev/tty (for tests).
 // The plugin's logic is this function; the file written for opencode is its source text (it stands alone, with no
 // types), so tests call it directly. `fs` and `env` are node:fs and process.env; `proc` is {pid, ppid} of this
-// process and `run(cmd, args)` returns a command's stdout (node:child_process execFileSync).
+// process (and `now`, replacing Date.now for tests) and `run(cmd, args)` returns a command's stdout
+// (node:child_process execFileSync).
 // opencode 1 loads `server`, in the program itself. opencode 2 loads `setup`, and with --standalone runs it in a
 // child `opencode serve` that has the worker's environment but no controlling terminal, so /dev/tty fails and the
 // report goes to its parent's terminal. Without --standalone it runs in the shared background server, which has no
 // HC_TERMINAL_ID, so the plugin stays off and the worker reports nothing.
 // A nested opencode (started by another program in the same terminal, e.g. a claude worker) inherits
 // HC_TERMINAL_ID, so it reports only when it is the terminal's own program: hc's `pid` for the terminal is this
-// process, or the processes from its parent up to that pid all name opencode (a launcher such as npm's node shim,
-// opencode 2's own program above its server). If hc or ps can't tell, it reports.
+// process, or it is this process's parent and runs opencode (opencode 2's own program above its server). `ps -o comm=`
+// names the program alone, so an agent's arguments can't pass for it. If hc or ps can't tell, it reports.
 export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = null) {
   const STATES = new Map([
     ['permission.asked', 'blocked:kind=permission'],
@@ -58,18 +59,13 @@ export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = nul
   }
 
   const ps = (field: any, pid: any) => run('ps', ['-o', `${field}=`, '-p', String(pid)]).trim()
-  const namesOpencode = (argv: any) => argv.some((a: any) => /^([^=]*\/)?opencode$/.test(a))
   const isTerminalProgram = () => {
     try {
-      const { pid: root, argv } = JSON.parse(run('hc', ['get', env.HC_TERMINAL_ID, '--json']))
+      const { pid: root } = JSON.parse(run('hc', ['get', env.HC_TERMINAL_ID, '--json']))
       if (typeof root !== 'number' || root === proc.pid) return true
-      let pid = proc.ppid
-      for (let i = 0; i < 3 && pid > 1; i++) {
-        if (!namesOpencode(pid === root && Array.isArray(argv) ? argv : ps('command', pid).split(/\s+/))) return false
-        if (pid === root) return true
-        pid = Number(ps('ppid', pid))
-      }
-      return false
+      if (proc.ppid !== root) return false
+      const program = ps('comm', root)
+      return !program || /(^|\/)opencode(\.exe)?$/.test(program)
     } catch (e) {
       return true
     }
@@ -79,14 +75,20 @@ export function hcStatusPlugin(fs: any, env: any, proc: any = {}, run: any = nul
   const start = () => {
     if (!env.HC_TERMINAL_ID || !isTerminalProgram()) return undefined
     let tty = env.HC_STATUS_TTY || '/dev/tty'
+    const now = proc.now || Date.now
+    let askAfter = 0
     const report = (state: any) => {
       const record = '\x1b]7501;state=' + state + ':app=opencode\x1b\\'
       try {
         fs.appendFileSync(tty, record)
       } catch (e) {
-        if (tty !== '/dev/tty') return
+        // ps can hold up a report for 3 s, so after any failed write it is asked at most once a minute.
+        if (env.HC_STATUS_TTY || now() < askAfter) return
+        askAfter = now() + 60000
         try {
-          tty = '/dev/' + ps('tty', proc.ppid)
+          const parent = ps('tty', proc.ppid)
+          if (!/^\w/.test(parent)) return
+          tty = '/dev/' + parent
           fs.appendFileSync(tty, record)
         } catch (e) {}
       }

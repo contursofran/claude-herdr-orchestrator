@@ -225,71 +225,69 @@ test('the plugin writes to /dev/tty unless HC_STATUS_TTY says otherwise', async 
   expect((await load({ HC_TERMINAL_ID: 't9', HC_STATUS_TTY: '/x' })).written.map(w => w.path)).toEqual(['/x'])
 })
 
-// What hc and ps answer: `procs` is pid -> [ppid, command].
-const answers =
-  (terminal: Record<string, unknown>, procs: Record<number, [number, string]> = {}) =>
-  (cmd: string, args: string[]) => {
-    if (cmd === 'hc') return JSON.stringify({ address: 't9', ...terminal })
-    const pid = Number(args[3])
-    const proc = procs[pid]
-    if (!proc) throw new Error(`no process ${pid}`)
-    return args[1] === 'ppid=' ? ` ${proc[0]}\n` : `${proc[1]}\n`
+// What hc and ps answer for a terminal whose program, started as `cmd`, has pid 100. hc gives what it started,
+// the login-shell form, and ps what runs after the exec.
+const LOGIN_SHELL = ['/bin/zsh', '-ilc', 'exec "$@"', 'zsh', '/usr/bin/env', 'A=b']
+const answers = (cmd: string[], root: Record<string, unknown> = { pid: 100 }) => {
+  const asked: string[] = []
+  const run = (tool: string, args: string[]) => {
+    if (tool === 'hc') return JSON.stringify({ address: 't9', argv: [...LOGIN_SHELL, ...cmd], ...root })
+    asked.push(args[1]!)
+    if (Number(args[3]) !== 100) throw new Error(`no process ${args[3]}`)
+    return args[1] === 'comm=' ? `${cmd[0]}\n` : args[1] === 'tty=' ? 'ttys013\n' : `${cmd.join(' ')}\n`
   }
-const WORKER_ARGV = ['/bin/zsh', '-ilc', 'exec "$@"', 'zsh', '/usr/bin/env', 'A=b', 'opencode', '--standalone']
+  return { run, asked }
+}
 
 test("a nested opencode (not the terminal's own program) reports nothing and adds no hooks", async () => {
-  const run = answers({ pid: 100, argv: ['claude'] }, { 150: [100, '/bin/zsh -c opencode'] })
+  const { run } = answers(['claude'])
   const { hooks, written } = await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 150 }, run)
   expect(hooks).toEqual({})
   expect(written).toEqual([])
 })
 
-test("opencode reports when it is the terminal's own program", async () => {
-  const run = answers({ pid: 100, argv: ['claude'] })
+test("opencode reports when it is the terminal's own program, and needs no ps for that", async () => {
+  const { run, asked } = answers(['claude'])
   expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 100, ppid: 1 }, run)).states()).toEqual(['idle'])
+  expect(asked).toEqual([])
 })
 
-test('a launcher that names opencode above it (the npm shim) still reports', async () => {
-  for (const argv of [['/usr/local/bin/opencode', '--standalone'], ['opencode'], WORKER_ARGV]) {
-    const run = answers({ pid: 100, argv })
-    expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, run)).states()).toEqual(['idle'])
+test("opencode 2's server reports below its own program, however that was installed", () => {
+  for (const program of [
+    'opencode',
+    '/home/t/.opencode/bin/opencode',
+    '/home/my tools/opencode',
+    '/home/t/node_modules/opencode-ai/bin/opencode.exe',
+  ]) {
+    const { run } = answers([program, '--standalone'])
+    expect(loadV2({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, run).states()).toEqual(['idle'])
   }
 })
 
 test('an agent that starts opencode as its direct child reports nothing, whatever its other arguments say', async () => {
-  for (const argv of [
-    ['/bin/zsh', '-ilc', 'exec "$@"', 'zsh', '/usr/bin/env', 'A=b', 'claude', '--model', 'opus'],
+  for (const cmd of [
+    ['claude', '--model', 'opus'],
     ['claude', 'use opencode to fix it'],
+    ['claude', 'opencode'],
+    ['claude', '--add-dir', '/home/t/opencode'],
+    ['claude', '--add-dir', '/home/t/.config/opencode', '--model', 'opus'],
     ['claude', '--add-dir=/home/t/opencode'],
-    ['/usr/bin/env', 'XDG_DATA_HOME=/home/t/opencode', 'claude'],
     ['claude', 'opencode-go/deepseek'],
+    ['node', '/home/t/opencode'],
+    ['/home/t/opencode/claude'],
+    ['/home/t/notopencode'],
+    ['opencode-wrapper', 'opencode'],
+    ['/bin/zsh'],
   ]) {
-    const run = answers({ pid: 100, argv })
+    const { run } = answers(cmd)
     const { hooks, written } = await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, run)
     expect(hooks).toEqual({})
     expect(written).toEqual([])
   }
 })
 
-test('without argv from hc the parent is read from ps', async () => {
-  const shim = answers({ pid: 100 }, { 100: [1, 'node /usr/local/bin/opencode --standalone'] })
-  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, shim)).states()).toEqual(['idle'])
-  const agent = answers({ pid: 100 }, { 100: [1, 'node /usr/local/bin/claude --model opus'] })
-  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, agent)).written).toEqual([])
-})
-
-test("opencode 2's server reports below its own program, and below a shim in front of that", () => {
-  const direct = answers({ pid: 100, argv: WORKER_ARGV })
-  expect(loadV2({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, direct).states()).toEqual(['idle'])
-  const shim = answers(
-    { pid: 100, argv: ['/usr/local/bin/opencode', '--standalone'] },
-    { 150: [100, '/usr/local/lib/opencode-bin/bin/opencode --standalone'] },
-  )
-  expect(loadV2({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 150 }, shim).states()).toEqual(['idle'])
-})
-
 test("the server of an opencode 2 an agent started reports nothing and doesn't subscribe", async () => {
-  const run = answers({ pid: 100, argv: ['claude'] }, { 150: [100, 'opencode --standalone'] })
+  const { run } = answers(['claude'])
   const { dispose, subscribed, written } = loadV2({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 150 }, run)
   await settled()
   expect(dispose).toBeUndefined()
@@ -297,12 +295,13 @@ test("the server of an opencode 2 an agent started reports nothing and doesn't s
   expect(written).toEqual([])
 })
 
-test('parents that all name opencode but never reach the terminal report nothing', async () => {
+test("an opencode below the terminal's opencode but not its child reports nothing", async () => {
   // A background server left by a terminal: its parent is pid 1.
-  const orphan = answers({ pid: 100, argv: ['opencode'] })
-  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 1 }, orphan)).written).toEqual([])
-  const deep = answers({ pid: 100, argv: ['opencode'] }, { 150: [140, 'opencode'], 140: [130, 'opencode'], 130: [100, 'opencode'] })
-  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 150 }, deep)).written).toEqual([])
+  const orphan = await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 1 }, answers(['opencode']).run)
+  expect(orphan.written).toEqual([])
+  // A shell in between: the worker's own bash tool, say.
+  const shell = await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 150 }, answers(['opencode']).run)
+  expect(shell.written).toEqual([])
 })
 
 test('when hc or ps cannot tell, opencode still starts and reports', async () => {
@@ -312,8 +311,10 @@ test('when hc or ps cannot tell, opencode still starts and reports', async () =>
   expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 2, ppid: 1 }, boom)).states()).toEqual(['idle'])
   expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 2, ppid: 1 }, () => 'not json')).states()).toEqual(['idle'])
   expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 2, ppid: 1 }, () => '{}')).states()).toEqual(['idle'])
-  const noPs = answers({ pid: 100 })
-  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, noPs)).states()).toEqual(['idle'])
+  const noPs = answers(['claude'], { pid: 99 })
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 99 }, noPs.run)).states()).toEqual(['idle'])
+  const blank = answers([''])
+  expect((await load({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, blank.run)).states()).toEqual(['idle'])
 })
 
 test("opencode 2's events map to states, and it reports idle on load", async () => {
@@ -392,17 +393,77 @@ test("outside an hc terminal (opencode 2's shared server) setup does nothing", a
   expect(written).toEqual([])
 })
 
-test('with no /dev/tty (the --standalone server) reports go to the terminal of its parent', async () => {
+// The --standalone server: hc says its parent is the terminal's opencode, and /dev/tty is refused. `ttys` is what
+// each `ps -o tty=` does in turn (the last one repeats): an answer, or an error if it is null. `at(ms)` sets the time.
+function noTty(ttys: (string | null)[], refused: string[] = []) {
   const asked: string[][] = []
+  let time = 1_000_000
   const run = (cmd: string, args: string[]) => {
-    if (cmd === 'hc') return JSON.stringify({ pid: 100, argv: WORKER_ARGV })
+    if (cmd === 'hc') return JSON.stringify({ pid: 100, argv: [...LOGIN_SHELL, 'opencode', '--standalone'] })
+    if (args[1] === 'comm=') return 'opencode\n'
     asked.push(args)
-    return 'ttys013\n'
+    const answer = ttys[Math.min(asked.length, ttys.length) - 1]
+    if (answer === null || answer === undefined) throw new Error('ps failed')
+    return answer
   }
-  const { emit, written } = loadV2({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100 }, run, ['/dev/tty'])
-  await emit(['session.execution.started', { sessionID: 's1' }])
-  expect(written.map(w => w.path)).toEqual(['/dev/ttys013', '/dev/ttys013'])
-  expect(asked).toEqual([['-o', 'tty=', '-p', '100']])
+  const worker = loadV2({ HC_TERMINAL_ID: 't9' }, { pid: 200, ppid: 100, now: () => time }, run, ['/dev/tty', ...refused])
+  return {
+    ...worker,
+    asked,
+    at: (ms: number) => (time = 1_000_000 + ms),
+    work: () => worker.emit(['session.execution.started', { sessionID: 's1' }]),
+  }
+}
+
+test('with no /dev/tty (the --standalone server) reports go to the terminal of its parent', async () => {
+  const w = noTty(['ttys013\n'])
+  await w.work()
+  expect(w.written.map(x => x.path)).toEqual(['/dev/ttys013', '/dev/ttys013'])
+  expect(w.asked).toEqual([['-o', 'tty=', '-p', '100']])
+})
+
+test('a ps that keeps failing is asked once a minute, not on every event, and a later good answer is used', async () => {
+  const w = noTty([null, null, 'ttys013\n'])
+  await w.work()
+  await w.work()
+  expect(w.asked).toHaveLength(1)
+  expect(w.written).toEqual([])
+  w.at(59_999)
+  await w.work()
+  expect(w.asked).toHaveLength(1)
+  w.at(60_000)
+  await w.work()
+  expect(w.asked).toHaveLength(2)
+  expect(w.written).toEqual([])
+  w.at(120_000)
+  await w.work()
+  w.at(120_001)
+  await w.work()
+  expect(w.asked).toHaveLength(3)
+  expect(w.written.map(x => x.path)).toEqual(['/dev/ttys013', '/dev/ttys013'])
+})
+
+test('an answer that is no terminal is not kept as the path, and a later good one is used', async () => {
+  for (const none of ['', '??\n', '?\n', '-\n']) {
+    const w = noTty([none, 'pts/3\n'])
+    await w.work()
+    expect(w.written).toEqual([])
+    w.at(60_000)
+    await w.work()
+    w.at(60_001)
+    await w.work()
+    expect(w.asked).toHaveLength(2)
+    expect(w.written.map(x => x.path)).toEqual(['/dev/pts/3', '/dev/pts/3'])
+  }
+})
+
+test('a terminal that refuses the write is asked about again a minute later', async () => {
+  const w = noTty(['ttys013\n', 'ttys014\n'], ['/dev/ttys013'])
+  await w.work()
+  expect(w.written).toEqual([])
+  w.at(60_000)
+  await w.work()
+  expect(w.written.map(x => x.path)).toEqual(['/dev/ttys014'])
 })
 
 test('with neither terminal a report is dropped and opencode carries on', async () => {
