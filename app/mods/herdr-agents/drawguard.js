@@ -10,10 +10,13 @@ export const guardsDraw = part => PARTS.includes(part)
 /** Whether any part's last draw threw (`get` is shared). */
 export const anyDrawFailed = get => PARTS.some(part => Boolean(get(keyOf(part))))
 
+/** Whether this draw's outcome differs from what `shared` holds for the part. */
+export const drawNoteDue = (part, error, get) => Boolean(get(keyOf(part))) !== Boolean(error)
+
 /** Records a part's last draw: `error` when it threw, null when it drew. true if that changed anything. */
 export function noteDraw(part, error, get, set) {
+  if (!drawNoteDue(part, error, get)) return false
   const failed = error ? String(error?.message ?? error) || 'draw failed' : null
-  if (Boolean(get(keyOf(part))) === Boolean(failed)) return false
   set(keyOf(part), failed)
   return true
 }

@@ -4,7 +4,7 @@ import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { card, makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
-import { anyDrawFailed, clearDrawFailed, guardsDraw, noteDraw } from './drawguard.js'
+import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
 import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
 import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
@@ -150,7 +150,7 @@ export default class HerdrAgents extends View {
   /** Notes how this draw went, after the draw: setShared redraws every mod, which a draw should not start from inside. */
   noteDrawn(cx, error) {
     const role = props()?.role
-    if (!guardsDraw(role)) return
+    if (!guardsDraw(role) || !drawNoteDue(role, error, shared)) return
     cx.spawn(async cx => {
       await cx.sleep(0)
       if (noteDraw(role, error, shared, setShared) && error) console.log(`herdr-agents: ${role} failed to draw: ${error}`)
