@@ -164,7 +164,9 @@ test('one number in two repos is two rows, and a row that joins another keeps it
   }
   await clock.advance(10_000)
   await clock.advance(2 * 60_000)
-  expect((await ui.find({ key: 'task-acme/app-client#12' }))?.text).toMatch(/#12 +hotbar keys +· +✓ +◐ +■ +· +r-15/)
+  const row12 = async () => (await ui.find({ key: 'task-acme/app-client#12' }))?.text ?? ''
+  await until(clock, async () => /■/.test(await row12()))
+  expect(await row12()).toMatch(/#12 +hotbar keys +· +✓ +◐ +■ +· +r-15/)
   expect((await ui.find({ key: 'task-acme/app-client#15' }))?.text).toMatch(/#15 +joined #12/)
   await ui.press({ key: 'clear-tasks' })
   expect(await ui.find({ key: 'task-acme/app-client#15' })).toBeUndefined()
