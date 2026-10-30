@@ -1,4 +1,5 @@
 import { expect } from 'claude-code/testing'
+import { actionFile, answerAction, doneAction } from '../app/mods/herdr-agents/model.js'
 import { BATCH_MS } from '../hooks/defaults'
 import { spawn, start, stopAll, test } from './harness'
 
@@ -70,4 +71,35 @@ test('the board says null for the coordinator terminal outside hc, and keeps the
   )
   expect(board.version).toBe(1)
   expect(board.session).toBe('session-1234')
+})
+
+test("action files of the app mod's own shape (answerAction, doneAction, actionFile) are taken, once", async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  await $.tool.call({
+    tool: 'mcp__herdr-agents__ask_owner',
+    question: 'Sort bags by type or by weight?',
+    title: 'Bag sort',
+    options: ['By type', 'By weight'],
+    recommended: 0,
+    from: 'p-640',
+  })
+  await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Test #642 at localhost:5173', kind: 'do', from: 'r-642' })
+  await clock.advance(3000)
+
+  // What the card writes: a name from actionFile (time, then random), the body from the model's own builders.
+  const answer = actionFile(1790000000000, 'ab12cd')
+  const done = actionFile(1790000000001, 'ef34gh')
+  files[`${INBOX}/${answer}`] = JSON.stringify(answerAction('D1', 'By type'))
+  files[`${INBOX}/${done}`] = JSON.stringify(doneAction('T1'))
+  await clock.advance(3000 + BATCH_MS)
+
+  expect(submitted.filter(t => t.includes('<herdr-decision id="D1"') && t.includes('The owner chose: By type'))).toHaveLength(1)
+  expect(submitted.filter(t => t.includes('<herdr-owner-done id="T1"'))).toHaveLength(1)
+  const after = JSON.parse(files[FILE] ?? '{}')
+  expect(after.actions).toEqual([
+    { id: answer, ok: true, message: 'D1 → By type' },
+    { id: done, ok: true, message: 'T1 done' },
+  ])
+  expect(Object.keys(files).filter(f => f.startsWith(`${INBOX}/`))).toEqual([])
+  await stopAll($, clock, [])
 })

@@ -2,16 +2,21 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
+  SENT_HIDE_MS,
   UNDO_MS,
   answerAction,
+  cardFor,
   cardHeight,
+  cardHint,
   cardKeyAction,
   cardView,
   doneAction,
   nextItem,
+  hiddenKeys,
   openState,
   readKey,
 } from '../mods/herdr-agents/model.js'
+import { CardState, onBoardsChanged } from '../mods/herdr-agents/cardstate.js'
 import { Outbox } from '../mods/herdr-agents/outbox.js'
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
@@ -21,13 +26,13 @@ test('answerAction is the file the plugin takes', () => {
 })
 
 test('cardHeight grows with the options of a decision, and each face has its own', () => {
-  assert.equal(cardHeight('ask', 2), 50 + 12 + 40 + 12 + 2 * 28 + 6)
+  assert.equal(cardHeight('ask', 2), 78 + 12 + 40 + 12 + 2 * 28 + 6)
   assert.equal(cardHeight('ask', 3), cardHeight('ask', 2) + 34)
   assert.equal(cardHeight('ask', 0), cardHeight('ask', 1), 'at least one row')
   assert.equal(cardHeight('ask', 99), cardHeight('ask', 6), 'at most six rows')
-  assert.equal(cardHeight('do'), 142)
-  assert.equal(cardHeight('blocked'), 122)
-  assert.equal(cardHeight('resolved'), 90)
+  assert.equal(cardHeight('do'), 170)
+  assert.equal(cardHeight('blocked'), 150)
+  assert.equal(cardHeight('resolved'), 118)
 })
 
 test('cardView: a decision shows its options and the recommended one', () => {
@@ -95,6 +100,42 @@ test('cardKeyAction: 1-3 answer, Esc and any other key close, a lone modifier do
   assert.deepEqual(cardKeyAction('resolved', '1'), { type: 'close' })
 })
 
+test('cardKeyAction: a chord on 1 is not 1 (ctrl-1, alt-1, cmd-1 close; they never answer or press Done)', () => {
+  for (const chord of ['ctrl-1', 'alt-1', 'cmd-1', 'shift-1', 'ctrl-alt-1']) {
+    assert.deepEqual(cardKeyAction('ask', chord, { options: 3 }), { type: 'close' }, chord)
+    assert.deepEqual(cardKeyAction('do', chord, { url: true }), { type: 'close' }, chord)
+  }
+  assert.deepEqual(cardKeyAction('ask', 'ctrl', { options: 3 }), { type: 'ignore' }, 'a modifier alone')
+})
+
+test('cardHint says which keys answer and that any other key closes and is lost', () => {
+  assert.match(cardHint('ask', { options: 2 }), /^1-2 answers .*any other key closes, and that key is lost$/)
+  assert.match(cardHint('ask', { options: 5 }), /^1-3 answers /, 'keys stop at 3')
+  assert.match(cardHint('ask', { options: 1 }), /^1 answers /)
+  assert.match(cardHint('do', { url: true }), /^1 done · 2 opens the link .*is lost$/)
+  assert.match(cardHint('do'), /^1 done · esc/)
+  assert.match(cardHint('resolved'), /esc/)
+})
+
+test('cardFor: nothing open draws nothing; an open item whose board is gone is `gone`, which can be closed', () => {
+  const b = board()
+  assert.equal(cardFor([b], null), null)
+  assert.equal(cardFor([b], { session: b.session, key: 'D7' }).face, 'ask')
+  const gone = cardFor([], { session: b.session, key: 'D7' })
+  assert.deepEqual([gone.face, gone.key], ['gone', 'D7'])
+  assert.equal(cardFor([{ ...b, session: 'other' }], { session: b.session, key: 'D7' }).face, 'gone', 'another board does not stand in')
+  assert.deepEqual(cardKeyAction(gone.face, 'x'), { type: 'close' })
+  assert.deepEqual(cardKeyAction(gone.face, 'escape'), { type: 'close' })
+})
+
+test('cardView: a sent answer with no outcome stops counting after SENT_HIDE_MS, like hiddenKeys', () => {
+  const b = board()
+  const entry = { id: 'a1', session: b.session, key: 'D7', action: answerAction('D7', 'Cursor'), at: 1000 }
+  assert.equal(cardView(b, 'D7', { sent: [entry], now: 1000 + SENT_HIDE_MS - 1 }).face, 'resolved')
+  assert.equal(cardView(b, 'D7', { sent: [entry], now: 1000 + SENT_HIDE_MS }).face, 'ask', 'the item can be answered again')
+  assert.equal(hiddenKeys([], [entry], 1000 + SENT_HIDE_MS).size, 0, 'the same limit as the lists')
+})
+
 test('openState keeps the terminal to give back while a card is already open', () => {
   assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1' })
   assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), { session: 's', key: 'D8', back: 't1' })
@@ -149,9 +190,85 @@ test("the card's own outbox reports a failed send (ok:false) when it settles the
   )
 })
 
-test('card.js settles its own outbox on every board change (main.js hands it the boards)', () => {
-  const main = readFileSync(new URL('../mods/herdr-agents/main.js', import.meta.url), 'utf8')
-  assert.match(main, /this\.card\?\.onBoards\(this\.boards\.list\(\)\)/)
-  const card = readFileSync(new URL('../mods/herdr-agents/card.js', import.meta.url), 'utf8')
-  assert.match(card, /onBoards\(boards\)\s*{\s*return this\.outbox\.settle\(boards\)/)
+test('a second action for the same item is refused while the first waits', () => {
+  const { t, box, cx } = outbox()
+  const first = box.schedule(cx, 's', answerAction('D7', 'Cursor'))
+  assert.equal(box.schedule(cx, 's', answerAction('D7', 'Offset')), null)
+  assert.equal(box.schedule(cx, 'other', answerAction('D7', 'Offset')) !== null, true, 'another board is another item')
+  assert.deepEqual(
+    box.queue.filter(q => q.session === 's').map(q => q.id),
+    [first],
+  )
+  box.undo(first)
+  assert.notEqual(box.schedule(cx, 's', answerAction('D7', 'Offset')), null, 'after undo it can be answered again')
+  assert.equal(t.timers.length, 3)
+})
+
+function state({ open = { session: 's', key: 'D7' } } = {}) {
+  const t = { runs: [], notes: [], sends: [], notified: 0, now: 1000 }
+  const ctl = new CardState({
+    send: async (session, action, id) => t.sends.push({ session, action, id }),
+    notify: n => t.notes.push(n),
+    handle: {},
+    run: (name, args) => t.runs.push([name, args]),
+    open,
+  })
+  ctl.outbox.now = () => t.now
+  const jobs = []
+  const cx = {
+    timer: { after: () => {} },
+    notify: () => t.notified++,
+    spawn: fn => jobs.push(fn({ notify: () => t.notified++ })),
+    jobs,
+  }
+  return { t, ctl, cx }
+}
+
+test('a failed answer returns to the options and the card never resizes the terminal on the way', async () => {
+  const b = board()
+  const { t, ctl, cx } = state({ open: { session: b.session, key: 'D7' } })
+  const id = ctl.schedule(cx, b.session, answerAction('D7', 'Cursor'))
+  assert.equal(cardFor([b], { session: b.session, key: 'D7' }, { queue: ctl.outbox.queue }).face, 'resolved')
+  t.now += UNDO_MS + 50
+  ctl.outbox.flush(cx)
+  await Promise.all(cx.jobs)
+  assert.equal(t.sends.length, 1)
+  const failed = { ...b, actions: [{ id, ok: false, message: 'D7 is not an open decision' }] }
+  assert.equal(ctl.onBoards([failed]), true)
+  const view = cardFor([failed], { session: b.session, key: 'D7' }, { queue: ctl.outbox.queue, sent: ctl.outbox.sent })
+  assert.equal(view.face, 'ask', 'the options are back')
+  assert.deepEqual(view.options, ['Cursor', 'Offset'])
+  assert.deepEqual(
+    t.notes.map(n => [n.title, n.level]),
+    [['Action failed', 'error']],
+  )
+  assert.deepEqual(t.runs, [], 'no layout.resize, show or hide: only the owner changes the panel')
+  ctl.undo(ctl.schedule(cx, b.session, answerAction('D8', 'Light')))
+  assert.deepEqual(t.runs, [], 'nor does undo')
+})
+
+test('a card copy that starts with nothing open hides a panel left shown; with an item open it leaves the panel alone', () => {
+  assert.deepEqual(state({ open: null }).t.runs, [['layout.hide', { id: 'hrd-card' }]])
+  assert.deepEqual(state().t.runs, [])
+})
+
+test('every board change settles the card outbox, so a failed send shows (the parts main.js hands the boards to)', async () => {
+  const b = board()
+  const { t, ctl, cx } = state({ open: { session: b.session, key: 'D7' } })
+  const id = ctl.schedule(cx, b.session, answerAction('D7', 'Cursor'))
+  t.now += UNDO_MS + 50
+  ctl.outbox.flush(cx)
+  await Promise.all(cx.jobs)
+  const calls = []
+  const pin = { onBoards: bs => calls.push(['pin', bs.length]) }
+  const strip = { observe: (_cx, bs) => calls.push(['strip', bs.length]) }
+  const failed = { ...b, actions: [{ id, ok: false, message: 'no such item' }] }
+  onBoardsChanged({ pinbar: false, pin, card: ctl, strip }, [failed], cx)
+  assert.deepEqual(calls, [['strip', 1]], 'the pin bar copy only for the pin bar role')
+  assert.deepEqual(
+    t.notes.map(n => n.body),
+    ['no such item'],
+  )
+  onBoardsChanged({ pinbar: true, pin, card: null, strip: null }, [failed], cx)
+  assert.deepEqual(calls.at(-1), ['pin', 1])
 })

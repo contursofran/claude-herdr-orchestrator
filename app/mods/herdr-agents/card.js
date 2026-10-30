@@ -2,32 +2,12 @@ import { div, svg } from 'gpui-kit'
 import { exec, notify, run, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
-import { CARD_ID, answerAction, cardHeight, cardKeyAction, cardView, doneAction, nextItem } from './model.js'
-import { Outbox } from './outbox.js'
+import { CardState } from './cardstate.js'
+import { answerAction, cardFor, cardHint, cardKeyAction, doneAction, nextItem } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
-/**
- * What the card keeps: the actions waiting out their undo time (its own Outbox, so main.js must settle it on every board
- * change, or an `ok:false` would never show) and the handle that takes the keyboard when the owner opens it.
- */
-export class CardState {
-  constructor(cx) {
-    this.outbox = new Outbox({ send, notify })
-    this.h = cx.focus_handle()
-    this.token = null
-  }
-
-  /** Called with the boards after each change; true when something was settled (redraw). */
-  onBoards(boards) {
-    return this.outbox.settle(boards)
-  }
-
-  /** Resize to the face the item has now. Only called from the owner's click or key. */
-  refit(board, key) {
-    const view = cardView(board, key, { queue: this.outbox.queue, sent: this.outbox.sent, terminals: terminals() })
-    run('layout.resize', { id: CARD_ID, px: cardHeight(view?.face, view?.options?.length) })
-  }
-}
+/** The card's state for this copy (main.js, role `card`). */
+export const makeCardState = cx => new CardState({ send, notify, handle: cx.focus_handle(), run, open: shared('hrd.open') })
 
 const ghost = (id, label, onClick) =>
   div()
@@ -42,7 +22,7 @@ const ghost = (id, label, onClick) =>
     .on_mouse_down('left', onClick)
     .child(label)
 
-/** A button with a key hint: `[1] Cursor`. `rec` is the recommended one. */
+/** A button with a key hint: `[1] Cursor` (no hint: just the label). `rec` is the recommended one. */
 function keyButton(id, hint, label, rec, onClick) {
   return div()
     .id(id)
@@ -62,19 +42,21 @@ function keyButton(id, hint, label, rec, onClick) {
     .cursor_pointer()
     .when(!rec, el => el.hover(s => s.bg(look.hover)))
     .on_mouse_down('left', onClick)
-    .child(
-      div()
-        .size(18)
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(4)
-        .bg(rec ? look.kbdRec : look.kbd)
-        .text_color(rec ? color.chipText : color.text)
-        .text_size(11)
-        .font_bold()
-        .child(hint),
+    .when(hint, el =>
+      el.child(
+        div()
+          .size(18)
+          .flex_none()
+          .flex()
+          .items_center()
+          .justify_center()
+          .rounded(4)
+          .bg(rec ? look.kbdRec : look.kbd)
+          .text_color(rec ? color.chipText : color.text)
+          .text_size(11)
+          .font_bold()
+          .child(hint),
+      ),
     )
     .child(label)
 }
@@ -109,7 +91,7 @@ function faceIcon(face) {
       .justify_center()
       .child(svg(icon('decide')).size(13).text_color(color.chipText))
   }
-  const name = face === 'blocked' ? 'blocked' : face === 'resolved' ? 'done' : 'do'
+  const name = face === 'blocked' || face === 'gone' ? 'blocked' : face === 'resolved' ? 'done' : 'do'
   return svg(icon(name)).size(14).flex_none().text_color(color.text)
 }
 
@@ -135,13 +117,12 @@ function header(view, onClose) {
 export function card(boards, ctl, cx) {
   const root = div().id('card').size_full().min_h_0().flex().flex_col().bg(color.bar).p(0).text_size(font.size)
   const open = shared('hrd.open')
-  const board = open && (boards ?? []).find(b => b.session === open.session)
-  const view =
-    board && cardView(board, open.key, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
+  const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
     ctl.token = null
     return root
   }
+  const board = (boards ?? []).find(b => b.session === open.session)
 
   // The first draw after an open: take the keyboard. (A cx of this render is fine to spawn from; handlers use their own.)
   const token = `${open.session}:${open.key}`
@@ -159,11 +140,9 @@ export function card(boards, ctl, cx) {
     closeCard()
     cx.notify()
   }
-  const schedule = (cx, action) => {
-    ctl.outbox.schedule(cx, board.session, action)
-    ctl.refit(board, key)
-    cx.notify()
-  }
+  // The panel keeps its height: nothing resizes the terminal but the owner's click or key, and a failed answer
+  // comes back to the options, which need the room they had.
+  const schedule = (cx, action) => ctl.schedule(cx, board.session, action)
   const answer = (i, cx) => schedule(cx, answerAction(key, view.options[i]))
   const done = (_e, cx) => schedule(cx, doneAction(key))
   const link = () => {
@@ -195,7 +174,7 @@ export function card(boards, ctl, cx) {
                   .w(200)
                   .flex_none()
                   .flex()
-                  .child(keyButton(`card-opt-${i}`, String(i + 1), o, rec, (_e, cx) => answer(i, cx))),
+                  .child(keyButton(`card-opt-${i}`, i < 3 ? String(i + 1) : '', o, rec, (_e, cx) => answer(i, cx))),
               )
               .when(view.impacts[i], el => el.child(div().min_w_0().truncate().text_color(look.impact).child(view.impacts[i])))
           }),
@@ -221,7 +200,8 @@ export function card(boards, ctl, cx) {
             'card-tab',
             'Open its tab',
             (_e, cx) => {
-              closeCard(false)
+              // With its terminal found, that one gets the keyboard; without, hand it back to where it was.
+              closeCard(!view.terminal)
               if (view.terminal) run('pane.focus', { terminal: view.terminal })
               cx.notify()
             },
@@ -229,6 +209,8 @@ export function card(boards, ctl, cx) {
           ),
         ),
     )
+  } else if (view.face === 'gone') {
+    body.child(div().text_color(color.soft).child('Its board is gone: the session ended or the app restarted.'))
   } else {
     const more = nextItem(board, key, ctl.outbox.hidden())
     const text = view.detail
@@ -243,8 +225,7 @@ export function card(boards, ctl, cx) {
         .when(view.undoId, el =>
           el.child(
             button('card-undo', 'undo', (_e, cx) => {
-              ctl.outbox.undo(view.undoId)
-              ctl.refit(board, key)
+              ctl.undo(view.undoId)
               cx.notify()
             }),
           ),
@@ -258,7 +239,7 @@ export function card(boards, ctl, cx) {
       .id('card-body')
       .track_focus(ctl.h)
       .on_key_down((e, cx) => {
-        const act = cardKeyAction(view.face, e.key, { options: view.options?.length ?? 0, url: Boolean(view.url) })
+        const act = cardKeyAction(view.face, e.keystroke ?? e.key, { options: view.options?.length ?? 0, url: Boolean(view.url) })
         if (act.type === 'ignore') return
         if (act.type === 'answer') answer(act.index, cx)
         else if (act.type === 'done') done(null, cx)
@@ -278,6 +259,12 @@ export function card(boards, ctl, cx) {
       .border_color(look.border)
       .rounded(10)
       .child(header(view, close))
-      .child(body),
+      .child(body)
+      .child(
+        div()
+          .text_size(11)
+          .text_color(look.meta)
+          .child(cardHint(view.face, { options: view.options?.length ?? 0, url: Boolean(view.url) })),
+      ),
   )
 }

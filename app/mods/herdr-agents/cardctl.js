@@ -6,10 +6,11 @@ import { CARD_ID, cardHeight, cardView, openState } from './model.js'
 export function openCard(board, item, outbox, terminals) {
   const view = cardView(board, item.key, { queue: outbox?.queue, sent: outbox?.sent, terminals })
   run('layout.resize', { id: CARD_ID, px: cardHeight(view?.face, view?.options?.length) })
-  run('layout.show', { id: CARD_ID })
+  // Remember it is open before showing it: a card copy that starts on the show must not take the panel for a stale one.
   const cur = shared('hrd.open')
   setShared('hrd.open', openState(cur, board.session, item.key, focused()?.terminal))
   setShared('hrd.pick', { session: board.session, key: item.key })
+  run('layout.show', { id: CARD_ID })
 }
 
 /** Hide the card and give the keyboard back to the terminal that had it (unless `refocus` is false). */

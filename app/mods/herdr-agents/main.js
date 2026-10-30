@@ -2,7 +2,8 @@ import { View, div } from 'gpui-kit'
 import { focused, props, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
 import { Boards } from './board.js'
-import { CardState, card } from './card.js'
+import { card, makeCardState } from './card.js'
+import { onBoardsChanged } from './cardstate.js'
 import { resolveBoard } from './model.js'
 import { pinbar } from './pinbar.js'
 import { PinCtl } from './pinctl.js'
@@ -33,15 +34,12 @@ export default class HerdrAgents extends View {
     this.pin = new PinCtl()
     const pinbarCopy = props()?.role === 'pinbar'
     // The card has an Outbox of its own: it settles it here, or a failed send would never show.
-    this.card = props()?.role === 'card' ? new CardState(cx) : null
+    this.card = props()?.role === 'card' ? makeCardState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
-    this.boards.start(cx, cx => {
-      if (pinbarCopy) this.pin.onBoards(this.boards.list())
-      this.card?.onBoards(this.boards.list())
-      this.part?.observe(cx, this.boards.list())
-      cx.notify()
-    })
+    this.boards.start(cx, cx =>
+      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card, strip: this.part }, this.boards.list(), cx),
+    )
     this.part?.listen(cx)
   }
 

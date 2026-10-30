@@ -25,8 +25,10 @@ export class Outbox {
     return this.queue.filter(q => q.session === session)
   }
 
-  /** Queue an action; it goes out after UNDO_MS unless undo() is called first. `cx` is the caller's own. */
+  /** Queue an action; it goes out after UNDO_MS unless undo() is called first. `cx` is the caller's own.
+   *  Returns its id, or null when an action for the same item already waits (two presses before a redraw). */
   schedule(cx, session, action) {
+    if (action.key && this.queue.some(q => q.session === session && q.key === action.key)) return null
     const id = actionFile(this.now(), Math.random().toString(36).slice(2, 8))
     this.queue = queueAction(this.queue, { id, session, action, now: this.now() })
     cx.timer.after(UNDO_MS + 50, cx => this.flush(cx))

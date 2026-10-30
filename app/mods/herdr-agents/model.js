@@ -258,12 +258,15 @@ export function takeDue(queue, now) {
 /** How long a sent action keeps its item hidden while the board shows no outcome (the plugin may have stopped), ms. */
 export const SENT_HIDE_MS = 60000
 
+/** The sent actions that still count: with `now`, those sent less than SENT_HIDE_MS ago (no `now`, all of them). */
+export const liveSent = (sent, now = null) => sent.filter(s => !now || s.at === undefined || now - s.at < SENT_HIDE_MS)
+
 /**
  * Read keys of items whose action waits or was sent and still shows open on the board. A sent action older than
  * SENT_HIDE_MS (when `now` is given) no longer hides its item.
  */
 export function hiddenKeys(queue, sent, now = null) {
-  const live = sent.filter(s => now === null || s.at === undefined || now - s.at < SENT_HIDE_MS)
+  const live = liveSent(sent, now)
   return new Set([...queue, ...live].filter(q => q.key).map(q => readKey(q.session, q.key)))
 }
 
@@ -506,9 +509,10 @@ export const CARD_ID = 'hrd-card'
 export const answerAction = (key, answer) => ({ action: 'answer', key, answer })
 
 /** Panel height in px for a face (`ask`, `do`, `resolved`, `blocked`) and an option count: border 2 + padding 28, the
- *  header 20, a gap of 12 before each row, a question or note 40 (two lines), a row of buttons 28 with 6 between. */
+ *  header 20, a gap of 12 before each row, a question or note 40 (two lines), a row of buttons 28 with 6 between, and
+ *  the key hint under them (a gap of 12 and a line of 16). */
 export function cardHeight(face, options = 0) {
-  const base = 30 + 20
+  const base = 30 + 20 + 12 + 16
   const rows = Math.min(Math.max(Number(options) || 0, 1), 6)
   if (face === 'ask') return base + 12 + 40 + 12 + rows * 28 + (rows - 1) * 6
   if (face === 'do') return base + 12 + 40 + 12 + 28
@@ -526,7 +530,7 @@ export function cardView(board, key, { queue = [], sent = [], terminals = [], no
   if (!board || !key) return null
   const mine = q => q.session === board.session && q.key === key
   const waiting = queue.filter(mine).pop()
-  const out = waiting ?? sent.filter(mine).pop()
+  const out = waiting ?? liveSent(sent, now).filter(mine).pop()
   const need = openNeeds(board).find(n => n.key === key && (n.kind === 'ask' || n.kind === 'do'))
   const named = (board.needs ?? []).find(n => n.key === key)
   const worker = key.startsWith('w:') ? (board.workers ?? []).find(w => w.name === key.slice(2)) : null
@@ -570,6 +574,27 @@ export function cardView(board, key, { queue = [], sent = [], terminals = [], no
   }
 }
 
+/**
+ * What the card draws for `open` (shared "hrd.open": {session, key}) among `boards`: null when nothing is open, the item's
+ * view, or face `gone` when its board is no longer there (the session ended, or the app restarted). `gone` is still
+ * drawn, with a way to close: a shown panel the owner cannot close would leave the terminal short for good.
+ */
+export function cardFor(boards, open, ctx = {}) {
+  if (!open) return null
+  const board = (boards ?? []).find(b => b.session === open.session)
+  const view = board ? cardView(board, open.key, ctx) : null
+  if (view) return view
+  return { face: 'gone', key: open.key, id: open.key, title: 'This board has ended' }
+}
+
+/** The line under the keys: which keys answer, and that any other one closes the card and is lost. */
+export function cardHint(face, { options = 0, url = false } = {}) {
+  const n = Math.min(Math.max(Number(options) || 0, 0), 3)
+  if (face === 'ask' && n) return `${n === 1 ? '1' : `1-${n}`} answers · esc or any other key closes, and that key is lost`
+  if (face === 'do') return `${url ? '1 done · 2 opens the link' : '1 done'} · esc or any other key closes, and that key is lost`
+  return 'esc or any key closes'
+}
+
 /** The open item after `key` on the strip's list, wrapping, leaving out items whose action waits or went out
  *  (`hidden`, a Set of read keys). null when no other is left. */
 export function nextItem(board, key, hidden = new Set()) {
@@ -582,12 +607,13 @@ export function nextItem(board, key, hidden = new Set()) {
 const MODIFIER_KEYS = new Set(['shift', 'control', 'ctrl', 'alt', 'option', 'cmd', 'meta', 'super', 'fn', 'capslock'])
 
 /**
- * What a key does while the card has the keyboard. `1`-`3` answer (a decision) or press Done / Open link (a to-do),
+ * What a key does while the card has the keyboard (`keystroke` is the event's whole chord, e.g. `1` or `ctrl-1`). `1`-`3` answer (a decision) or press Done / Open link (a to-do),
  * Esc closes, a modifier alone is ignored, and any other key closes the card and is lost.
  * Returns {type: 'answer', index} | {type: 'done'} | {type: 'link'} | {type: 'close'} | {type: 'ignore'}.
  */
-export function cardKeyAction(face, key, { options = 0, url = false } = {}) {
-  const k = String(key ?? '').toLowerCase()
+export function cardKeyAction(face, keystroke, { options = 0, url = false } = {}) {
+  // The whole chord (`keystroke`), not the bare key: ctrl-1 or alt-1 is not `1`.
+  const k = String(keystroke ?? '').toLowerCase()
   if (MODIFIER_KEYS.has(k)) return { type: 'ignore' }
   if (k === 'escape') return { type: 'close' }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
