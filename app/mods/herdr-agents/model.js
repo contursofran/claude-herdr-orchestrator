@@ -1,5 +1,11 @@
 // The mod's logic, with no gpui-kit or herdr imports so node can test it (app/test).
 
+/** True when the watcher's `paths` include the board file of `session` (either spelling of the folder: /tmp may be
+ *  reported as /private/tmp, so only the file name is compared). Files in <session>.actions/ and .tmp files do not count. */
+export function touchesBoard(session, paths) {
+  return (paths ?? []).some(p => String(p).endsWith(`/${session}.json`))
+}
+
 /** The board id (the session id) for a path the folder watcher reports, or null for anything else
  *  (a .tmp file, a file in <session>.actions/, another folder). */
 export function boardId(dir, path) {

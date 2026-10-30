@@ -149,7 +149,7 @@ export function openBoardPopup(board) {
     width: POPUP_W,
     height,
     at: popupSpot(view.width, view.height, height),
-    props: { role: 'board', session: board.session, height },
+    props: { role: 'board', session: board.session, height, board },
   })
   setShared('hrd.popup', popupId)
 }
