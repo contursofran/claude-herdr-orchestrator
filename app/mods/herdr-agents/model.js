@@ -776,6 +776,36 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
 
+/** How long a note of a dismissing press stays good, in ms. One press reaches its button at once; this only outlives a slow draw. */
+export const DISMISS_MS = 500
+
+/** Is `press` the one that left `note` (outside.js)? Same place and button, and the same click count, so a quick second click
+ *  on the same spot is a press of its own. */
+export function samePress(note, press, now) {
+  const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1
+  return (
+    Boolean(note && press?.position) &&
+    now - note.at >= 0 &&
+    now - note.at < DISMISS_MS &&
+    close(note.x, press.position.x) &&
+    close(note.y, press.position.y) &&
+    note.button === press.button &&
+    note.clicks === press.click_count
+  )
+}
+
+/** Herdr's frame around a floating block, in px past the mod's root: 5 above and below, plus its 1 px border. */
+export const FLOAT_FRAME = 6
+
+/** on_mouse_down_out also fires on the frame Herdr draws around a floating block, which is still the surface. True when the
+ *  press is past the frame; true too when the event has no place for it. */
+export function pastFrame(press) {
+  const at = press?.local_position
+  const box = press?.bounds
+  if (!at || !box) return true
+  return at.x < -FLOAT_FRAME || at.y < -FLOAT_FRAME || at.x > box.width + FLOAT_FRAME || at.y > box.height + FLOAT_FRAME
+}
+
 /** Which terminal gets the keyboard when the pop-up goes (`from`: {back, space} saved at open), or null. Null when a row
  *  already chose (`leaving`), in another space, or when the owner clicked another terminal to dismiss it. */
 export function popupRefocus(from, now, leaving) {

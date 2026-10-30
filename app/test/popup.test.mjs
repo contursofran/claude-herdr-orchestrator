@@ -175,6 +175,6 @@ test('every way of closing hands the keyboard back, and a row keeps its own targ
   assert.match(src, /run\('pane\.focus', \{ terminal \}\)/)
   assert.match(src, /ctl\.leaving = true\s*(\/\/.*\s*)?closeOverlay/)
   const strip = source('strip.js')
-  assert.match(strip, /const back = shared\('hrd\.open'\)\?\.back \?\? focused\(\)\?\.terminal \?\? null/)
+  assert.match(strip, /const back = shared\('hrd\.open'\)\?\.back \?\? gone\?\.back \?\? focused\(\)\?\.terminal \?\? null/)
   assert.match(strip, /props: \{ role: 'board', session: board\.session, height, board, back, space \}/)
 })

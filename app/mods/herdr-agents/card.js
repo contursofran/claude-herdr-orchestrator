@@ -2,8 +2,9 @@ import { div, svg } from 'gpui-kit'
 import { exec, notify, run, settings, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
+import { noteDismissed } from './outside.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem } from './model.js'
+import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem, pastFrame } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
 /** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
@@ -239,6 +240,13 @@ export function card(boards, ctl, cx) {
     )
   }
 
+  // A press elsewhere closes it and the keyboard stays on what was pressed. Any button: a right-click elsewhere dismisses too.
+  root.on_mouse_down_out((e, cx) => {
+    if (!pastFrame(e)) return
+    noteDismissed('card', e, open)
+    closeCard(false)
+    cx.notify()
+  })
   return root.child(
     div()
       .id('card-body')
