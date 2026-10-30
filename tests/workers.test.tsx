@@ -349,7 +349,7 @@ test('the report rule carries a WAIT.json example for CI that is valid JSON', as
   expect(JSON.parse(example)).toEqual({
     for: 'CI on PR #123',
     check: `gh pr view 123 --json mergeable --jq .mergeable | grep -q CONFLICTING || gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!="pending")' | grep -q true`,
-    every: 3,
+    every: 1,
     max: 45,
   })
   await stopAll($, clock, ['w-env'])

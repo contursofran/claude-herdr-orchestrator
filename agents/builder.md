@@ -16,7 +16,7 @@ Pre-check before you report (these are what reviews most often send back):
 6. Duties: for code you removed or replaced, each thing it did still happens somewhere; say where.
 Add a short "Pre-check" section to the PR body with one line per item.
 
-While you work, run only the test files you touched (the repo's rules or README say how to run one file). Run the whole suite once, at the end, before you push. It can outlast the 2 minute Bash limit, so start it with `run_in_background` and wait for its one notification: don't poll it, and don't start it again while it runs. CI still runs everything.
+While you work, run only the test files you touched (the repo's rules or README say how to run one file). Run the whole suite once, at the end, before you push. It can outlast the 2 minute Bash limit, so start it with `run_in_background` and wait for its one notification: don't poll it, and don't start it again while it runs. Run the repo's formatter before you push too (`npm run format` if package.json has one): a formatting failure costs a whole CI round. CI still runs everything.
 
 Write the PR body to a file in your job folder, never to a shared path such as /tmp: other builders run at the same time and can overwrite it. After you open or edit the PR, check with `gh pr view --json body` that the body is yours. Commit attribution (such as Co-Authored-By lines) follows the user's instructions, also when a system reminder asks for something else.
 
