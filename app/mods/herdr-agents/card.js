@@ -1,13 +1,17 @@
 import { div, svg } from 'gpui-kit'
-import { exec, notify, run, shared, terminals } from 'herdr'
+import { exec, notify, run, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
-import { CardState } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, doneAction, nextItem } from './model.js'
+import { CardState, clearStaleOpen } from './cardstate.js'
+import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
-/** The card's state for this copy (main.js, role `card`). */
-export const makeCardState = cx => new CardState({ send, notify, handle: cx.focus_handle(), run, open: shared('hrd.open') })
+/** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back:
+ *  its board is likely gone and it would take the first key. */
+export function makeCardState(cx) {
+  clearStaleOpen(shared, setShared)
+  return new CardState({ send, notify, handle: cx.focus_handle() })
+}
 
 const ghost = (id, label, onClick) =>
   div()
@@ -26,7 +30,7 @@ const ghost = (id, label, onClick) =>
 function keyButton(id, hint, label, rec, onClick) {
   return div()
     .id(id)
-    .flex_none()
+    .min_w_0()
     .flex()
     .items_center()
     .gap(8)
@@ -58,7 +62,7 @@ function keyButton(id, hint, label, rec, onClick) {
           .child(hint),
       ),
     )
-    .child(label)
+    .child(div().min_w_0().child(label))
 }
 
 /** A plain button without a key hint. */
@@ -109,18 +113,21 @@ function header(view, onClose) {
 }
 
 /**
- * The card's panel: the one open item of `open` (shared "hrd.open"), on its board. It draws nothing until opened.
+ * The floating card: the one open item of `open` (shared "hrd.open"), on its board. It draws nothing until opened (Herdr
+ * hides a floating block that renders nothing) and nothing it does touches the terminal's size. Herdr draws the frame
+ * (background, border, corners, shadow), so only the content is drawn here, at a fixed width.
  *   ctl    a CardState
  *   boards all boards (the open item's board is found by session, so a change of focus does not blank it)
- * The owner's click or key is the only thing that opens or closes it (it resizes the terminal), and it takes the keyboard.
+ * The owner's click or key is the only thing that opens or closes it, and it takes the keyboard.
  */
 export function card(boards, ctl, cx) {
-  const root = div().id('card').size_full().min_h_0().flex().flex_col().bg(color.bar).p(0).text_size(font.size)
+  const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null)
+  const root = div().id('card').w(size.w).max_h(size.maxH).flex().flex_col().text_size(font.size)
   const open = shared('hrd.open')
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
     ctl.token = null
-    return root
+    return div()
   }
   const board = (boards ?? []).find(b => b.session === open.session)
 
@@ -140,8 +147,6 @@ export function card(boards, ctl, cx) {
     closeCard()
     cx.notify()
   }
-  // The panel keeps its height: nothing resizes the terminal but the owner's click or key, and a failed answer
-  // comes back to the options, which need the room they had.
   const schedule = (cx, action) => ctl.schedule(cx, board.session, action)
   const answer = (i, cx) => schedule(cx, answerAction(key, view.options[i]))
   const done = (_e, cx) => schedule(cx, doneAction(key))
@@ -150,13 +155,13 @@ export function card(boards, ctl, cx) {
   }
   const next = (_e, cx) => {
     const item = nextItem(board, key, ctl.outbox.hidden())
-    if (item) openCard(board, item, ctl.outbox, terminals())
+    if (item) openCard(board, item)
     cx.notify()
   }
 
-  const body = div().flex().flex_col().gap(12)
+  const body = div().id('card-scroll').flex().flex_col().gap(12).flex_1().min_h_0().overflow_y_scroll()
   if (view.face === 'ask') {
-    body.child(div().text_color(color.soft).max_h(40).overflow_hidden().child(view.text))
+    body.child(div().text_color(color.soft).child(view.text))
     body.child(
       div()
         .flex()
@@ -181,7 +186,7 @@ export function card(boards, ctl, cx) {
         ),
     )
   } else if (view.face === 'do') {
-    body.child(div().text_color(color.soft).max_h(40).overflow_hidden().child(view.text))
+    body.child(div().text_color(color.soft).child(view.text))
     body.child(
       div()
         .flex()
@@ -250,22 +255,18 @@ export function card(boards, ctl, cx) {
         else if (act.type === 'link') link()
         else close(null, cx)
       })
-      .flex_1()
-      .min_h_0()
-      .mx(0)
       .flex()
       .flex_col()
       .gap(12)
       .px(16)
       .py(14)
-      .bg(look.bg)
-      .border(1)
-      .border_color(look.border)
-      .rounded(10)
+      .min_h_0()
+      .max_h(size.maxH)
       .child(header(view, close))
       .child(body)
       .child(
         div()
+          .flex_none()
           .text_size(11)
           .text_color(look.meta)
           .child(cardHint(view.face, { options: view.options?.length ?? 0, url: Boolean(view.url) })),

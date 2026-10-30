@@ -1,5 +1,5 @@
 import type { Register } from 'claude-code'
-import { drawBand, shortenBrief } from './band'
+import { drawBand, hidesToolResult, hidesToolUse, shortenBrief } from './band'
 import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
 import { publishBoard, removeBoard } from './bridge'
@@ -156,7 +156,16 @@ export const register: Register = on => {
     return out
   })
 
-  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => next(shortenBrief(e)))
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (!hidesToolUse(e)) return next(shortenBrief(e))
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    if (!hidesToolResult(e)) return next(e)
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
 
   // The band above the prompt: the settings while /hrd-config has them open, else
   // what waits for the person and the workers, unless the sidebar shows them.
