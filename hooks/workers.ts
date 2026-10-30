@@ -112,12 +112,16 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
     status: 'running',
     endedAt: undefined,
     tail: undefined,
+    // A new prompt ends the wait the worker had set: it works now, so it is not Waiting and it counts.
+    wait: undefined,
     reportStatus: undefined,
     reportFile: undefined,
     noticed: undefined,
   }
   await saveJob($, next)
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
+  // Its WAIT.json goes too, or the next tick would set the wait again.
+  if (job.wait) await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
   // A spawn's first prompt gets the full rule, as does the first prompt to a folder without REPORTING.md.
   // A job folder outlives its job, so a spawn cannot rely on that file. REPORTING.md keeps the full rule
   // for the prompts after it, which get the reminder.

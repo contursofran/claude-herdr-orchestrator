@@ -47,7 +47,7 @@ function row(r, board) {
       if (!act) return
       closeOverlay(props().overlay)
       if (act.type === 'focus') run('pane.focus', { terminal: act.terminal })
-      // The card resizes the terminal: only this click may open it. One overlay at a time, so the pop-up went first.
+      // One overlay at a time, so the pop-up went first.
       else openCard(board, { key: act.item })
     })
     .child(div().w(44).flex_none().text_color(color.dim).child(r.label))

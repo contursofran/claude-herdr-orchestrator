@@ -769,3 +769,42 @@ export function popupSpot(viewW, viewH, height) {
 
 /** Whether a mod command name means "open the board pop-up" (`herdr-agents.board`). */
 export const isBoardCommand = name => /(?:^|\.)board$/.test(String(name))
+
+// ---- Sound and notification (S10) ----
+
+/**
+ * New `know` and `ask` items on one board. `prevKeys` is the Set this returned last time for the board, or null the first
+ * time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
+ * Returns {keys, fresh}: every open know/ask key now, and the items in it that were not in `prevKeys` ({key, kind, text}).
+ */
+export function newArrivals(prevKeys, board) {
+  const items = openNeeds(board).filter(n => n.kind === 'know' || n.kind === 'ask')
+  const keys = new Set(items.map(n => n.key))
+  if (!prevKeys) return { keys, fresh: [] }
+  const fresh = items
+    .filter(n => !prevKeys.has(n.key))
+    .map(n => ({ key: n.key, kind: n.kind, text: firstLine(n.title) || firstLine(n.text) || n.key }))
+  return { keys, fresh }
+}
+
+/**
+ * The one notification for what arrived across boards: `arrivals` is [{terminal, fresh}] (boards with nothing new left
+ * out). One item names it; several give a count. `terminal` is where a click goes: the first board's coordinator.
+ * Returns {title, body, terminal} or null when nothing arrived.
+ */
+export function arrivalNotice(arrivals) {
+  const list = (arrivals ?? []).filter(a => a?.fresh?.length)
+  if (!list.length) return null
+  const all = list.flatMap(a => a.fresh)
+  const terminal = list.find(a => typeof a.terminal === 'string')?.terminal ?? null
+  if (all.length === 1) {
+    const [one] = all
+    return { title: one.kind === 'ask' ? 'New question' : 'New pin', body: one.text, terminal }
+  }
+  const asks = all.filter(i => i.kind === 'ask').length
+  const pinsN = all.length - asks
+  const parts = []
+  if (asks) parts.push(`${asks} ${asks === 1 ? 'question' : 'questions'}`)
+  if (pinsN) parts.push(`${pinsN} ${pinsN === 1 ? 'pin' : 'pins'}`)
+  return { title: `${all.length} new items`, body: parts.join(', '), terminal }
+}

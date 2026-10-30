@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { Arrivals } from '../mods/herdr-agents/arrivals.js'
 import {
   FLASH_MS,
   SENT_HIDE_MS,
@@ -27,6 +28,8 @@ import {
   listOrder,
   markRead,
   newBarState,
+  arrivalNotice,
+  newArrivals,
   newPinIds,
   nextPick,
   observeArrivals,
@@ -901,4 +904,104 @@ test('keyStep from the slim row (2+ pins, all read) starts at the newest pin, th
   // The newest is K2 (list index 1): next is K3, previous is K1. From the first pin they would be K2 and K3.
   assert.equal(keyStep(shown, 1, () => {}).sel, readKey('s', 'K3'))
   assert.equal(keyStep(shown, -1, () => {}).sel, readKey('s', 'K1'))
+})
+
+// ---- S10: sound and notification ----
+
+const needsBoard = (...needs) => ({
+  session: 's1',
+  coordinator: { terminal: 't4' },
+  needs: needs.map(([key, kind, isOpen = true]) => ({ key, kind, isOpen, text: `text ${key}\nmore` })),
+  workers: [{ name: 'w', state: 'blocked', note: 'stuck' }],
+})
+
+test('newArrivals: the first sight of a board is silent', () => {
+  const r = newArrivals(null, needsBoard(['D1', 'ask'], ['P1', 'know']))
+  assert.deepEqual(r.fresh, [])
+  assert.deepEqual([...r.keys].sort(), ['D1', 'P1'])
+})
+
+test('newArrivals: a later know or ask is new; do, closed items and blocked workers are not', () => {
+  const first = newArrivals(null, needsBoard(['D1', 'ask']))
+  const r = newArrivals(first.keys, needsBoard(['D1', 'ask'], ['D2', 'ask'], ['P1', 'know'], ['T1', 'do'], ['P2', 'know', false]))
+  assert.deepEqual(
+    r.fresh.map(f => [f.key, f.kind, f.text]),
+    [
+      ['D2', 'ask', 'text D2'],
+      ['P1', 'know', 'text P1'],
+    ],
+  )
+})
+
+test('newArrivals: a reread with the same keys fires nothing', () => {
+  const b = needsBoard(['D1', 'ask'], ['P1', 'know'])
+  assert.deepEqual(newArrivals(newArrivals(null, b).keys, b).fresh, [])
+})
+
+test('arrivalNotice: none, one, and several make one notice', () => {
+  assert.equal(arrivalNotice([{ terminal: 't4', fresh: [] }]), null)
+  const one = [{ key: 'D2', kind: 'ask', text: 'Ship it?' }]
+  assert.deepEqual(arrivalNotice([{ terminal: 't4', fresh: one }]), { title: 'New question', body: 'Ship it?', terminal: 't4' })
+  const pin = [{ key: 'P1', kind: 'know', text: 'Note' }]
+  assert.deepEqual(arrivalNotice([{ terminal: 't4', fresh: pin }]).title, 'New pin')
+  const many = arrivalNotice([
+    { terminal: 't7', fresh: [...one, ...pin] },
+    { terminal: 't9', fresh: pin },
+  ])
+  assert.deepEqual(many, { title: '3 new items', body: '1 question, 2 pins', terminal: 't7' })
+})
+
+test('Arrivals: silent first sight, one sound and notice per change, a returning board is silent', () => {
+  const calls = []
+  const a = new Arrivals({ play: s => calls.push(['play', s]), post: n => calls.push(['post', n]) })
+  const b1 = needsBoard(['D1', 'ask'])
+  a.observe([b1])
+  assert.deepEqual(calls, [])
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'])])
+  assert.deepEqual(calls, [
+    ['play', 'done'],
+    ['post', { title: '2 new items', body: '1 question, 1 pin', action: { name: 'pane.focus', args: { terminal: 't4' } } }],
+  ])
+  calls.length = 0
+  a.observe([]) // file gone
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'])]) // and back
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'])])
+  assert.deepEqual(calls, [])
+  // keys are kept while the file is gone: an item that arrived meanwhile still fires on return
+  a.observe([])
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'], ['D3', 'ask'])])
+  assert.equal(calls.length, 2)
+  calls.length = 0
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'], ['D3', 'ask'])])
+  // a board seen for the first time later is silent too, while another board's arrival fires
+  const other = { ...needsBoard(['X1', 'ask']), session: 's2', coordinator: { terminal: 't9' } }
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask']), other])
+  assert.deepEqual(calls, [])
+  a.observe([
+    needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask']),
+    { ...other, needs: [...other.needs, { key: 'X2', kind: 'know', isOpen: true, text: 'Hi' }] },
+  ])
+  assert.equal(calls[1][1].action.args.terminal, 't9')
+  assert.equal(calls[1][1].title, 'New pin')
+})
+
+test('Arrivals: a click goes to the first board with a terminal; with none the notice has no action', () => {
+  const posts = []
+  const a = new Arrivals({ play: () => {}, post: n => posts.push(n) })
+  const none = (...needs) => ({ ...needsBoard(...needs), session: 'a', coordinator: { terminal: null } })
+  const t9 = (...needs) => ({ ...needsBoard(...needs), session: 'b', coordinator: { terminal: 't9' } })
+  a.observe([none(['A1', 'ask']), t9(['B1', 'ask'])])
+  a.observe([none(['A1', 'ask'], ['A2', 'ask']), t9(['B1', 'ask'], ['B2', 'ask'])])
+  assert.deepEqual(posts.at(-1).action, { name: 'pane.focus', args: { terminal: 't9' } })
+  a.observe([none(['A1', 'ask'], ['A2', 'ask'], ['A3', 'ask']), t9(['B1', 'ask'], ['B2', 'ask'])])
+  assert.deepEqual(posts.at(-1), { title: 'New question', body: 'text A3' })
+})
+
+test('Arrivals: a board with no session is skipped', () => {
+  const calls = []
+  const a = new Arrivals({ play: s => calls.push(s), post: n => calls.push(n) })
+  const { session, ...nameless } = needsBoard(['D1', 'ask'])
+  a.observe([nameless])
+  a.observe([{ ...nameless, needs: [...nameless.needs, { key: 'D2', kind: 'ask', isOpen: true, text: 'Hi' }] }])
+  assert.deepEqual(calls, [])
 })

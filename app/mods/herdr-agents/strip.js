@@ -1,16 +1,16 @@
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, nextCommand, openOverlay, run, shared, terminals } from 'herdr'
+import { closeOverlay, nextCommand, notify, openOverlay, playSound, run, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
   counts,
   flashing,
   isBoardCommand,
-  overlayPlan,
   isUnseen,
   nextPick,
   observeArrivals,
   otherCount,
+  overlayPlan,
   pickAt,
   pickNumber,
   POPUP_W,
@@ -19,6 +19,7 @@ import {
   stripItems,
   workRows,
 } from './model.js'
+import { Arrivals } from './arrivals.js'
 import { closeCard, openCard } from './cardctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
@@ -61,10 +62,12 @@ export class StripState {
     this.known = null
     this.seen = new Set()
     this.board = null
+    this.arrivals = new Arrivals({ play: playSound, post: notify })
   }
 
   /** Called with a live `cx` (from the board reader) after the boards changed. */
   observe(cx, boards) {
+    this.arrivals.observe(boards)
     const now = Date.now()
     this.known = observeArrivals(this.known, boards, now)
     if (anyFlashing(this.known, now)) {
