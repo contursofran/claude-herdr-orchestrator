@@ -1034,5 +1034,276 @@ class TranscriptsPath(unittest.TestCase):
         self.assertEqual(proc.stdout.splitlines()[-1], "   transcripts from ~/.claude/projects")
 
 
+NOW = 1_800_000_000  # 2027-01-15, a fixed clock for the GitHub fixtures
+
+
+def run_row(rid, name="Check", concl="success", branch="feature", queue=60, run=300):
+    return "\t".join([name, concl, iso(NOW), iso(NOW + queue), iso(NOW + queue + run), str(rid), branch])
+
+
+def merged_pr(number, head="feature", base="main", hours=2, commits_after=1):
+    commits = [{"committedDate": iso(NOW - 60)}] + [{"committedDate": iso(NOW + 60 * (i + 1))} for i in range(commits_after)]
+    return {"number": number, "title": f"PR {number}", "author": {"login": "someone"}, "createdAt": iso(NOW),
+            "mergedAt": iso(NOW + hours * 3600), "headRefName": head, "baseRefName": base, "commits": commits}
+
+
+class FakeGh:
+    """Stands in for subprocess.run: answers gh by repo from canned rows, records every call."""
+
+    def __init__(self, runs=None, prs=None, jobs=None, fail=None, fail_prs=None):
+        self.runs, self.prs, self.jobs = runs or {}, prs or {}, jobs or {}
+        self.fail, self.fail_prs, self.calls = fail or {}, fail_prs or {}, []
+
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        ok = lambda out: subprocess.CompletedProcess(argv, 0, out, "")
+        bad = lambda err: subprocess.CompletedProcess(argv, 1, "", err)
+        if argv[1] == "pr":
+            repo = argv[argv.index("-R") + 1]
+            return bad(self.fail_prs[repo]) if repo in self.fail_prs else ok(json.dumps(self.prs.get(repo, [])))
+        path = next(a for a in argv if a.startswith("repos/"))
+        repo = "/".join(path.split("/")[1:3])
+        if "/jobs" in path:
+            return ok(str(self.jobs.get(path.split("/")[5], 1)) + "\n")
+        return bad(self.fail[repo]) if repo in self.fail else ok("".join(r + "\n" for r in self.runs.get(repo, [])))
+
+
+class RepoChoice(unittest.TestCase):
+    def folder(self):
+        path = tempfile.mkdtemp(prefix="hrd-metrics-repo-")
+        self.addCleanup(shutil.rmtree, path, True)
+        return path
+
+    def git_folder(self, url):
+        path = self.folder()
+        subprocess.run(["git", "init", "-q", path], check=True)
+        subprocess.run(["git", "-C", path, "remote", "add", "origin", url], check=True)
+        return path
+
+    def test_remote_urls_give_owner_and_name(self):
+        for url in ("git@github.com:acme/widgets.git", "https://github.com/acme/widgets.git", "https://github.com/acme/widgets",
+                    "ssh://git@github.com/acme/widgets.git", "https://github.com/acme/widgets/\n"):
+            self.assertEqual(hm.github_repo(url), "acme/widgets", url)
+
+    def test_another_host_gives_no_repo(self):
+        self.assertIsNone(hm.github_repo("git@gitlab.com:acme/widgets.git"))
+        self.assertIsNone(hm.github_repo("https://notgithub.com/acme/widgets"))
+
+    def test_folders_give_unique_repos_and_the_rest_are_counted_by_reason(self):
+        cwds = {self.git_folder("git@github.com:acme/widgets.git"), self.git_folder("https://github.com/ACME/widgets"),
+                self.git_folder("https://github.com/acme/gears"), self.git_folder("git@gitlab.com:acme/other.git"),
+                self.folder(), "/nonexistent/hrd-metrics-pruned"}
+        repos, skipped = hm.find_repos(cwds)
+        self.assertEqual([r.lower() for r in repos], ["acme/gears", "acme/widgets"])
+        self.assertEqual(skipped, {"gone": 1, "no GitHub remote": 2})
+
+    def test_a_plain_repo_flag_limits_and_reads_no_folder(self):
+        with mock.patch.object(hm, "find_repos") as find:
+            self.assertEqual(hm.choose_repos(["acme/one"], {"/any"}), (["acme/one"], {}))
+        find.assert_not_called()
+
+    def test_a_plus_repo_flag_adds_to_the_repos_found_once(self):
+        with mock.patch.object(hm, "find_repos", return_value=(["acme/found"], {"gone": 2})):
+            self.assertEqual(hm.choose_repos(["+acme/extra", "+acme/found"], {"/any"}), (["acme/extra", "acme/found"], {"gone": 2}))
+
+    def test_a_bad_repo_value_is_refused(self):
+        with self.assertRaises(argparse.ArgumentTypeError):
+            hm.repo_arg("widgets")
+        self.assertEqual(hm.repo_arg("+acme/widgets"), "+acme/widgets")
+
+    def test_collect_gives_the_folder_of_a_plain_session_too(self):
+        root = self.folder()
+        os.makedirs(os.path.join(root, "p"))
+        with open(os.path.join(root, "p", "s.jsonl"), "w") as f:
+            f.write(json.dumps({"type": "user", "timestamp": iso(time.time()), "cwd": "/work/plain",
+                                "message": {"role": "user", "content": "hello"}}) + "\n")
+        cwds = set()
+        hm.collect(root, time.time() - 60, None, cwds)
+        self.assertEqual(cwds, {"/work/plain"})
+
+
+class GithubFlow(unittest.TestCase):
+    def flow(self, fake, repo="acme/app"):
+        with mock.patch.object(hm.subprocess, "run", fake):
+            return hm.repo_flow(repo, "2027-01-08")
+
+    def text(self, flow):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            hm.print_flow(flow)
+        return out.getvalue()
+
+    def test_a_workflow_counts_runs_failures_queue_and_run_time(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1, queue=60, run=300), run_row(2, concl="failure", queue=120, run=600),
+                                         run_row(3, concl="timed_out", queue=180, run=900), run_row(4, concl="cancelled", queue=240, run=30)]})
+        w = self.flow(fake)["workflows"][0]
+        self.assertEqual((w["name"], w["runs"], w["failures"]), ("Check", 4, 2))
+        self.assertEqual((w["queue_median"], w["queue_max"]), (150, 240))
+        self.assertEqual((w["run_median"], w["run_total"]), (450, 1830))
+
+    def test_workflows_with_more_run_time_come_first(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1, name="Small", run=10), run_row(2, name="Big", run=1000)]})
+        self.assertEqual([w["name"] for w in self.flow(fake)["workflows"]], ["Big", "Small"])
+
+    def test_skipped_and_unfinished_runs_are_left_out(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1, concl="skipped"), run_row(2, concl=""), run_row(3)]})
+        self.assertEqual(self.flow(fake)["workflows"][0]["runs"], 1)
+
+    def test_a_run_with_no_jobs_is_ignored_not_a_failure(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1, concl="failure"), run_row(2, concl="startup_failure"),
+                                         run_row(3, concl="cancelled"), run_row(4, concl="failure")]}, jobs={"1": 0, "3": 0},
+                      prs={"acme/app": [merged_pr(5)]})
+        flow = self.flow(fake)
+        self.assertEqual(flow["ignored"], {"Check": 3})
+        self.assertEqual((flow["workflows"][0]["runs"], flow["workflows"][0]["failures"]), (1, 1))
+        self.assertEqual(flow["prs"]["slowest"][0]["failed_ci"], 1)
+        self.assertIn("ignored 3 jobless runs (no job ever started): Check 3", self.text(flow))
+
+    def test_only_failed_looking_runs_are_probed_for_jobs(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1), run_row(2, concl="failure")]})
+        self.flow(fake)
+        probed = [a for c in fake.calls for a in c if "/jobs" in a]
+        self.assertEqual(len(probed), 1)
+        self.assertIn("/runs/2/jobs", probed[0])
+
+    def test_pr_flow_measures_open_to_merged_fix_commits_and_failed_ci(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1, concl="failure", branch="a"), run_row(2, concl="failure", branch="a"), run_row(3, branch="a")]},
+                      prs={"acme/app": [merged_pr(7, head="a", hours=4, commits_after=3), merged_pr(8, head="b", hours=2, commits_after=1),
+                                        merged_pr(9, head="c", hours=9, commits_after=0)]})
+        prs = self.flow(fake)["prs"]
+        self.assertEqual((prs["merged"], prs["hours_median"], prs["hours_max"]), (3, 4, 9))
+        self.assertEqual((prs["fix_commits_median"], prs["failed_ci_median"]), (1, 0))
+        rows = {r["number"]: r for r in prs["slowest"]}
+        self.assertEqual((rows[7]["fix_commits"], rows[7]["failed_ci"]), (3, 2))
+        self.assertEqual([r["number"] for r in prs["slowest"]], [7, 9, 8])  # 4+6+4, 9, 2+2
+
+    def test_failures_on_a_base_branch_do_not_count_for_a_pr_from_it(self):
+        fake = FakeGh(runs={"acme/app": [run_row(1, concl="failure", branch="develop"), run_row(2, concl="failure", branch="feature")]},
+                      prs={"acme/app": [merged_pr(1, head="develop", base="main"), merged_pr(2, head="feature", base="develop")]})
+        rows = {r["number"]: r["failed_ci"] for r in self.flow(fake)["prs"]["slowest"]}
+        self.assertEqual(rows, {1: 0, 2: 1})
+
+    def test_the_query_uses_the_day_and_a_cap_of_40_prs(self):
+        fake = FakeGh()
+        self.flow(fake)
+        flat = [a for c in fake.calls for a in c]
+        self.assertIn("repos/acme/app/actions/runs?per_page=100&created=>=2027-01-08", flat)
+        self.assertIn("merged:>=2027-01-08", flat)
+        self.assertEqual(flat[flat.index("--limit") + 1], "40")
+
+    def test_hitting_the_pr_cap_is_said(self):
+        fake = FakeGh(prs={"acme/app": [merged_pr(n) for n in range(40)]})
+        self.assertIn("PRs merged: 40 (newest 40 only)", self.text(self.flow(fake)))
+
+    def test_hitting_the_runs_cap_is_said(self):
+        fake = FakeGh(runs={"acme/app": [run_row(n) for n in range(1000)]})
+        self.assertIn("at most 1000 runs", self.text(self.flow(fake)))
+
+    def test_a_repo_gh_cannot_read_is_one_line(self):
+        fake = FakeGh(fail={"acme/app": "HTTP 404: Not Found\nmore detail"})
+        text = self.text(self.flow(fake))
+        self.assertEqual(text, "  acme/app: gh cannot read it: HTTP 404: Not Found\n")
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_gh_missing_or_timing_out_is_one_line_too(self):
+        for error in (FileNotFoundError("gh not found"), subprocess.TimeoutExpired("gh", 120)):
+            with mock.patch.object(hm.subprocess, "run", side_effect=error):
+                self.assertEqual(self.text(hm.repo_flow("acme/app", "2027-01-08")).count("\n"), 1, error)
+
+    def test_a_repo_with_no_runs_and_no_prs_is_one_line(self):
+        self.assertEqual(self.text(self.flow(FakeGh())), "  acme/app: no CI runs and no merged PRs\n")
+
+    def test_no_runs_still_shows_merged_prs(self):
+        text = self.text(self.flow(FakeGh(prs={"acme/app": [merged_pr(3)]})))
+        self.assertIn("no CI runs", text)
+        self.assertIn("PRs merged: 1", text)
+
+    def test_runs_without_merged_prs_say_zero(self):
+        self.assertIn("PRs merged: 0", self.text(self.flow(FakeGh(runs={"acme/app": [run_row(1)]}))))
+
+    def test_prs_that_cannot_be_read_leave_the_ci_rows(self):
+        flow = self.flow(FakeGh(runs={"acme/app": [run_row(1)]}, fail_prs={"acme/app": "denied"}))
+        text = self.text(flow)
+        self.assertIn("Check", text)
+        self.assertIn("PRs: gh cannot read them: denied", text)
+
+    def test_a_malformed_pr_reply_is_a_line_not_a_crash(self):
+        fake = FakeGh(prs={"acme/app": [{"number": 1}]})
+        self.assertIn("PRs: gh cannot read them: unexpected reply", self.text(self.flow(fake)))
+
+    def test_a_pr_with_no_author_still_prints(self):
+        pr = dict(merged_pr(4), author=None)
+        self.assertIn("?", self.text(self.flow(FakeGh(prs={"acme/app": [pr]}))))
+
+    def test_one_failing_repo_does_not_stop_the_others(self):
+        fake = FakeGh(runs={"acme/good": [run_row(1)]}, fail={"acme/bad": "denied"})
+        with mock.patch.object(hm.subprocess, "run", fake):
+            day, flows = hm.github_flows(["acme/bad", "acme/good"], NOW)
+        self.assertEqual(day, "2027-01-15")
+        self.assertEqual(flows[0]["error"], "denied")
+        self.assertEqual(flows[1]["workflows"][0]["runs"], 1)
+
+
+class WeeklyCommand(unittest.TestCase):
+    """The whole script with a fake gh on PATH and an empty home folder."""
+
+    FAKE_GH = """#!/bin/sh
+case "$*" in
+  *bad/repo*) echo "HTTP 404: Not Found" >&2; exit 1 ;;
+  "pr list"*) echo '[]' ;;
+  *) printf 'Check\\tsuccess\\t2027-01-15T00:00:00Z\\t2027-01-15T00:01:00Z\\t2027-01-15T00:06:00Z\\t1\\tmain\\n' ;;
+esac
+"""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="hrd-metrics-home-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        bin_dir = os.path.join(self.home, "bin")
+        os.makedirs(bin_dir)
+        gh_path = os.path.join(bin_dir, "gh")
+        with open(gh_path, "w") as f:
+            f.write(self.FAKE_GH)
+        os.chmod(gh_path, 0o755)
+        self.env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+        self.env.update(HOME=self.home, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+
+    def run_script(self, *args):
+        return subprocess.run([sys.executable, SCRIPT, "--days", "7", *args], capture_output=True, text=True, env=self.env, check=True).stdout
+
+    def pi_session(self, age):
+        folder = os.path.join(self.home, ".pi", "agent", "sessions", "p")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, f"{age}.jsonl")
+        open(path, "w").close()
+        stamp = time.time() - age * DAY
+        os.utime(path, (stamp, stamp))
+
+    def test_named_repos_report_and_a_bad_one_does_not_stop_it(self):
+        out = self.run_script("--repo", "bad/repo", "--repo", "acme/app")
+        self.assertIn("  bad/repo: gh cannot read it: HTTP 404: Not Found", out)
+        self.assertIn("  acme/app\n", out)
+        self.assertIn("Check", out)
+        self.assertIn("== coordinator sessions", out)
+
+    def test_no_repos_says_so(self):
+        self.assertIn("no repos:", self.run_script())
+
+    def test_json_carries_the_repos_and_pi_count(self):
+        out = json.loads(self.run_script("--repo", "acme/app", "--json"))
+        self.assertEqual(out["github"]["repos"][0]["workflows"][0]["runs"], 1)
+        self.assertEqual(out["pi_sessions"], 0)
+        self.assertIn("coordinators", out)
+
+    def test_pi_sessions_in_the_window_are_counted_and_point_to_the_old_script(self):
+        self.pi_session(1)
+        self.pi_session(2)
+        self.pi_session(30)
+        self.assertIn("== pi: 2 sessions in the window, not counted here; agent-metrics.py reads them", self.run_script())
+
+    def test_no_pi_sessions_prints_no_pi_line(self):
+        self.pi_session(30)
+        self.assertNotIn("== pi:", self.run_script())
+
+
 if __name__ == "__main__":
     unittest.main()
