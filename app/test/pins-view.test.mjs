@@ -3,12 +3,12 @@ import { beforeEach, test } from 'node:test'
 import { app, findId, textOf } from './fake-gpui.mjs'
 
 // After the fake is registered: these import `gpui-kit` and `herdr`.
-const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
+const { closePinsOverlay, pinsView } = await import('../mods/herdr-agents/pinbar.js')
 const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
 const { releasePopup } = await import('../mods/herdr-agents/popup.js')
-const { allPinsHeight } = await import('../mods/herdr-agents/model.js')
+const { ROWS_SETTLE_MS, allPinsHeight, pinsOverlayEmpty } = await import('../mods/herdr-agents/model.js')
 
 const pin = (key, extra = {}) => ({
   id: `s:${key}`,
@@ -308,3 +308,102 @@ for (const [view, x, width] of [
     assert.ok(o.at.x + o.width * 2 <= 1280)
   })
 }
+
+// ---- #194: a press can't land on a row that moved in the moment before it ----
+
+const three = [pin('K1', { at: 3 }), pin('K2', { at: 2 }), pin('K3', { at: 1 })]
+const boardOf = (...keys) => ({ session: 's', needs: keys.map(key => ({ key, kind: 'know', isOpen: true, text: `${key} text` })) })
+const openAll = () => {
+  app.props = { view: 'all', session: 's', list: three, width: 470, height: 500, overlay: 'o1' }
+}
+
+test('a Done pressed just after a resolved pin moved the rows up is ignored, and the same press works once they have settled', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const gone = new Set()
+  const ctl = {}
+  pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  const moved = pinsView(gone, ctl, boardOf('K2', 'K3'))
+  down(moved, 'pin-done-K2')
+  assert.deepEqual([...gone], [], 'the row moved a moment ago')
+  assert.equal(app.store['hrd.doneReq'], undefined)
+
+  t.mock.timers.tick(ROWS_SETTLE_MS - 1)
+  down(moved, 'pin-done-K2')
+  assert.deepEqual([...gone], [], 'still the moment after')
+
+  t.mock.timers.tick(1)
+  down(moved, 'pin-done-K2')
+  assert.deepEqual([...gone], ['s:K2'])
+})
+
+test('mark read and opening a row are held back the same way', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const ctl = {}
+  pinsView(new Set(), ctl, boardOf('K1', 'K2', 'K3'))
+  const moved = pinsView(new Set(), ctl, boardOf('K2', 'K3'))
+  down(moved, 'pin-read-K2')
+  down(moved, 'pin-open-K2')
+  assert.equal(app.store['hrd.read'], undefined)
+  assert.deepEqual(app.opened, [])
+})
+
+test('a press on rows that have not moved works from the first draw, and redraws of the same rows do not hold it back', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const gone = new Set()
+  const ctl = {}
+  pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  down(pinsView(gone, ctl, boardOf('K1', 'K2', 'K3')), 'pin-done-K1')
+  assert.deepEqual([...gone], ['s:K1'])
+})
+
+test('a second press of a double click on Done cannot hit the row that moved up after the first', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const gone = new Set()
+  const ctl = {}
+  down(pinsView(gone, ctl), 'pin-done-K1')
+  down(pinsView(gone, ctl), 'pin-done-K2')
+  assert.deepEqual([...gone], ['s:K1'])
+})
+
+test('rows reordering counts as moving: a pin marked read sinks below the unread ones', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const gone = new Set()
+  const ctl = {}
+  pinsView(gone, ctl)
+  app.store['hrd.read'] = { 's:K1': true }
+  down(pinsView(gone, ctl), 'pin-done-K2')
+  assert.deepEqual([...gone], [])
+})
+
+test('the last pin resolving still closes the overlay and hands the keyboard back, even in the moment after rows moved', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  app.store['hrd.pins'] = 'o1'
+  app.props.back = 't1'
+  app.props.space = 'sp'
+  const gone = new Set()
+  const ctl = { leaving: false }
+  pinsView(gone, ctl, boardOf('K1', 'K2', 'K3'))
+  pinsView(gone, ctl, boardOf('K1'))
+  assert.equal(pinsOverlayEmpty(app.props, boardOf(), gone), true)
+  closePinsOverlay()
+  assert.deepEqual(app.closed, ['o1'])
+  assert.equal(app.store['hrd.pins'], null)
+  app.focused = { space: 'sp', terminal: null }
+  releasePopup(ctl)
+  assert.deepEqual(app.ran.at(-1), ['pane.focus', { terminal: 't1' }])
+})
+
+test('a resolved pin has no row to press while the others hold still', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 10_000 })
+  openAll()
+  const ctl = {}
+  pinsView(new Set(), ctl, boardOf('K1', 'K2', 'K3'))
+  const moved = pinsView(new Set(), ctl, boardOf('K2', 'K3'))
+  assert.equal(findId(moved, 'pin-done-K1'), null)
+})

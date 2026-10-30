@@ -959,6 +959,19 @@ export function orderPins(list) {
     .map(x => x.p)
 }
 
+/** How long after the popover's rows change a press on a row is ignored: a press already on its way was meant for the old row. */
+export const ROWS_SETTLE_MS = 500
+
+/** Note the rows being drawn, top to bottom: a different list or order than last draw means they moved now. */
+export function noteRows(seen, keys, now) {
+  const rows = keys.join('\n')
+  if (seen.rows !== undefined && seen.rows !== rows) seen.movedAt = now
+  seen.rows = rows
+}
+
+/** Whether a press now can only be meant for the row under it. */
+export const rowsSteady = (seen, now) => seen.movedAt === undefined || now - seen.movedAt >= ROWS_SETTLE_MS
+
 /** The read marks with every pin of `list` marked; the same object when none was unread. */
 export const markAllRead = (read, list) => list.reduce((r, p) => markRead(r, p.id), read)
 
