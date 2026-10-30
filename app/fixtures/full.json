@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "session": "0267bd20-d4c6-4d5e-8597-d593a18facea",
+  "cwd": "/work/shop",
+  "at": 1790000000000,
+  "coordinator": {
+    "terminal": "t4"
+  },
+  "stageNames": ["plan", "build", "rev", "CI", "you"],
+  "summary": {
+    "busy": 2,
+    "left": 4,
+    "target": 3,
+    "wrapUp": false,
+    "needs": 4,
+    "context": {
+      "tokens": 84000,
+      "limit": 200000
+    }
+  },
+  "workers": [
+    {
+      "name": "w-api",
+      "profile": "builder",
+      "state": "working",
+      "startedAt": 1789999100000,
+      "endedAt": null,
+      "note": null,
+      "repo": "acme/shop"
+    },
+    {
+      "name": "w-ui",
+      "profile": "builder",
+      "state": "working",
+      "startedAt": 1789999200000,
+      "endedAt": null,
+      "note": null,
+      "repo": "acme/shop"
+    },
+    {
+      "name": "w-stuck",
+      "profile": "builder",
+      "state": "blocked",
+      "startedAt": 1789999300000,
+      "endedAt": null,
+      "note": "waiting at a permission prompt",
+      "repo": "acme/shop"
+    },
+    {
+      "name": "w-ci",
+      "profile": "builder",
+      "state": "waiting",
+      "startedAt": 1789999400000,
+      "endedAt": null,
+      "note": null,
+      "repo": "acme/shop"
+    }
+  ],
+  "tasks": [
+    {
+      "key": "k1",
+      "label": "#601",
+      "title": "Task 1",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "done", "ask", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for your answer on D7",
+      "item": "D7",
+      "tab": "w-api",
+      "workers": ["w-api"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k2",
+      "label": "#602",
+      "title": "Task 2",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "run", "ask", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for your answer on D8",
+      "item": "D8",
+      "tab": "w-ui",
+      "workers": ["w-ui"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k3",
+      "label": "#603",
+      "title": "Task 3",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "done", "todo", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for you to finish T12",
+      "item": "T12",
+      "tab": "w-docs",
+      "workers": ["w-docs"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k4",
+      "label": "#604",
+      "title": "Task 4",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "todo", "none", "none", "none"],
+      "who": {
+        "text": "you",
+        "kind": "you"
+      },
+      "now": "Waits for you to finish T13",
+      "item": "T13",
+      "tab": null,
+      "workers": [],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k5",
+      "label": "#605",
+      "title": "Task 5",
+      "repo": "acme/shop",
+      "pr": null,
+      "url": null,
+      "stages": ["done", "block", "none", "none", "none"],
+      "who": {
+        "text": "w-stuck",
+        "kind": "text"
+      },
+      "now": "w-stuck is stuck at a prompt",
+      "item": null,
+      "tab": "w-stuck",
+      "workers": ["w-stuck"],
+      "isFinished": false,
+      "isMerged": false
+    },
+    {
+      "key": "k6",
+      "label": "#606",
+      "title": "Task 6",
+      "repo": "acme/shop",
+      "pr": 612,
+      "url": "https://github.com/acme/shop/pull/612",
+      "stages": ["done", "done", "done", "wait", "none"],
+      "who": {
+        "text": "w-ci",
+        "kind": "dim"
+      },
+      "now": "Waiting for CI",
+      "item": null,
+      "tab": "w-ci",
+      "workers": ["w-ci"],
+      "isFinished": false,
+      "isMerged": false
+    }
+  ],
+  "needs": [
+    {
+      "key": "D7",
+      "kind": "ask",
+      "text": "Cursor or offset pagination for the orders API?",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Pagination style",
+      "options": ["Cursor", "Offset"],
+      "recommended": 0
+    },
+    {
+      "key": "D8",
+      "kind": "ask",
+      "text": "Should dark mode follow the system or default to light?",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Dark mode default",
+      "options": ["Follow system", "Light", "Dark"],
+      "recommended": 0
+    },
+    {
+      "key": "T12",
+      "kind": "do",
+      "text": "Rotate the staging API key and paste it into the vault.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Rotate the staging key",
+      "url": null
+    },
+    {
+      "key": "T13",
+      "kind": "do",
+      "text": "Check the preview at localhost:5173 and say if the cart looks right.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Open the preview",
+      "url": "http://localhost:5173"
+    },
+    {
+      "key": "K3",
+      "kind": "know",
+      "text": "The payment client retries 3 times before it gives up.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Retry budget"
+    },
+    {
+      "key": "K4",
+      "kind": "know",
+      "text": "Added an index on orders(customer_id); the migration takes about 4 s.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true,
+      "title": "Index added"
+    },
+    {
+      "key": "K5",
+      "kind": "know",
+      "text": "The staging database was reset at noon, so old test orders are gone.",
+      "from": "w-api",
+      "at": 1789999940000,
+      "isOpen": true
+    }
+  ],
+  "status": "4 waiting for you",
+  "actions": []
+}
