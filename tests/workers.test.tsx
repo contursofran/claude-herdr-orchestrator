@@ -348,10 +348,23 @@ test('the report rule carries a WAIT.json example for CI that is valid JSON', as
   expect(typed[0]).toContain(example)
   expect(JSON.parse(example)).toEqual({
     for: 'CI on PR #123',
-    check: `gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!="pending")' | grep -q true`,
+    check: `gh pr view 123 --json mergeable --jq .mergeable | grep -q CONFLICTING || gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!="pending")' | grep -q true`,
     every: 3,
     max: 45,
   })
+  await stopAll($, clock, ['w-env'])
+})
+
+test('the report rule says what to do on waking to a conflict, and how to remove temp files', async ($, on) => {
+  const { clock, typed, files } = await start($, on, claudeX)
+  await spawnX($)
+  for (const rule of [
+    'When that wait wakes you, run gh pr view 123 --json mergeable first: on CONFLICTING, merge the base branch, resolve it, push and wait again',
+    'Remove temp files by literal path, or just leave them in the job folder, which is ignored',
+  ]) {
+    expect(typed[0]).toContain(rule)
+    expect(files['/repo/wt/.herdr-agents/w-env/REPORTING.md']).toContain(rule)
+  }
   await stopAll($, clock, ['w-env'])
 })
 

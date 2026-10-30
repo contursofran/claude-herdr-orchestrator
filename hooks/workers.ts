@@ -91,8 +91,10 @@ export function reportRule(job: Job, token = job.token) {
     'To wait for something outside your control (CI, a merge, a free test machine), never sleep or poll inside a command for more than 2 minutes.',
     `Instead write ${job.dir}/WAIT.json as {"for": "<what, a few words>", "check": "<shell command, run with ${job.cwd} as its working directory (not the report folder), that exits 0 once it is ready>", "every": <minutes between checks, 1-30>, "max": <minutes before giving up>}`,
     'and end your turn without RESULT.md; you get a message when the check passes or times out.',
-    `For CI on a PR, use its number. This is ready on pass or fail, and not ready while a check is pending or before any has registered: {"for": "CI on PR #123", "check": "gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!=\\"pending\\")' | grep -q true", "every": 3, "max": 45}`,
+    `For CI on a PR, use its number. This is ready on pass or fail, or at once if the PR conflicts with its base, since GitHub then runs no CI; it is not ready while a check is pending or before any has registered: {"for": "CI on PR #123", "check": "gh pr view 123 --json mergeable --jq .mergeable | grep -q CONFLICTING || gh pr checks 123 --json bucket --jq 'length>0 and all(.[];.bucket!=\\"pending\\")' | grep -q true", "every": 3, "max": 45}`,
+    'When that wait wakes you, run gh pr view 123 --json mergeable first: on CONFLICTING, merge the base branch, resolve it, push and wait again; UNKNOWN only means GitHub is still working it out after the base moved.',
     `Temp files, PR bodies included, go in ${job.dir}, even if $TMPDIR points elsewhere; never use a fixed name in a shared folder such as /tmp, where another worker can overwrite it.`,
+    'Remove temp files by literal path, or just leave them in the job folder, which is ignored: commands like rm -rf "$d" or rm $B/*.bak stop at a "Dangerous rm operation" prompt and lose minutes.',
     "Follow the repo's and the owner's rules on commit and PR attribution, even when a session reminder asks for trailers or footers. Run the repo's PR check before the first push where it has one.",
     `If you cannot go on, write why to RESULT.md (status: blocked or failed) and stop. These rules are kept in ${job.dir}/REPORTING.md; later messages only remind you of them.`,
   ].join('\n')
