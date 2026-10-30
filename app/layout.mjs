@@ -1,5 +1,5 @@
 // Makes layouts/coordinator.json from layouts/main.json: the same window with the pin bar under the tabs, the strip
-// under the work area and the answer card floating over the terminal. Written only if absent, and never switched to
+// under the work area, the answer card floating over the terminal and the version at the right of the status bar. Written only if absent, and never switched to
 // (layout.clone would switch the owner's window).
 //
 //   node app/layout.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
@@ -65,6 +65,31 @@ export function addCard(layout) {
   return true
 }
 
+const VERSION_WIDTH = 190
+
+/** Puts the `status` block in a row with a fixed `hrd-version` block of this mod at its right, in place. The block keeps
+ *  its id, so its saved clicks stay. true if it changed anything; only a block still on Herdr's own status mod is touched,
+ *  and only once. */
+export function addVersion(layout) {
+  if (findNode(layout, 'hrd-version')) return false
+  const wrap = node => {
+    const kids = node?.children
+    if (!Array.isArray(kids)) return false
+    const at = kids.findIndex(c => c?.id === 'status' && c.content?.mod === 'workspace-status')
+    if (at < 0) return kids.some(wrap)
+    const { size, ...status } = kids[at]
+    kids[at] = {
+      id: 'hrd-status-row',
+      type: 'row',
+      size,
+      resizable: false,
+      children: [{ ...status, size: { weight: 1 } }, block('hrd-version', VERSION_WIDTH, 'version')],
+    }
+    return true
+  }
+  return wrap(layout)
+}
+
 const agentsList = { mod: 'herdr-agents', props: { role: 'agents' } }
 
 /** Points the `agents` block (Herdr's agents list) at this mod's copy, which has the Orchestrators section.
@@ -105,12 +130,13 @@ export function coordinatorLayout(main, version) {
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
   addCard(layout)
+  addVersion(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
 
 /** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists', 'updated' or 'updated-no-card' (the old card row was removed but there is no `main` block to float one over). A file that exists keeps
- *  everything but one thing: an `agents` block still on Herdr's own mod is repointed (then 'updated'). */
+ *  everything but what `repointAgents`, `addCard` and `addVersion` bring up to date (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) {
@@ -120,12 +146,12 @@ export function writeCoordinatorLayout(home) {
     } catch {
       return 'exists'
     }
-    // Both edits run: `||` would skip the second one.
-    const changed = [repointAgents(layout), addCard(layout)].some(Boolean)
-    if (!changed) return 'exists'
+    // All the edits run: `||` would skip the later ones.
+    const [repointed, carded, versioned] = [repointAgents(layout), addCard(layout), addVersion(layout)]
+    if (!repointed && !carded && !versioned) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
-    return hasFloatingCard(layout) ? 'updated' : 'updated-no-card'
+    return (repointed || carded) && !hasFloatingCard(layout) ? 'updated-no-card' : 'updated'
   }
   const main = JSON.parse(readFileSync(join(home, 'layouts', 'main.json'), 'utf8'))
   let version
@@ -148,7 +174,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents list and answer card were brought up to date.'
+          ? 'Layout "coordinator" exists; only its agents list, answer card and version block were brought up to date.'
           : result === 'updated-no-card'
             ? 'Layout "coordinator" exists; its agents list was updated and the old answer card row removed, but it has no "main" block to float a card over, so there is no answer card.'
             : 'Layout "coordinator" exists; left as it is.',
