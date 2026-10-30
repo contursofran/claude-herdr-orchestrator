@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit'
-import { exec, notify, run, setShared, shared, terminals } from 'herdr'
+import { exec, notify, run, settings, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
@@ -13,7 +13,7 @@ export function makeCardState(cx) {
   return new CardState({ send, notify, handle: cx.focus_handle() })
 }
 
-const ghost = (id, label, onClick) =>
+export const ghost = (id, label, onClick) =>
   div()
     .id(id)
     .flex_none()
@@ -27,7 +27,7 @@ const ghost = (id, label, onClick) =>
     .child(label)
 
 /** A button with a key hint: `[1] Cursor` (no hint: just the label). `rec` is the recommended one. */
-function keyButton(id, hint, label, rec, onClick) {
+export function keyButton(id, hint, label, rec, onClick) {
   return div()
     .id(id)
     .min_w_0()
@@ -66,7 +66,7 @@ function keyButton(id, hint, label, rec, onClick) {
 }
 
 /** A plain button without a key hint. */
-const button = (id, label, onClick, primary = false) =>
+export const button = (id, label, onClick, primary = false) =>
   div()
     .id(id)
     .flex_none()
@@ -83,7 +83,7 @@ const button = (id, label, onClick, primary = false) =>
     .on_mouse_down('left', onClick)
     .child(label)
 
-function faceIcon(face) {
+export function faceIcon(face) {
   if (face === 'ask') {
     return div()
       .size(14)
@@ -121,7 +121,7 @@ function header(view, onClose) {
  * The owner's click or key is the only thing that opens or closes it, and it takes the keyboard.
  */
 export function card(boards, ctl, cx) {
-  const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null)
+  const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null, settings()?.zoom)
   const root = div().id('card').w(size.w).max_h(size.maxH).flex().flex_col().text_size(font.size)
   const open = shared('hrd.open')
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })

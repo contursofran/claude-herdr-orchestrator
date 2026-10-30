@@ -1,7 +1,8 @@
 // Opens and closes the pin drop panel and the all-pins popover (role `pins`). One overlay at a time, with the board
-// pop-up and the card: overlayPlan() says what to close. Ids are kept in shared so any copy of the mod can close them.
+// pop-up, the card and the sheet: overlayPlan() says what to close. Ids are kept in shared so any copy of the mod can close them.
 import { closeOverlay, focused, openOverlay, setShared, settings, shared } from 'herdr'
 import { closeCard } from './cardctl.js'
+import { closeSheet } from './sheetctl.js'
 import { PINS_ALL_W, allPinsHeight, fitHeight, overlayPlan, panelHeight, pinsSpot } from './model.js'
 
 function closeById(key) {
@@ -26,11 +27,13 @@ export function openPins(session, list, view, { id = null, bar = null } = {}) {
     popup: Boolean(shared('hrd.popup')),
     card: Boolean(shared('hrd.open')),
     pins: Boolean(shared('hrd.pins')),
+    sheet: Boolean(shared('hrd.sheet')),
   })
-  // The card took the keyboard: closing it gives it back to the terminal that had it.
+  // The card or sheet took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   if (plan.closePopup) closePopupOverlay()
   if (plan.closePins) closePins()
+  if (plan.closeSheet) closeSheet(plan.refocus)
   const viewport = typeof window !== 'undefined' ? window.viewport_size?.() : null
   const spot = pinsSpot(view, bar, viewport)
   const pin = list.find(p => p.id === id)
