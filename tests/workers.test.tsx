@@ -1705,6 +1705,28 @@ test('a worker that writes WAIT.json after its report is woken when the check pa
   await stopAll($, s.clock, ['w-busy'])
 })
 
+test('a WAIT.json check that cannot start wakes the worker at once, naming the folder it ran in', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"nope","every":1,"max":60}'
+  s.runs.set('/bin/bash -c nope', [{ exitCode: 127 }])
+  await s.clock.advance(2 * 60_000)
+  expect(s.typed.length).toBe(before + 1)
+  expect(s.typed.at(-1)).toContain('cannot run')
+  expect(s.typed.at(-1)).toContain('/repo/wt')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('the report rule names the folder a WAIT.json check runs in', async ($, on) => {
+  const { typed, clock } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })
+  await settled()
+  const rule = typed.join('\n')
+  expect(rule).toContain('run with /repo/wt as its working directory')
+  await stopAll($, clock, ['w-busy'])
+})
+
 test('the idle close leaves a reported worker with a WAIT.json open', async ($, on) => {
   const s = await start($, on)
   await reportW($, s)
