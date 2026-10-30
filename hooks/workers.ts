@@ -59,6 +59,17 @@ import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, va
 // The RESULT.md text checkReports saw last for each job: delivered when the next tick sees the same.
 const seenReport = new Map<string, { token?: string; text: string }>()
 
+// When each worker's last send ended. A list taken before that says nothing about the worker: the send may have
+// started work since, so a sweep step holding such a list leaves the worker to the next sweep.
+const sentAt = new Map<string, number>()
+async function sending<T>($: EngineInterface, name: string, go: () => Promise<T>) {
+  try {
+    return await go()
+  } finally {
+    sentAt.set(name, await $.clock.now())
+  }
+}
+
 // The module's own variables start over on every reload; the jobs live in $.state, so
 // session.start arms a wait for each running one (resumeWatching).
 // The wait armed for each worker: the token it was armed for, whether it waits for the
@@ -135,7 +146,7 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
   const rules = `${job.dir}/REPORTING.md`
   const full = spawned || !(await $.fs.exists(rules))
   if (full) await $.fs.write(rules, `TOKEN below is the token in the latest prompt you got.\n\n${reportRule(next, 'TOKEN')}`)
-  const lost = await send($, job.name, `${lead} ${full ? reportRule(next) : reportReminder(next)}`, force)
+  const lost = await sending($, job.name, () => send($, job.name, `${lead} ${full ? reportRule(next) : reportReminder(next)}`, force))
   if (lost === undefined) {
     // Only once the worker works is its turn's end the one to wait for: the watch answers at
     // once for a state the worker is already in, and the last turn's 'done' may still be there.
@@ -420,6 +431,8 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
     const step = serial(job.name, async () => {
       // It waited behind a send for a whole sweep: this list is old, and a newer sweep judges the worker.
       if ((await $.clock.now()) - now >= SWEEP_MS) return
+      // A send ended after this list was taken (equal counts, as the clock can't tell the order): the list can't judge it.
+      if (now <= (sentAt.get(job.name) ?? -Infinity)) return
       const current = (await jobs($))[job.name]
       if (!current) return
       const a = byName.get(job.name)
@@ -1126,12 +1139,14 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // Returns why the text could not be typed, or undefined once it went in.
   const typeIn = async () => {
     try {
-      await hc($, [
-        'send',
-        job.name,
-        `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
-        ...(force ? ['--force'] : []),
-      ])
+      await sending($, job.name, () =>
+        hc($, [
+          'send',
+          job.name,
+          `Your coordinator sent an extra message while you work: ${path}. Read it and fold it into your current task. Your final report still goes to RESULT.md as first instructed.`,
+          ...(force ? ['--force'] : []),
+        ]),
+      )
     } catch (err) {
       return err instanceof Error ? err.message : String(err)
     }
