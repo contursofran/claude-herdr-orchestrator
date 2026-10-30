@@ -2,14 +2,14 @@ import { div, svg } from 'gpui-kit'
 import { exec, notify, run, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { closeCard, openCard } from './cardctl.js'
-import { CardState, clearStaleOpen } from './cardstate.js'
+import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
 import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
-/** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back:
+/** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
  *  its board is likely gone and it would take the first key. */
 export function makeCardState(cx) {
-  clearStaleOpen(shared, setShared)
+  if (firstThisRun('hrd.cardStarted')) clearStaleOpen(shared, setShared)
   return new CardState({ send, notify, handle: cx.focus_handle() })
 }
 

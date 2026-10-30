@@ -45,4 +45,7 @@ export const card = {
 }
 
 // The board pop-up (S7).
+// The pin drop panel and the all-pins popover (S8).
+export const pinsLook = { bg: '#181818', line: '#3A3A3A', border: '#2E2E2E', rowHover: '#1C1C1C', dot: '#9A9A9A' }
+
 export const popup = { bg: '#181818', border: '#3A3A3A', head: '#7A7A7A', rowHover: '#1C1C1C', cell: 44 }
