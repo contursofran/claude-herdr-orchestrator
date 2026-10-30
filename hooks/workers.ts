@@ -18,6 +18,8 @@ import {
   QUIET_BUSY_MS,
   QUIET_MS,
   SEND_DEADLINE_MS,
+  STEP_WAIT_MS,
+  SWEEP_MS,
 } from './defaults'
 import {
   closeTerminal,
@@ -411,9 +413,13 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
   }
   const byName = new Map<string, HcListed>()
   for (const a of agents ?? []) if (a.name) byName.set(a.name, a)
+  // Each worker's step queues in its own chain, so one worker's long send delays only that worker's.
+  const steps: Promise<void>[] = []
   for (const job of Object.values(await jobs($))) {
     if (job.status !== 'running' && !job.tail && !(await carriesOn($, job)) && !(await tokenless($, job))) continue
-    await serial(job.name, async () => {
+    const step = serial(job.name, async () => {
+      // It waited behind a send for a whole sweep: this list is old, and a newer sweep judges the worker.
+      if ((await $.clock.now()) - now >= SWEEP_MS) return
       const current = (await jobs($))[job.name]
       if (!current) return
       const a = byName.get(job.name)
@@ -472,7 +478,9 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
       }
       if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, status, now - q.since)
     })
+    steps.push(step)
   }
+  await Promise.race([Promise.all(steps), $.clock.sleep(STEP_WAIT_MS)])
   if (closeMinutes > 0) await closeIdle($, closeMinutes, agents)
   void refresh($)
 }
