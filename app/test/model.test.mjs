@@ -1,7 +1,32 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { applyFile, boardId, debugLine, labelOf, openNeeds, resolveBoard } from '../mods/herdr-agents/model.js'
+import {
+  UNDO_MS,
+  ageText,
+  applyFile,
+  boardId,
+  cancelAction,
+  currentPin,
+  debugLine,
+  doneAction,
+  actionFile,
+  hiddenKeys,
+  labelOf,
+  markRead,
+  newPinIds,
+  openNeeds,
+  pinbarMode,
+  pins,
+  pruneRead,
+  queueAction,
+  readKey,
+  resolveBoard,
+  segments,
+  settleSent,
+  slimLine,
+  takeDue,
+} from '../mods/herdr-agents/model.js'
 
 const board = (session, terminal, extra = {}) => ({
   session,
@@ -207,4 +232,169 @@ test('the debug line is the folder and the open count, and empty without a board
   assert.equal(debugLine(fixture), '/work/shop · 7 open')
   assert.equal(debugLine(null), '')
   assert.equal(openNeeds({ needs: [{ isOpen: true }, { isOpen: false, end: 'done' }] }).length, 1)
+})
+
+// ---- S4: pin bar ----
+
+const know = (key, extra = {}) => ({ key, kind: 'know', isOpen: true, at: 100, from: 'w-api', text: `${key} text`, ...extra })
+const pinBoard = (needs, session = 's') => ({ session, needs })
+
+test('pins are the open know items, in board order; ask, do and closed ones are not pins', () => {
+  const b = pinBoard([
+    know('K1'),
+    { key: 'D1', kind: 'ask', isOpen: true },
+    { key: 'T1', kind: 'do', isOpen: true },
+    know('K2', { isOpen: false }),
+    know('K3'),
+  ])
+  assert.deepEqual(
+    pins(b).map(p => p.key),
+    ['K1', 'K3'],
+  )
+  assert.deepEqual(pins(null), [])
+})
+
+test('pin fields fall back: title from the first line of text, summary from the rest, no tag, key as the last title', () => {
+  const [a, b, c, d, e] = pins(
+    pinBoard([
+      know('K1', { title: 'Retry budget', text: 'Retries 3 times.\nThen gives up.', tag: ' infra ' }),
+      know('K2', { text: 'Index added\nTakes 4 s.\nSafe.' }),
+      know('K3', { text: '', title: undefined }),
+      know('K4', { title: 'T', summary: 'Short', text: 'long text' }),
+      know('K5', { text: 'One line only' }),
+    ]),
+  )
+  assert.equal(a.title, 'Retry budget')
+  assert.equal(a.summary, 'Retries 3 times. Then gives up.')
+  assert.equal(a.tag, 'infra')
+  assert.equal(b.title, 'Index added')
+  assert.equal(b.summary, 'Takes 4 s. Safe.')
+  assert.equal(b.tag, null)
+  assert.equal(c.title, 'K3')
+  assert.equal(c.summary, '')
+  assert.equal(d.summary, 'Short')
+  assert.equal(e.title, 'One line only')
+  assert.equal(e.summary, '')
+  assert.equal(a.who, 'w-api')
+})
+
+test('unread comes from the read map; hidden keys are left out', () => {
+  const b = pinBoard([know('K1'), know('K2')])
+  const read = { [readKey('s', 'K1')]: true }
+  assert.deepEqual(
+    pins(b, read).map(p => p.unread),
+    [false, true],
+  )
+  assert.deepEqual(
+    pins(b, read, new Set([readKey('s', 'K2')])).map(p => p.key),
+    ['K1'],
+  )
+})
+
+test('currentPin: the newest unread; the later one on equal times; a picked pin while it exists', () => {
+  const b = pinBoard([know('K1', { at: 300 }), know('K2', { at: 200 }), know('K3', { at: 300 })])
+  assert.equal(currentPin(pins(b)).key, 'K3', 'equal at: the later in board order')
+  const read = { [readKey('s', 'K3')]: true, [readKey('s', 'K1')]: true }
+  assert.equal(currentPin(pins(b, read)).key, 'K2', 'read ones are skipped')
+  assert.equal(currentPin(pins(b, read), readKey('s', 'K1')).key, 'K1', 'picked, though read')
+  assert.equal(currentPin(pins(b), readKey('s', 'gone')).key, 'K3', 'a picked pin that is gone falls back')
+})
+
+test('pinbarMode: empty without pins, slim when all read, full otherwise or when one is picked', () => {
+  assert.equal(pinbarMode(pins(pinBoard([]))), 'empty')
+  assert.equal(pinbarMode(pins(pinBoard([{ key: 'D1', kind: 'ask', isOpen: true }]))), 'empty')
+  const b = pinBoard([know('K1'), know('K2')])
+  const all = { [readKey('s', 'K1')]: true, [readKey('s', 'K2')]: true }
+  assert.equal(pinbarMode(pins(b, all)), 'slim')
+  assert.equal(pinbarMode(pins(b, { [readKey('s', 'K1')]: true })), 'full')
+  assert.equal(pinbarMode(pins(b, all), readKey('s', 'K1')), 'full')
+})
+
+test('slimLine: count, nothing new, last title', () => {
+  const b = pinBoard([know('K1', { title: 'Old', at: 1 }), know('K2', { title: 'New', at: 2 })])
+  assert.equal(slimLine(pins(b)), '2 pins · nothing new · last: New')
+  assert.equal(slimLine(pins(pinBoard([know('K1', { title: 'Only' })]))), '1 pin · nothing new · last: Only')
+  assert.equal(slimLine([]), '')
+})
+
+test('segments mark the current, unread and read pins in board order', () => {
+  const b = pinBoard([know('K1', { at: 1 }), know('K2', { at: 3 }), know('K3', { at: 2 })])
+  const list = pins(b, { [readKey('s', 'K1')]: true })
+  assert.deepEqual(
+    segments(list, currentPin(list)).map(s => s.kind),
+    ['read', 'current', 'unread'],
+  )
+})
+
+test('newPinIds: nothing is new on the first call; later ones are the ids not seen before', () => {
+  const list = pins(pinBoard([know('K1'), know('K2')]))
+  assert.deepEqual(newPinIds(null, list), [])
+  assert.deepEqual(newPinIds(new Set([readKey('s', 'K1')]), list), [readKey('s', 'K2')])
+})
+
+test('ageText: now, minutes, hours, days', () => {
+  assert.equal(ageText(1000, 1000 + 30_000), 'now')
+  assert.equal(ageText(0, 5000), '')
+  assert.equal(ageText(1000, 1000 + 5 * 60_000), '5m')
+  assert.equal(ageText(1000, 1000 + 3 * 3_600_000), '3h')
+  assert.equal(ageText(1000, 1000 + 2 * 86_400_000), '2d')
+})
+
+test('pruneRead drops marks of sessions with no board and keeps the same object when nothing goes', () => {
+  const read = { 'a:K1': true, 'b:K1': true }
+  const next = pruneRead(read, [{ session: 'a' }])
+  assert.deepEqual(next, { 'a:K1': true })
+  assert.equal(pruneRead(read, [{ session: 'a' }, { session: 'b' }]), read)
+  assert.equal(markRead(read, 'a:K1'), read)
+  assert.deepEqual(markRead(read, 'a:K2'), { 'a:K1': true, 'b:K1': true, 'a:K2': true })
+})
+
+test('done action and action file name', () => {
+  assert.deepEqual(doneAction('K3'), { action: 'done', key: 'K3' })
+  assert.ok(actionFile(5, 'x').localeCompare(actionFile(10, 'a')) < 0, 'names sort by time')
+  assert.match(actionFile(1790000000000, 'ab12'), /^1790000000000-ab12\.json$/)
+})
+
+test('undo window: an action goes out only after UNDO_MS (5 s); undo before that removes it', () => {
+  assert.equal(UNDO_MS, 5000)
+  let q = queueAction([], { id: 'f1', session: 's', action: doneAction('K1'), now: 1000 })
+  q = queueAction(q, { id: 'f2', session: 's', action: doneAction('K2'), now: 3000 })
+  assert.equal(takeDue(q, 5999).due.length, 0, 'not at 4.999 s')
+  assert.deepEqual(
+    takeDue(q, 6000).due.map(x => x.id),
+    ['f1'],
+  )
+  assert.deepEqual(
+    takeDue(q, 8000).due.map(x => x.id),
+    ['f1', 'f2'],
+  )
+  assert.deepEqual(
+    takeDue(q, 6000).rest.map(x => x.id),
+    ['f2'],
+  )
+  const undone = cancelAction(q, 'f1')
+  assert.deepEqual(
+    takeDue(undone, 9000).due.map(x => x.id),
+    ['f2'],
+    'f1 never goes out',
+  )
+})
+
+test('hiddenKeys: queued and sent items are hidden; settleSent keeps them until the board shows the outcome or the item closed', () => {
+  const queue = queueAction([], { id: 'f1', session: 's', action: doneAction('K1'), now: 0 })
+  const sent = [{ id: 'f0', session: 's', key: 'K2' }]
+  assert.deepEqual([...hiddenKeys(queue, sent)].sort(), ['s:K1', 's:K2'])
+
+  const open = pinBoard([know('K2')])
+  assert.deepEqual(settleSent(sent, [open]), { sent, failed: [] }, 'still open, no outcome: keep hiding')
+  assert.deepEqual(settleSent(sent, [pinBoard([know('K2', { isOpen: false })])]), { sent: [], failed: [] }, 'closed: settled')
+  assert.deepEqual(settleSent(sent, []), { sent: [], failed: [] }, 'board gone')
+  const failed = { ...open, actions: [{ id: 'f0', ok: false, message: 'no such item' }] }
+  assert.deepEqual(
+    settleSent(sent, [failed]),
+    { sent: [], failed: [{ id: 'f0', message: 'no such item' }] },
+    'ok:false is reported and un-hidden',
+  )
+  const ok = { ...open, actions: [{ id: 'f0', ok: true, message: '' }] }
+  assert.deepEqual(settleSent(sent, [ok]), { sent: [], failed: [] })
 })
