@@ -259,6 +259,22 @@ test('S12: a state change keeps the row in the section and the order', () => {
   }
 })
 
+test('S12: orchestrators keep agents() order when the sort reverses them', () => {
+  const natural = [agent('t1', 'idle'), agent('t2', 'idle'), agent('t5', 'idle')]
+  const sorted = [natural[1], natural[2], natural[0]]
+  const boards = [board('a', 't1'), board('b', 't2')]
+  const terminals = ['t1', 't2', 't5'].map(a => term(a))
+  const r = listOrder(sorted, boards, terminals, [], natural)
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1', 't2'],
+  )
+  assert.deepEqual(
+    r.list.map(a => a.address),
+    ['t1', 't2', 't5'],
+  )
+})
+
 test('S12: a pinned orchestrator shows once, in the section', () => {
   const sorted = [agent('t5'), agent('t1'), agent('t6')]
   const r = listOrder(sorted, [board('a', 't1')], [term('t1'), term('t5'), term('t6')], ['t1', 't6'])

@@ -218,6 +218,7 @@ export class AgentsList {
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
+    const natural = list;
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     const shown = focused()?.agent;
@@ -230,8 +231,8 @@ export class AgentsList {
     if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
     this.prunePins(all);
     // S12: the orchestrators come out first, wherever the sort and the pins would put them: a pinned one is in the section only.
-    // Their order is the sorted list's, so only the sort view moves them; the section is what keeps them on top.
-    const { orchestrators, pinned, rest, list: ordered } = listOrder(list, boards.list(), all, this.pins);
+    // Their order is agents() order, never the sort's, so they don't jump when a state changes; pinned and rest follow the sort.
+    const { orchestrators, pinned, rest, list: ordered } = listOrder(list, boards.list(), all, this.pins, natural);
     const orchAddrs = new Set(orchestrators.map((a) => a.address));
     list = ordered;
     setAgentOrder(list.map((a) => a.address));

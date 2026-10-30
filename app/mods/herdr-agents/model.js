@@ -140,14 +140,16 @@ export function orchestratorSection(agents, boards, terminals) {
 
 /**
  * The order the agents list draws and hands to setAgentOrder: orchestrators, then pinned, then the rest.
- *   sorted    the agents in the list's own order (after the sort view)
+ *   sorted    the agents in the sort view's order (the order of pinned and rest)
  *   boards, terminals   as for orchestratorSection
  *   pins      the pinned addresses, in pin order
- * An orchestrator is in the first part only, pinned or not; pins that match no agent are skipped.
+ *   natural   agents() order (space, tab, pane), the order of the orchestrators; defaults to `sorted`
+ * An orchestrator is in the first part only, pinned or not, always in `natural` order so rows don't jump when
+ * a state changes; pins that match no agent are skipped.
  * Returns {orchestrators, pinned, rest, list}; `list` is the three joined.
  */
-export function listOrder(sorted, boards, terminals, pins = []) {
-  const { orchestrators } = orchestratorSection(sorted, boards, terminals)
+export function listOrder(sorted, boards, terminals, pins = [], natural = sorted) {
+  const { orchestrators } = orchestratorSection(natural, boards, terminals)
   const orch = new Set(orchestrators.map(a => a.address))
   const others = (sorted ?? []).filter(a => !orch.has(a.address))
   const pinned = pins.map(p => others.find(a => a.address === p)).filter(Boolean)
