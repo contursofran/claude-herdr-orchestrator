@@ -63,10 +63,7 @@ export function resolveBoard(boards, terminals, focus, last = null) {
   const picks = last ?? {}
   const byAddress = new Map((terminals ?? []).map(t => [t.address, t]))
   // 1. A board counts only while its coordinator terminal is live and runs an agent; boards without the field are ignored.
-  const alive = (boards ?? []).filter(b => {
-    const address = b?.coordinator?.terminal
-    return typeof address === 'string' && live(byAddress.get(address))
-  })
+  const alive = aliveBoards(boards, terminals)
   const none = { board: null, via: null, pick: picks }
   if (!focus) return none
   const space = focus.space ?? null
@@ -110,4 +107,34 @@ export function openNeeds(board) {
 export function debugLine(board) {
   if (!board) return ''
   return `${board.cwd ?? ''} · ${openNeeds(board).length} open`
+}
+
+// --- S12: the agents list's Orchestrators section ---
+
+/** Rule 1 of the resolver: the boards whose coordinator terminal exists, is live and runs an agent
+ *  (boards without the field are ignored). `terminals` is terminals() from herdr. */
+export function aliveBoards(boards, terminals) {
+  const byAddress = new Map((terminals ?? []).map(t => [t.address, t]))
+  return (boards ?? []).filter(b => {
+    const address = b?.coordinator?.terminal
+    return typeof address === 'string' && live(byAddress.get(address))
+  })
+}
+
+/**
+ * Splits the agents list into the orchestrators (the first section) and the rest.
+ *   agents    agents() from herdr, in the order the list shows them
+ *   boards    every board read
+ *   terminals terminals() from herdr
+ * An agent is an orchestrator when its `address` equals `coordinator.terminal` of a board that passes rule 1.
+ * Both use the core's address form: `t4` for a local terminal, `machine/t4` for another machine's, so a board
+ * (written by a local session) matches local agents only. Order inside is the list's own, never by state.
+ * Returns {orchestrators, others}; others keeps the order it was given, so a pinned orchestrator is in one place only.
+ */
+export function orchestratorSection(agents, boards, terminals) {
+  const coordinators = new Set(aliveBoards(boards, terminals).map(b => b.coordinator.terminal))
+  const orchestrators = []
+  const others = []
+  for (const a of agents ?? []) (coordinators.has(a.address) ? orchestrators : others).push(a)
+  return { orchestrators, others }
 }

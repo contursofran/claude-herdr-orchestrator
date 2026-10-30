@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { coordinatorLayout, writeCoordinatorLayout } from '../layout.mjs'
+import { coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
 
 // The shape of Herdr's main layout where it matters: work is tabs / work-body / status.
 const main = () => ({
@@ -56,6 +56,7 @@ test('everything else is main as it was, and main is not changed', () => {
   assert.deepEqual(input, main())
   delete layout.cloned_from
   layout.children[1].children = layout.children[1].children.filter(c => !c.id.startsWith('hrd-'))
+  layout.children[0].children[0].content = { mod: 'agents' }
   assert.deepEqual(layout, main())
 })
 
@@ -92,6 +93,50 @@ test('without a main layout nothing is written', () => {
     mkdirSync(join(home, 'layouts'))
     assert.throws(() => writeCoordinatorLayout(home))
     assert.equal(existsSync(join(home, 'layouts', 'coordinator.json')), false)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test("the agents block points at this mod with role agents; main keeps Herdr's own", () => {
+  const input = main()
+  const layout = coordinatorLayout(input)
+  assert.deepEqual(layout.children[0].children[0], {
+    id: 'agents',
+    type: 'block',
+    content: { mod: 'herdr-agents', props: { role: 'agents' } },
+  })
+  assert.deepEqual(input.children[0].children[0].content, { mod: 'agents' })
+})
+
+test("repointAgents touches only a block still on Herdr's agents mod", () => {
+  const mine = main()
+  mine.children[0].children[0].content = { mod: 'my-agents' }
+  assert.equal(repointAgents(mine), false)
+  assert.deepEqual(mine.children[0].children[0].content, { mod: 'my-agents' })
+  const again = coordinatorLayout(main())
+  assert.equal(repointAgents(again), false)
+  assert.equal(repointAgents({ id: 'root', children: [] }), false)
+})
+
+test('a coordinator layout that exists gets its agents block repointed and nothing else', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hrd-layout-'))
+  try {
+    mkdirSync(join(home, 'layouts'))
+    writeFileSync(join(home, 'layouts', 'main.json'), JSON.stringify(main()))
+    const target = join(home, 'layouts', 'coordinator.json')
+    const old = main()
+    old.children[1].children.splice(1, 0, { id: 'mine', type: 'block', size: { px: 10 } })
+    writeFileSync(target, JSON.stringify(old))
+    assert.equal(writeCoordinatorLayout(home), 'updated')
+    const got = JSON.parse(readFileSync(target, 'utf8'))
+    assert.deepEqual(got.children[0].children[0].content, { mod: 'herdr-agents', props: { role: 'agents' } })
+    got.children[0].children[0].content = { mod: 'agents' }
+    assert.deepEqual(got, old)
+    assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
+    writeFileSync(target, 'not json')
+    assert.equal(writeCoordinatorLayout(home), 'exists')
+    assert.equal(readFileSync(target, 'utf8'), 'not json')
   } finally {
     rmSync(home, { recursive: true, force: true })
   }

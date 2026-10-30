@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { applyFile, boardId, debugLine, labelOf, openNeeds, resolveBoard } from '../mods/herdr-agents/model.js'
+import {
+  aliveBoards,
+  applyFile,
+  boardId,
+  debugLine,
+  labelOf,
+  openNeeds,
+  orchestratorSection,
+  resolveBoard,
+} from '../mods/herdr-agents/model.js'
 
 const board = (session, terminal, extra = {}) => ({
   session,
@@ -207,4 +216,93 @@ test('the debug line is the folder and the open count, and empty without a board
   assert.equal(debugLine(fixture), '/work/shop · 7 open')
   assert.equal(debugLine(null), '')
   assert.equal(openNeeds({ needs: [{ isOpen: true }, { isOpen: false, end: 'done' }] }).length, 1)
+})
+
+// --- S12: the agents list's Orchestrators section ---
+
+const agent = (address, status = 'idle') => ({ address, status, seq: 1 })
+
+test("S12: an agent is an orchestrator when its address is a live board's coordinator terminal", () => {
+  const boards = [board('a', 't1'), board('b', 't3')]
+  const terminals = [term('t1'), term('t2'), term('t3', { state: 'exited' })]
+  const r = orchestratorSection([agent('t1'), agent('t2'), agent('t3')], boards, terminals)
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1'],
+  )
+  assert.deepEqual(
+    r.others.map(a => a.address),
+    ['t2', 't3'],
+  )
+})
+
+test('S12: workers of a board and boards without the field are not orchestrators', () => {
+  const boards = [board('a', 't1', { workers: [{ name: 'w-api' }] }), { session: 'old', at: 1 }]
+  const terminals = [term('t1'), term('t7', { name: 'w-api' })]
+  assert.deepEqual(
+    orchestratorSection([agent('t1'), agent('t7')], boards, terminals).orchestrators.map(a => a.address),
+    ['t1'],
+  )
+})
+
+test('S12: a state change keeps the row in the section and the order', () => {
+  const boards = [board('a', 't1'), board('b', 't2')]
+  const terminals = [term('t1'), term('t2')]
+  for (const status of ['idle', 'working', 'blocked', 'done']) {
+    const r = orchestratorSection(
+      [agent('t1', status), agent('t5', 'blocked'), agent('t2', status === 'idle' ? 'blocked' : 'idle')],
+      boards,
+      terminals,
+    )
+    assert.deepEqual(
+      r.orchestrators.map(a => a.address),
+      ['t1', 't2'],
+      status,
+    )
+    assert.deepEqual(
+      r.others.map(a => a.address),
+      ['t5'],
+    )
+  }
+})
+
+test('S12: a pinned orchestrator is in the section only (the list takes pins from `others`)', () => {
+  const r = orchestratorSection([agent('t1'), agent('t5')], [board('a', 't1')], [term('t1'), term('t5')])
+  const pins = ['t1', 't5']
+  assert.deepEqual(
+    pins
+      .map(p => r.others.find(a => a.address === p))
+      .filter(Boolean)
+      .map(a => a.address),
+    ['t5'],
+  )
+})
+
+test('S12: with no board the list is the one given', () => {
+  const list = [agent('t1'), agent('t2', 'working')]
+  const r = orchestratorSection(list, [], [term('t1'), term('t2')])
+  assert.deepEqual(r, { orchestrators: [], others: list })
+  assert.deepEqual(orchestratorSection(list, undefined, undefined).others, list)
+})
+
+test("S12: a remote terminal's address carries its machine, so a local board does not match it", () => {
+  const r = orchestratorSection([agent('t1'), agent('vps/t1')], [board('a', 't1')], [term('t1'), term('vps/t1')])
+  assert.deepEqual(
+    r.orchestrators.map(a => a.address),
+    ['t1'],
+  )
+  const remote = orchestratorSection([agent('vps/t1')], [board('a', 'vps/t1')], [term('vps/t1')])
+  assert.deepEqual(
+    remote.orchestrators.map(a => a.address),
+    ['vps/t1'],
+  )
+})
+
+test("S12: aliveBoards is the resolver's rule 1", () => {
+  const boards = [board('gone', 't9'), board('shell', 't3'), board('ok', 't1')]
+  const terminals = [term('t1'), term('t3', { program: { agent: false } })]
+  assert.deepEqual(
+    aliveBoards(boards, terminals).map(b => b.session),
+    ['ok'],
+  )
 })
