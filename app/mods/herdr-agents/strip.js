@@ -3,6 +3,7 @@ import { nextCommand, notify, openOverlay, playSound, run, setShared, shared, te
 import {
   FLASH_MS,
   anyFlashing,
+  contextLine,
   counts,
   flashing,
   isBoardCommand,
@@ -254,6 +255,17 @@ function count(name, n) {
     .child(String(n))
 }
 
+/** `ctx 145k / 250k`: quiet until it nears the limit, as in the band. */
+function contextText(line) {
+  const shade = line.level === 'error' ? look.ctxError : line.level === 'warning' ? look.ctxWarning : look.muted
+  return div()
+    .id('strip-context')
+    .flex_none()
+    .text_color(shade)
+    .when(line.level === 'error', el => el.font_bold())
+    .child(line.text)
+}
+
 /** `⌘J`: opens or closes the context sheet. */
 const sheetPill = board =>
   div()
@@ -322,6 +334,8 @@ export function strip(board, ctx = {}) {
         .child(`${other.count} in other ›`),
     )
   }
+  const context = contextLine(board)
+  if (context) right.child(contextText(context))
   right
     .child(
       div()

@@ -943,3 +943,13 @@ export function coreIdOf(text) {
     return ''
   }
 }
+
+/** The strip's context line for `board.summary.context`, with the band's text and thresholds: `warning` from 80% of the
+ *  limit, `error` from 95%. null without usable data. */
+export function contextLine(board) {
+  const { tokens, limit } = board?.summary?.context ?? {}
+  if (!Number.isFinite(tokens) || !Number.isFinite(limit) || limit <= 0) return null
+  const level = tokens >= limit * 0.95 ? 'error' : tokens >= limit * 0.8 ? 'warning' : null
+  const text = `ctx ${Math.round(tokens / 1000)}k / ${Math.round(limit / 1000)}k${level === 'error' ? ' · resets soon' : ''}`
+  return { text, level }
+}
