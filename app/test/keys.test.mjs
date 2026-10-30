@@ -29,21 +29,21 @@ test('a key already bound to the same action is left alone without a report; the
   assert.deepEqual(existing, { global: { 'cmd-j': 'herdr-agents.sheet' } })
 })
 
-test('app/keys.json: the strip keys sit in layout:coordinator, cmd-shift-1..6, and merge into the app keys', () => {
+test('app/keys.json: the strip keys sit in layout:coordinator, ctrl-cmd-1..6, and merge into the app keys', () => {
   const wanted = JSON.parse(readFileSync(new URL('../keys.json', import.meta.url), 'utf8'))
   assert.deepEqual(Object.keys(wanted), ['layout:coordinator'])
   assert.deepEqual(
     Object.entries(wanted['layout:coordinator']),
-    [1, 2, 3, 4, 5, 6].map(n => [`cmd-shift-${n}`, `herdr-agents.pick${n}`]),
+    [1, 2, 3, 4, 5, 6].map(n => [`ctrl-cmd-${n}`, `herdr-agents.pick${n}`]),
   )
   const r = mergeKeys({ global: { 'cmd-1': 'tab.select:1' } }, wanted)
-  assert.equal(r.keys['layout:coordinator']['cmd-shift-3'], 'herdr-agents.pick3')
+  assert.equal(r.keys['layout:coordinator']['ctrl-cmd-3'], 'herdr-agents.pick3')
   assert.equal(r.added.length, 6)
   // Run again over the result: nothing more to add, nothing skipped.
   const again = mergeKeys(r.keys, wanted)
   assert.deepEqual([again.added, again.skipped], [[], []])
   // A key the person already bound there is kept.
-  const kept = mergeKeys({ 'layout:coordinator': { 'cmd-shift-1': 'tab.next' } }, wanted)
-  assert.equal(kept.keys['layout:coordinator']['cmd-shift-1'], 'tab.next')
-  assert.deepEqual(kept.skipped, ['layout:coordinator cmd-shift-1'])
+  const kept = mergeKeys({ 'layout:coordinator': { 'ctrl-cmd-1': 'tab.next' } }, wanted)
+  assert.equal(kept.keys['layout:coordinator']['ctrl-cmd-1'], 'tab.next')
+  assert.deepEqual(kept.skipped, ['layout:coordinator ctrl-cmd-1'])
 })

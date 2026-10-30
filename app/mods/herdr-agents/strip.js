@@ -1,6 +1,18 @@
 import { div, svg } from 'gpui-kit'
 import { nextCommand, run, setShared, shared, terminals } from 'herdr'
-import { FLASH_MS, counts, flashing, isUnseen, observeArrivals, otherCount, pickAt, stripItems } from './model.js'
+import {
+  FLASH_MS,
+  anyFlashing,
+  counts,
+  flashing,
+  isUnseen,
+  nextPick,
+  observeArrivals,
+  otherCount,
+  pickAt,
+  pickNumber,
+  stripItems,
+} from './model.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
 const white = color.text
@@ -48,7 +60,7 @@ export class StripState {
   observe(cx, boards) {
     const now = Date.now()
     this.known = observeArrivals(this.known, boards, now)
-    if (Object.values(this.known).some(at => flashing('x', at, now))) {
+    if (anyFlashing(this.known, now)) {
       // The flash is a native loop; one timer ends it with a redraw.
       cx.spawn(async cx => {
         await cx.sleep(FLASH_MS + 100)
@@ -57,14 +69,14 @@ export class StripState {
     }
   }
 
-  /** Keys: cmd-shift-1..6 in layout:coordinator send herdr-agents.pick1..6 here. */
+  /** Keys: ctrl-cmd-1..6 in layout:coordinator send herdr-agents.pick1..6 here. */
   listen(cx) {
     cx.spawn(async cx => {
       for (;;) {
         const name = String(await nextCommand())
-        const m = /(?:^|\.)pick([1-6])$/.exec(name)
-        if (!m) continue
-        const item = pickAt(stripItems(this.board), Number(m[1]))
+        const n = pickNumber(name)
+        if (!n) continue
+        const item = pickAt(stripItems(this.board), n)
         if (item) this.pick(this.board, item, false)
         cx.notify()
       }
@@ -75,12 +87,8 @@ export class StripState {
    *  reaches the mod twice leaves it selected. */
   pick(board, item, toggle = true) {
     const id = `${board.session}:${item.key}`
-    const now = shared('hrd.pick')
     this.seen.add(id)
-    setShared(
-      'hrd.pick',
-      toggle && now?.session === board.session && now?.key === item.key ? null : { session: board.session, key: item.key },
-    )
+    setShared('hrd.pick', nextPick(shared('hrd.pick'), board.session, item.key, toggle))
   }
 }
 
@@ -144,9 +152,14 @@ function count(name, n) {
     .flex_none()
     .text_color(n > 0 ? white : color.dim)
   return div()
+    .id(`count-${name}`)
+    .h(24)
+    .px(8)
     .flex()
     .items_center()
     .gap(5)
+    .rounded(5)
+    .hover(el => el.bg(look.pillHover))
     .text_color(n > 0 ? white : color.dim)
     .child(spin ? glyph.spin(look.spin) : glyph)
     .child(String(n))
@@ -192,7 +205,7 @@ export function strip(board, ctx = {}) {
       div()
         .flex()
         .items_center()
-        .gap(12)
+        .gap(4)
         .child(count('working', c.working))
         .child(count('waiting', c.waiting))
         .child(count('blocked', c.blocked)),

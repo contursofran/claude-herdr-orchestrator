@@ -13,7 +13,7 @@ export default class HerdrAgents extends View {
   init(_props, cx) {
     this.boards = new Boards()
     this.last = null
-    // The strip keeps arrival times and the owner's seen tabs, and listens for cmd-shift-1..6.
+    // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
     this.boards.start(cx, cx => {
       this.part?.observe(cx, this.boards.list())
