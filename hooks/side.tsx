@@ -623,6 +623,8 @@ export async function boardSnapshot($: EngineInterface) {
     session: await $.session.id(),
     cwd: session.cwd,
     at: now,
+    // The hc terminal this coordinator runs in (null outside hc); an app finds the board by it.
+    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null },
     stageNames: [...STAGES],
     summary: {
       busy,

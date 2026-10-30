@@ -14,7 +14,7 @@ Install it from the plugin marketplace, at a Claude Code prompt (details under [
 
 ### Workers in herdr tabs, on any model
 
-The coordinator starts each worker in its own herdr tab, in its own git worktree, with a profile (`spawn` with `branch` fetches the base and creates the worktree at `../<repo>-wt/<branch>` itself; `cwd` reuses an existing folder, e.g. for a fix round): the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker is an hc terminal (`hc run --no-parent`, labelled so Herdr shows it in a tab of the coordinator's space) with `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers; for the workers it started, it sweeps and checks their reports only while one of them runs, and closes their tabs once they sit idle after their reports.
+The coordinator starts each worker in its own herdr tab, in its own git worktree, with a profile (`spawn` with `branch` creates (after fetching the base from origin, if the repo has one) the worktree at `../<repo>-wt/<branch>` itself; `cwd` reuses an existing folder, e.g. for a fix round): the built-in planner, builder, reviewer and debugger, or your own on Claude, opencode or codex (`smallTasks` sends the small ones to a cheap model). A worker's first-run "trust this folder?" prompt is answered for it. Each worker is an hc terminal (`hc run --no-parent`, labelled so Herdr shows it in a tab of the coordinator's space) with `HERDR_AGENTS_ROLE=worker`; the mod also loads in a Claude worker's own session, which runs none of its timers; for the workers it started, it sweeps and checks their reports only while one of them runs, and closes their tabs once they sit idle after their reports.
 
 ### Reports come back by themselves
 
@@ -75,6 +75,12 @@ Off by default. When agents do the building, you see a lot of new ideas go by wi
 ### The board for other apps
 
 What the sidebar shows is also kept in `~/.herdr-agents/board/<session id>.json`, rewritten when it changes and removed when the session ends, so an app outside Claude Code (such as [contr](https://github.com/contursofran/contr), a native herdr client) can draw it. The app presses the sidebar's buttons by dropping a JSON file in `<session id>.actions/` beside it: answer a decision, tick or dismiss a to-do, clear done, wrap up or keep going. The coordinator gets the same prompts as from a click in the sidebar. The format is in [docs/board-schema.json](docs/board-schema.json).
+
+### A Herdr app mod (work in progress)
+
+`app/` holds a mod for the [Herdr app](https://herdr.dev) that will draw the board inside the window: a pin bar under the tabs and a needs-you strip under the terminal, for the coordinator of the space you are in (tracking issue [#93](https://github.com/contursofran/claude-herdr-orchestrator/issues/93)). Today it finds the right board as focus moves and draws one line in each row (the folder and how many items are open); the rest comes slice by slice.
+
+`./install.sh` installs it only when the app's folder exists (`$HERDR_APP_HOME`, default `~/.config/herdr-app`). It copies the mod, adds a layout called `coordinator` next to `main` (a copy of `main` with the two rows) and adds the mod's keys without replacing any key you use. It never switches your layout. To try it, switch yourself: your layout-switch key (`ctrl-shift-l` by default, `cmd-shift-l` in a Mac keys file) or `herdr-app do layout.switch --name coordinator`; to go back, `herdr-app do layout.switch --name main`. The board's `coordinator.terminal` field (the hc terminal the coordinator runs in) tells the mod which board is which, so sessions started before it was added draw empty rows until they reload. Tests: `npm run test:app`.
 
 ## What's in the repo
 

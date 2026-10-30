@@ -25,6 +25,7 @@ test('the board is written for outside apps, and their action files answer and t
 
   const board = JSON.parse(files[FILE] ?? '{}')
   expect(board.version).toBe(1)
+  expect(board.coordinator).toEqual({ terminal: 't1' })
   expect(board.stageNames).toEqual(['plan', 'build', 'rev', 'CI', 'you'])
   expect(board.workers.map((w: { name: string }) => w.name)).toEqual(['w-busy'])
   expect(board.summary.needs).toBe(2)
@@ -57,4 +58,16 @@ test('the board is written for outside apps, and their action files answer and t
   await clock.advance(3000)
   expect(JSON.parse(files[FILE] ?? '{}').needs).toEqual([])
   await stopAll($, clock, ['w-busy'])
+})
+
+test('the board says null for the coordinator terminal outside hc, and keeps the fields an old reader uses', async ($, on) => {
+  const { clock, files } = await start($, on, {}, {}, { HC_TERMINAL_ID: '' })
+  await clock.advance(3000)
+  const board = JSON.parse(files[FILE] ?? '{}')
+  expect(board.coordinator).toEqual({ terminal: null })
+  expect(Object.keys(board)).toEqual(
+    expect.arrayContaining(['version', 'session', 'cwd', 'at', 'stageNames', 'summary', 'workers', 'tasks', 'needs', 'status', 'actions']),
+  )
+  expect(board.version).toBe(1)
+  expect(board.session).toBe('session-1234')
 })
