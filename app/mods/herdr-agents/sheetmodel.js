@@ -141,7 +141,24 @@ export const askTarget = board =>
  * options stay, the chosen one marked, with `undoId` while it waits) or when the item is closed; `gone` without a board.
  */
 export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText = null } = {}) {
-  if (!board) return { face: 'gone', key, id: key, title: 'This board has ended', pos: sheetPage(null, key) }
+  if (!board) {
+    return {
+      face: 'gone',
+      key,
+      id: key,
+      title: 'This board has ended',
+      meta: '',
+      pos: sheetPage(null, key),
+      waitingOn: 'Nothing waits on this',
+      why: '',
+      whyFile: null,
+      source: '',
+      refs: [],
+      ask: null,
+      undoId: null,
+      options: [],
+    }
+  }
   const mine = q => q.session === board.session && q.key === key
   const waiting = queue.filter(mine).pop()
   const out = waiting ?? liveSent(sent, now).filter(mine).pop()
@@ -166,7 +183,7 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
     waitingOn: waitingOn(board, key),
     why: whyText(need, fileText),
     whyFile: whyFile(board, need),
-    source: [need?.from, { excerpt: 'excerpt', text: 'text', file: 'RESULT.md' }[whySource(need)], ageText(need?.at, now)]
+    source: [need?.from, { excerpt: 'excerpt', file: 'RESULT.md' }[whySource(need)], ageText(need?.at, now)]
       .filter(Boolean)
       .join(' · '),
     refs: sheetRefs(board, need),
@@ -222,8 +239,33 @@ export function sheetKeyAction(keystroke, { options = 0, held = false } = {}) {
   return { type: 'ignore' }
 }
 
-/** The line under the sheet: which keys do what. */
-export function sheetHint({ options = 0, paged = false } = {}) {
+/** The line under the options of a resolved item: only what happened, so a closed item never claims it was sent. */
+export const sheetDoneLine = view =>
+  view.verb === 'closed' ? 'closed' : [view.verb, view.detail, view.sent ? 'sent' : 'sending'].filter(Boolean).join(' · ')
+
+const LINE_H = 18
+const CHAR_W = 7
+const textRows = (value, width) =>
+  String(value ?? '')
+    .split('\n')
+    .reduce((n, line) => n + Math.max(1, Math.ceil((line.length * CHAR_W) / width)), 0)
+
+/**
+ * Whether the sheet's scrolling part holds more than shows at `size`, so the hint can say so. An estimate from the text
+ * (the app cannot measure here): the options column in a wide window, the whole scrolling column in a narrow one.
+ */
+export function sheetMore(view, size) {
+  const width = size.narrow ? size.w - 40 : 420
+  const options = view.options.reduce((sum, o) => sum + 44 + (o.impact ? 4 + LINE_H * textRows(o.impact, width) : 0), 0)
+  const done = view.face === 'resolved' ? 8 + LINE_H : 0
+  // Above and below the scrolling part: padding, header and gaps, then the waiting line, column label and actions if outside.
+  if (!size.narrow) return options + done > size.h - 176
+  const why = 24 + LINE_H * textRows(view.why || ' ', width - 28)
+  return LINE_H * 3 + 24 + options + done + why > size.h - 102
+}
+
+/** The line under the sheet: which keys do what, and first of all (it may be cut) that there is more to scroll to. */
+export function sheetHint({ options = 0, paged = false, more = false } = {}) {
   const n = Math.min(Math.max(Number(options) || 0, 0), 3)
-  return [n ? `${n === 1 ? '1' : `1-${n}`} choose` : '', paged ? '← → page' : '', 'esc closes'].filter(Boolean).join(' · ')
+  return [more ? 'scroll for more' : '', n ? `${n === 1 ? '1' : `1-${n}`} choose` : '', paged ? '← → page' : '', 'esc closes'].filter(Boolean).join(' · ')
 }

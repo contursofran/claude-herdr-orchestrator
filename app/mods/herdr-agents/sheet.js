@@ -3,7 +3,7 @@ import { exec, notify, readTextFile, run, setShared, shared } from 'herdr'
 import { send } from './board.js'
 import { CardState, clearStaleSheet } from './cardstate.js'
 import { button, faceIcon, ghost, keyButton } from './card.js'
-import { sheetHint, sheetKeyAction, sheetSize, sheetView, whyLines } from './sheetmodel.js'
+import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, pageSheet } from './sheetctl.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
@@ -39,7 +39,6 @@ const label = text => div().flex_none().text_color(sheetLook.label).child(text)
 
 function pager(view, board, cx) {
   const { pos } = view
-  if (!pos.n) return null
   const step = key => (_e, cx) => {
     if (key) pageSheet(key)
     cx.notify()
@@ -81,19 +80,20 @@ function header(view, board, close, cx) {
     .flex()
     .items_center()
     .gap(10)
-    .child(faceIcon(view.face === 'ask' ? 'ask' : view.face === 'resolved' ? 'resolved' : 'do'))
+    .child(faceIcon(view.face === 'ask' ? 'ask' : view.face === 'resolved' || view.face === 'gone' ? view.face : 'do'))
     .child(div().flex_none().font_bold().text_color(color.text).child(view.id))
     .child(div().min_w_0().truncate().font_semibold().text_color(color.text).child(view.title))
     .when(view.meta, el => el.child(div().flex_none().text_color(look.meta).child(view.meta)))
     .child(div().flex_1())
-    .child(pager(view, board, cx))
+    .when(view.pos.n, el => el.child(pager(view, board, cx)))
     .child(ghost('sheet-esc', 'esc', close))
 }
 
 /**
  * The floating sheet: the open item of "hrd.sheet", with its context. It draws nothing until opened (Herdr hides a
  * floating block that renders nothing) and nothing it does touches the terminal's size. It is `size.h` tall at most
- * 470 px, shorter in a short window; the two columns scroll inside it, so the strip and the prompt stay in view.
+ * 470 px, shorter in a short window, so the strip and the prompt stay in view. Its two columns scroll on their own; in a
+ * narrow window everything between the header and the last row is one scrolling column, options first.
  *   ctl    a SheetState
  *   boards all boards (the open item's board is found by session, so a change of focus does not blank it)
  * Only the owner's click or key opens or closes it; it takes the keyboard when opened.
@@ -139,12 +139,11 @@ export function sheetBlock(boards, ctl, cx) {
     cx.notify()
   }
   const resolved = view.face === 'resolved'
+  const { narrow } = size
 
   const why = div()
     .id('sheet-why')
-    .flex_1()
-    .min_h_0()
-    .overflow_y_scroll()
+    .when(!narrow, el => el.flex_1().min_h_0().overflow_y_scrollbar())
     .px(14)
     .py(12)
     .rounded(8)
@@ -165,8 +164,8 @@ export function sheetBlock(boards, ctl, cx) {
 
   const left = div()
     .min_w_0()
-    .flex_1()
-    .min_h_0()
+    .when(!narrow, el => el.flex_1().min_h_0())
+    .when(narrow, el => el.flex_none())
     .flex()
     .flex_col()
     .gap(6)
@@ -208,7 +207,11 @@ export function sheetBlock(boards, ctl, cx) {
     )
   }
 
-  const options = div().id('sheet-options').flex().flex_col().flex_1().min_h_0().overflow_y_scroll()
+  const options = div()
+    .id('sheet-options')
+    .flex()
+    .flex_col()
+    .when(!narrow, el => el.flex_1().min_h_0().overflow_y_scrollbar())
   view.options.forEach((o, i) => {
     options.child(
       div()
@@ -234,36 +237,44 @@ export function sheetBlock(boards, ctl, cx) {
     )
   })
   if (resolved) {
-    const done = [view.verb, view.detail, view.sent ? 'sent' : 'sending'].filter(Boolean).join(' · ')
-    options.child(div().pt(8).text_color(color.soft).child(done))
+    options.child(div().pt(8).text_color(color.soft).child(sheetDoneLine(view)))
   }
+  const actions = div()
+    .id('sheet-actions')
+    .flex_none()
+    .flex()
+    .items_center()
+    .gap(8)
+    .flex_wrap()
+    .when(view.ask, el => el.child(ghost('sheet-ask', 'Ask principal', askPrincipal)))
+    .when(view.undoId, el =>
+      el.child(
+        button('sheet-undo', 'undo', (_e, cx) => {
+          ctl.undo(view.undoId)
+          cx.notify()
+        }),
+      ),
+    )
   const right = div()
     .flex_none()
-    .when(!size.narrow, el => el.w(420))
-    .when(size.narrow, el => el.w_full())
-    .min_h_0()
+    .when(!narrow, el => el.w(420).min_h_0())
+    .when(narrow, el => el.w_full())
     .flex()
     .flex_col()
     .gap(6)
     .child(label('Options'))
     .child(options)
-    .child(
-      div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(8)
-        .flex_wrap()
-        .when(view.ask, el => el.child(ghost('sheet-ask', 'Ask principal', askPrincipal)))
-        .when(view.undoId, el =>
-          el.child(
-            button('sheet-undo', 'undo', (_e, cx) => {
-              ctl.undo(view.undoId)
-              cx.notify()
-            }),
-          ),
-        ),
-    )
+    .when(!narrow, el => el.child(actions))
+
+  const waiting = div()
+    .flex_none()
+    .flex()
+    .items_center()
+    .gap(8)
+    .text_color(sheetLook.waiting)
+    .child(svg(icon('waiting')).size(12).flex_none())
+    .child(div().min_w_0().truncate().child(view.waitingOn))
+  const hint = sheetHint({ options: resolved ? 0 : view.options.length, paged: view.pos.n > 1, more: sheetMore(view, size) })
 
   return div()
     .id('sheet')
@@ -294,32 +305,24 @@ export function sheetBlock(boards, ctl, cx) {
         .px(20)
         .py(14)
         .child(header(view, board, close, cx))
+        .when(!narrow, el =>
+          el.child(waiting).child(div().flex_1().min_h_0().flex().gap(22).child(left).child(right)),
+        )
+        .when(narrow, el =>
+          el.child(
+            div().id('sheet-scroll').flex_1().min_h_0().overflow_y_scrollbar().flex().flex_col().gap(12).child(waiting).child(right).child(left),
+          ),
+        )
         .child(
           div()
             .flex_none()
             .flex()
             .items_center()
             .gap(8)
-            .text_color(sheetLook.waiting)
-            .child(svg(icon('waiting')).size(12).flex_none())
-            .child(div().min_w_0().truncate().child(view.waitingOn)),
-        )
-        .child(
-          div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .when(size.narrow, el => el.flex_col().gap(12))
-            .when(!size.narrow, el => el.gap(22))
-            .child(left)
-            .child(right),
-        )
-        .child(
-          div()
-            .flex_none()
             .text_size(11)
             .text_color(look.meta)
-            .child(sheetHint({ options: resolved ? 0 : view.options.length, paged: view.pos.n > 1 })),
+            .when(narrow, el => el.child(actions))
+            .child(div().min_w_0().truncate().child(hint)),
         ),
     )
 }

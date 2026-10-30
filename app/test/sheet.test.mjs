@@ -11,6 +11,7 @@ import {
   isSheetCommand,
   sheetHint,
   sheetItems,
+  sheetDoneLine,
   sheetKeyAction,
   sheetPage,
   sheetRefs,
@@ -150,7 +151,7 @@ test('sheetView: a decision has its options, impacts, the recommended one, and t
   )
   assert.equal(v.title, 'Pagination style')
   assert.equal(v.meta, '#601 · w-api · 1m')
-  assert.equal(v.source, 'w-api · text · 1m')
+  assert.equal(v.source, 'w-api · 1m')
   assert.equal(v.why, 'Cursor or offset pagination for the orders API?')
   assert.equal(v.waitingOn, 'Waiting on this: #601 Task 1')
   assert.deepEqual(v.pos, { i: 1, n: 7, prev: 'K5', next: 'D8' })
@@ -305,4 +306,15 @@ test('clearStaleSheet forgets a sheet left open by the last run, and only that',
   assert.equal(store['hrd.sheet'], null)
   assert.notEqual(store['hrd.open'], null)
   assert.equal(clearStaleSheet(get, set), false)
+})
+
+test('sheetView: the source line names no word for an item with only text', () => {
+  const b = { session: 's', needs: [{ key: 'K', kind: 'know', isOpen: true, from: 'w-api', text: 'hello' }] }
+  assert.equal(sheetView(b, 'K', { now: 1 }).source, 'w-api')
+})
+
+test('sheetDoneLine: says sent or sending only for what went out; a closed item just says closed', () => {
+  assert.equal(sheetDoneLine({ verb: 'closed', detail: '', sent: true }), 'closed')
+  assert.equal(sheetDoneLine({ verb: 'answer', detail: 'Cursor', sent: true }), 'answer · Cursor · sent')
+  assert.equal(sheetDoneLine({ verb: 'done', detail: '', sent: false }), 'done · sending')
 })

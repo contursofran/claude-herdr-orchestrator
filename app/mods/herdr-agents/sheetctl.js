@@ -6,9 +6,8 @@ import { canRefocus, openState } from './model.js'
 /** Open the sheet on `key` of `board`; remembers the terminal to hand back. */
 export function openSheet(board, key) {
   const cur = shared('hrd.sheet')
-  const seq = (shared('hrd.seq') ?? 0) + 1
-  setShared('hrd.seq', seq)
-  setShared('hrd.sheet', openState(cur, board.session, key, focused()?.terminal, seq, focused()?.space))
+  // One write, so every mod redraws once: the time tells this open from the last one, without the shared counter.
+  setShared('hrd.sheet', openState(cur, board.session, key, focused()?.terminal, Date.now(), focused()?.space))
 }
 
 /** Move the open sheet to another item of the same board. The seq stays, so it does not take the keyboard again. */
