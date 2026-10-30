@@ -675,3 +675,20 @@ export function openHeight(board, key, ctx) {
   const view = cardView(board, key, ctx)
   return cardHeight(view?.face, view?.options?.length)
 }
+
+// --- S6: the band steps aside ---
+
+/** How often the pin bar copy says it is running, and how old the file may be before the plugin ignores it. */
+export const HEARTBEAT_MS = 30_000
+
+/** The coordinators this machine's plugin sessions run in: live boards' `coordinator.terminal`, without the other
+ *  machines' (`machine/t4`: a plugin there reads its own `t4`, which would match the wrong terminal). */
+export function localCoordinators(boards, terminals) {
+  const out = aliveBoards(boards, terminals).map(b => b.coordinator.terminal)
+  return [...new Set(out.filter(a => !a.includes('/')))]
+}
+
+/** The text of ~/.herdr-agents/app-mod.json. */
+export function heartbeat(boards, terminals, now) {
+  return JSON.stringify({ at: now, terminals: localCoordinators(boards, terminals) })
+}

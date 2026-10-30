@@ -1,6 +1,6 @@
 // Reads the boards the plugin writes (~/.herdr-agents/board/<session>.json) and keeps them current.
 import { exec, home, readTextFile, watchFolder, writeTextFile } from 'herdr'
-import { actionFile, applyFile, boardIdIn } from './model.js'
+import { actionFile, applyFile, boardIdIn, heartbeat } from './model.js'
 
 export const boardDir = () => `${home()}/.herdr-agents/board`
 export const outgoingDir = () => `${home()}/.herdr-agents/outgoing`
@@ -66,4 +66,21 @@ export async function send(session, action, id = actionFile(Date.now(), Math.ran
     throw new Error(moved.stderr.trim() || 'mv failed')
   }
   return id
+}
+
+const heartbeatFile = () => `${home()}/.herdr-agents/app-mod.json`
+
+/** Tells the plugin the app is drawing the boards (its band then steps aside). Written beside the file and moved over it,
+ *  so a reader never sees half a file. */
+export async function beat(boards, terminals) {
+  const file = heartbeatFile()
+  await exec('mkdir', ['-p', `${home()}/.herdr-agents`])
+  await writeTextFile(`${file}.tmp`, heartbeat(boards, terminals, Date.now()), null)
+  const moved = await exec('mv', [`${file}.tmp`, file])
+  if (moved.code !== 0) await exec('rm', ['-f', `${file}.tmp`])
+}
+
+/** Takes the heartbeat away, so the band is back at once instead of within 90 s. */
+export async function clearBeat() {
+  await exec('rm', ['-f', heartbeatFile(), `${heartbeatFile()}.tmp`])
 }

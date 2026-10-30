@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   FLASH_MS,
+  HEARTBEAT_MS,
+  heartbeat,
+  localCoordinators,
   SENT_HIDE_MS,
   UNDO_MS,
   actionFile,
@@ -640,6 +643,15 @@ test('S12: a terminal labelled as a worker is never a coordinator, even with a l
   assert.equal(resolveBoard(boards, terminals, focus('t1')).board, null)
 })
 
+test("S6: the heartbeat lists live local coordinators only: another machine's t4 is not this machine's t4", () => {
+  const boards = [board('a', 't1'), board('b', 'vps/t4'), board('c', 't1'), board('d', 't9'), board('e', 't3')]
+  const terminals = [term('t1'), term('vps/t4'), term('t3', { program: { agent: false } })]
+  assert.deepEqual(localCoordinators(boards, terminals), ['t1'])
+  assert.deepEqual(JSON.parse(heartbeat(boards, terminals, 5000)), { at: 5000, terminals: ['t1'] })
+  assert.deepEqual(JSON.parse(heartbeat([], [], 7)), { at: 7, terminals: [] })
+  assert.equal(HEARTBEAT_MS, 30_000)
+})
+
 // ---- S3: the strip ----
 
 const full = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
@@ -747,7 +759,7 @@ test('otherCount: the terminal cycles through every other board, in address orde
   assert.equal(next('t4'), 't1', 'wraps')
   // Walking from board to board visits all of them.
   const seen = []
-  for (let at = 't1', i = 0; i < 4; i++) seen.push(at), (at = next(at))
+  for (let at = 't1', i = 0; i < 4; i++) (seen.push(at), (at = next(at)))
   assert.deepEqual(seen, ['t1', 't2', 't3', 't4'])
   // A shown board with no place in the order still gets the first one after it.
   const withGap = otherCount(boards, terminals, board('x', 't25'))

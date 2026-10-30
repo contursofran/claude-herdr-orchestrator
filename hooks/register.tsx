@@ -1,4 +1,5 @@
 import type { Register } from 'claude-code'
+import { appModShown } from './appmod'
 import { drawBand, shortenBrief } from './band'
 import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
@@ -162,7 +163,7 @@ export const register: Register = on => {
   // what waits for the person and the workers, unless the sidebar shows them.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     session.bandId = e.requestId
-    return (await drawSettings($, e)) ?? ((await sideShown($)) ? next(e) : drawBand($, e, next))
+    return (await drawSettings($, e)) ?? ((await sideShown($)) || (await appModShown($)) ? next(e) : drawBand($, e, next))
   })
 
   // The sidebar (/hrd-side).

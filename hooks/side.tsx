@@ -1,3 +1,4 @@
+import { appModShown } from './appmod'
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
 import type { Decision, Pr, SideItem, SideView, Todo } from '../types'
@@ -180,7 +181,8 @@ export async function sideClosed($: EngineInterface) {
 // time; when gh fails for all of them the status line says so.
 let polling = false
 export async function pollPrs($: EngineInterface) {
-  if (polling || !(await read($, side)).isOpen) return
+  // Polls with the sidebar open, and while the app mod draws the boards (its pop-up's CI column reads the same PRs).
+  if (polling || (!(await read($, side)).isOpen && !(await appModShown($)))) return
   polling = true
   try {
     const { v, tasks, now } = await gather($, (_, text) => text)
