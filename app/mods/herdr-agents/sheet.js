@@ -12,18 +12,29 @@ import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js
 export class SheetState extends CardState {
   constructor(args) {
     super(args)
-    this.files = new Map() // path -> text, or null when it could not be read
+    this.files = new Map() // path -> text, or null when it could not be read; absent until the first read ends
+    this.opened = null // the open and item the last read was for
+    this.reads = 0
+    this.newest = new Map() // path -> number of its latest read
   }
 
-  /** Read `path` once (the sheet redraws when it arrives). */
-  read(cx, path) {
-    if (!path || this.files.has(path)) return
-    this.files.set(path, null)
+  /** Read `path` once per `opened` (an open of the sheet on one item, with that path), so a rewritten file shows the next
+   *  time the item opens, with no timer. The last text stays up during a re-read, and also when the re-read fails; the sheet
+   *  redraws only if the text changed. */
+  read(cx, path, opened) {
+    if (this.opened === opened) return
+    this.opened = opened
+    if (!path) return
+    const n = ++this.reads
+    this.newest.set(path, n)
     cx.spawn(async cx => {
       let value = null
       try {
         value = await readTextFile(path)
       } catch {}
+      if (this.newest.get(path) !== n) return // a later read has this path
+      if (this.files.has(path) && this.files.get(path) === value) return
+      if (value === null && this.files.get(path) != null) return // this read failed: the good text stays
       this.files.set(path, value)
       cx.notify()
     })
@@ -103,18 +114,20 @@ export function sheetBlock(boards, ctl, cx) {
   const open = shared('hrd.sheet')
   if (!open) {
     ctl.token = null
+    ctl.opened = null
     return div()
   }
   const board = (boards ?? []).find(b => b.session === open.session)
   const raw = sheetView(board, open.key, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, now: Date.now() })
-  // The "Why" box falls back to the asker's RESULT.md, read once; the draw after it arrives has it.
-  if (raw.whyFile) ctl.read(cx, raw.whyFile)
+  const token = `${open.session}:${open.seq ?? 0}`
+  // The "Why" box falls back to the asker's RESULT.md, read each time the sheet opens that item; the draw after it arrives has it.
+  // The path is in the key: it can appear after the open, when the board arrives late or the need is rewritten.
+  ctl.read(cx, raw.whyFile, `${token}:${open.key}:${raw.whyFile}`)
   const view = raw.whyFile
     ? sheetView(board, open.key, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, now: Date.now(), fileText: ctl.files.get(raw.whyFile) })
     : raw
 
   // The first draw after an open: take the keyboard, so Esc works.
-  const token = `${open.session}:${open.seq ?? 0}`
   if (ctl.token !== token) {
     ctl.token = token
     cx.spawn(async cx => {

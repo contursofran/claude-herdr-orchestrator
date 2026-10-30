@@ -18,14 +18,15 @@ export class BoardReader {
     const { exec, watchFolder } = this.io
     cx.spawn(async cx => {
       const dir = this.io.dir()
-      await exec('mkdir', ['-p', dir])
+      // A failed mkdir or ls still ends the first read: commands wait for it.
+      await exec('mkdir', ['-p', dir]).catch(() => {})
       // The watcher may report the resolved path (/tmp is /private/tmp on macOS): accept both.
       const real = (await exec('realpath', [dir]).catch(() => null))?.stdout.trim()
       const dirs = real && real !== dir ? [dir, real] : [dir]
       // Ask to be told before the first read, so a write between the two is not missed.
       let changed = watchFolder(dir)
-      const listed = await exec('ls', ['-1', dir])
-      for (const name of listed.stdout.split('\n')) {
+      const listed = await exec('ls', ['-1', dir]).catch(() => null)
+      for (const name of (listed?.stdout ?? '').split('\n')) {
         const id = boardIdIn(dirs, `${dir}/${name}`)
         if (id) await this.load(dir, id)
       }

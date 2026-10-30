@@ -1,6 +1,16 @@
 import { div, svg } from 'gpui-kit'
 import { closeOverlay, props, setShared, shared } from 'herdr'
-import { ageText, markAllRead, markRead, orderPins, pinContext, popupKeyAction } from './model.js'
+import {
+  PINS_ALL_ROW_TEXT,
+  ageText,
+  allPinsHeight,
+  markAllRead,
+  markRead,
+  orderPins,
+  pinContext,
+  popupKeyAction,
+  stillOpen,
+} from './model.js'
 import { openPins } from './pinsctl.js'
 import { color, font, icon, pinsLook, row } from './tokens.js'
 
@@ -20,7 +30,7 @@ const base = () =>
     .border_color(color.barLine)
     .text_size(font.size)
 
-const ghost = (id, label, onClick) =>
+const ghostBase = (id, label) =>
   div()
     .id(id)
     .flex_none()
@@ -30,8 +40,9 @@ const ghost = (id, label, onClick) =>
     .rounded(6)
     .text_color(color.dim)
     .hover(s => s.text_color(color.text))
-    .on_click(onClick)
     .child(label)
+
+const ghost = (id, label, onClick) => ghostBase(id, label).on_click(onClick)
 
 /** The segments: one hit area per pin; the bar inside shows current, unread or read. */
 function segmentsRow(segments, ui) {
@@ -166,24 +177,13 @@ const button = (id, label, onClick) =>
     .py(4)
     .rounded(6)
     .border(1)
-    .border_color('#333333')
+    .border_color(pinsLook.buttonBorder)
     .text_color(color.text)
-    .hover(s => s.bg('#1E1E1E'))
+    .hover(s => s.bg(pinsLook.buttonHover))
     .on_mouse_down('left', onClick)
     .child(label)
 
-const ghostDown = (id, label, onClick) =>
-  div()
-    .id(id)
-    .flex_none()
-    .cursor_pointer()
-    .px(8)
-    .py(3)
-    .rounded(6)
-    .text_color(color.dim)
-    .hover(s => s.text_color(color.text))
-    .on_mouse_down('left', onClick)
-    .child(label)
+const ghostDown = (id, label, onClick) => ghostBase(id, label).on_mouse_down('left', onClick)
 
 /** Done from here: a request the pin bar's copy turns into its own queued action (so the same 5 s undo applies). */
 function requestDone(pin, session) {
@@ -191,23 +191,30 @@ function requestDone(pin, session) {
   setShared('hrd.doneReq', [...(Array.isArray(asked) ? asked : []), { session, key: pin.key }])
 }
 
+/** This overlay closes itself: main.js's close() then hands the keyboard back. */
+export function closePinsOverlay() {
+  // A replaced overlay can still fire while it closes: the id in shared is then the new one's.
+  if (shared('hrd.pins') === props()?.overlay) setShared('hrd.pins', null)
+  try {
+    closeOverlay(props()?.overlay)
+  } catch {} // the app's own Esc may have closed it first
+}
+
 /**
  * The overlay's view. Its root has a fixed size (props() from pinsctl.js): a `size_full` root in a popup draws nothing.
- * The pins come in props().list, as they were when it opened; only the read marks are read live (shared "hrd.read").
+ * The pins come in props().list, as they were when it opened; the read marks are read live (shared "hrd.read"), and `board`,
+ * its board once read, takes out any pin resolved since. The popover's root shrinks as its pins go.
  *   gone    a Set of pin ids Done here, hidden at once (an undo shows them again on reopening)
  *   ctl     makePopupState (popup.js): the handle that takes the keyboard, so Esc reaches this overlay and not the terminal,
  *           and `leaving`, set when a row chooses where the keyboard goes; main.js's close() hands it back otherwise
  */
-export function pinsView(gone, ctl) {
+export function pinsView(gone, ctl, board = null) {
   const p = props() ?? {}
   const read = shared('hrd.read') ?? {}
-  const list = (p.list ?? []).filter(x => !gone.has(x.id)).map(x => ({ ...x, unread: read[x.id] !== true }))
-  const close = () => {
-    setShared('hrd.pins', null)
-    try {
-      closeOverlay(p.overlay)
-    } catch {} // the app's own Esc may have closed it first
-  }
+  const list = stillOpen(p.list ?? [], board)
+    .filter(x => !gone.has(x.id))
+    .map(x => ({ ...x, unread: read[x.id] !== true }))
+  const close = closePinsOverlay
   // The next overlay takes the keyboard, and hands it back to the terminal this one would have.
   const openNext = (view, opts) => {
     ctl.leaving = true
@@ -220,7 +227,7 @@ export function pinsView(gone, ctl) {
       if (popupKeyAction(e.keystroke ?? e.key, e.is_held) === 'close') close()
     })
     .w(Number(p.width))
-    .h(Number(p.height))
+    .h(p.view === 'panel' ? Number(p.height) : Math.min(Number(p.height), allPinsHeight(list.length)))
     .flex_none()
     .flex()
     .flex_col()
@@ -325,6 +332,7 @@ export function pinsView(gone, ctl) {
               .id(`pin-${pin.key}`)
               .flex_none()
               .h(122)
+              .line_height(`${font.line}px`)
               .pt(10)
               .px(10)
               .pb(8)
@@ -372,8 +380,10 @@ export function pinsView(gone, ctl) {
               )
               .child(
                 div()
-                  .flex_1()
-                  .min_h_0()
+                  .id(`pin-summary-${pin.key}`)
+                  // Whole lines only: exactly three, so the third is never cut through.
+                  .h(PINS_ALL_ROW_TEXT * font.line)
+                  .flex_none()
                   .overflow_hidden()
                   .text_color(color.soft)
                   .child(pin.summary || pin.text),
