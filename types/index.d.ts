@@ -21,6 +21,9 @@ export type Job = {
   tail?: 'early' | 'blocked'
   // its tab was closed (stop, or closeIdle once it sat idle after its report)
   closed?: boolean
+  // a stop was asked (set before the drop and the tab's close, and kept if the tab fails to close): nothing
+  // more is reported, noticed or sent for it
+  stopped?: boolean
   // a hash of the RESULT.md without its token line that the coordinator was told about (see noticeTokenless)
   noticed?: string
   // the brief's first line: the sidebar's task title (TASK.md changes with follow-ups)

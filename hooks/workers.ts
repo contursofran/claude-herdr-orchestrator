@@ -34,7 +34,7 @@ import {
   watch,
   workerArgv,
 } from './hc'
-import { answered as settledQuestions, ask, openQuestions } from './owner'
+import { answered as settledQuestions, ask, openQuestions, withdraw } from './owner'
 import { dropHeld, post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
 import { cmd, session } from './session'
@@ -114,6 +114,7 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
     tail: undefined,
     reportStatus: undefined,
     reportFile: undefined,
+    noticed: undefined,
   }
   await saveJob($, next)
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
@@ -220,7 +221,7 @@ const hashOf = (text: string) => {
 // A reported worker whose RESULT.md was rewritten without this prompt's token line: it is not a report,
 // but the text it holds has not been told to the coordinator yet. Returns the hash of that text.
 export async function tokenless($: EngineInterface, job: Job) {
-  if (job.status !== 'reported' || job.closed || !job.token) return undefined
+  if (job.status !== 'reported' || job.closed || job.stopped || !job.token) return undefined
   const path = `${job.dir}/RESULT.md`
   if (!(await $.fs.exists(path)) || (await reported($, job))) return undefined
   const hash = hashOf(await $.fs.read(path))
@@ -232,7 +233,7 @@ async function noticeTokenless($: EngineInterface, job: Job) {
   const hash = await tokenless($, job)
   if (!hash) return
   const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && !j.closed ? { ...j, noticed: hash } : undefined,
+    j.token === job.token && j.status === 'reported' && !j.closed && !j.stopped ? { ...j, noticed: hash } : undefined,
   )
   if (!after) return
   await post(
@@ -333,6 +334,7 @@ async function blockedAfterReport($: EngineInterface, job: Job) {
     $,
     `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\nAfter its report, the worker waits at an approval or question in its herdr tab. Ask the person to answer it there; the message tool can answer a question, but not a permission request. Its report above still stands; a new RESULT.md from this turn is delivered as a further report.\n</herdr-agent>`,
     true,
+    { worker: job.name },
   )
 }
 
@@ -343,7 +345,7 @@ async function endTail($: EngineInterface, job: Job) {
     j.token === job.token && j.status === 'reported' && j.tail ? { ...j, tail: undefined, queued: [] } : undefined,
   )
   const queued = before?.queued ?? []
-  if (after && queued.length > 0 && !after.closed) await prompt($, { ...after, queued: [] }, heldPrompt(queued))
+  if (after && queued.length > 0 && !after.closed && !after.stopped) await prompt($, { ...after, queued: [] }, heldPrompt(queued))
 }
 
 // Every TICK_MS (register): a running worker whose RESULT.md carries its token is delivered
@@ -406,7 +408,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
       const early = agents === undefined || a?.status === 'working'
       if (current.status === 'reported') {
         if (current.tail) return await sweepTail($, current, agents, a, early)
-        if (current.closed) return
+        if (current.closed || current.stopped) return
         if (await fresh($, current)) return await deliver($, current, 'done', QUIET_MS, undefined, { early })
         if (await tokenless($, current)) return await noticeTokenless($, current)
         if (agents === undefined) return
@@ -465,7 +467,7 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
 // A reported job, tab still open, whose worker went on after its report: it has a WAIT.json
 // (or a wait it was running), or a RESULT.md not yet delivered.
 export async function carriesOn($: EngineInterface, job: Job) {
-  if (job.status !== 'reported' || job.closed) return false
+  if (job.status !== 'reported' || job.closed || job.stopped) return false
   return !!job.wait || (await $.fs.exists(`${job.dir}/WAIT.json`)) || (await fresh($, job))
 }
 
@@ -491,7 +493,7 @@ async function goneWaiting($: EngineInterface, job: Job) {
   if (n < GONE_MISSES) return
   misses.delete(job.name)
   const { after } = await updateJob($, job.name, j =>
-    j.token === job.token && j.status === 'reported' && !j.closed ? { ...j, closed: true, wait: undefined } : undefined,
+    j.token === job.token && j.status === 'reported' && !j.closed && !j.stopped ? { ...j, closed: true, wait: undefined } : undefined,
   )
   if (!after) return
   await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
@@ -502,6 +504,7 @@ async function goneWaiting($: EngineInterface, job: Job) {
     $,
     `<herdr-agent name="${job.name}" profile="${job.profile}" status="gone">\nIts tab is gone while ${job.dir}/WAIT.json was still waiting, so its work may be unfinished and nothing will wake it. Check its branch or PR, and start a new worker if needed.\n</herdr-agent>`,
     true,
+    { worker: job.name },
   )
 }
 
@@ -517,7 +520,7 @@ async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | unde
     if (n >= GONE_MISSES) {
       misses.delete(job.name)
       const { before, after } = await updateJob($, job.name, j =>
-        j.token === job.token && j.status === 'reported' && j.tail ? { ...j, tail: undefined, queued: [] } : undefined,
+        j.token === job.token && j.status === 'reported' && j.tail && !j.stopped ? { ...j, tail: undefined, queued: [] } : undefined,
       )
       const queued = before?.queued ?? []
       if (after && queued.length > 0)
@@ -525,6 +528,7 @@ async function sweepTail($: EngineInterface, job: Job, agents: HcListed[] | unde
           $,
           `<herdr-agent name="${job.name}" profile="${job.profile}" status="gone">\n[${queued.length} message(s) held for it were not sent, as its tab is gone: ${queued.join(', ')}.]\n</herdr-agent>`,
           true,
+          { worker: job.name },
         )
     }
     return
@@ -646,7 +650,11 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
 const stoppedSince = (j: Job, was: Job) => (was.status === 'running' ? j.status !== 'running' : j.endedAt !== was.endedAt)
 async function stopped($: EngineInterface, was: Job) {
   const j = (await jobs($))[was.name]
-  return !j || j.token !== was.token || stoppedSince(j, was)
+  return !j || j.token !== was.token || !!j.stopped || stoppedSince(j, was)
+}
+// Whether a stop has been asked for the worker (it stays set, whether or not its tab closed).
+async function stopAsked($: EngineInterface, name: string) {
+  return !!(await jobs($))[name]?.stopped
 }
 
 // `why` says why a worker stopped when hc's status alone doesn't (a prompt that never arrived).
@@ -660,7 +668,7 @@ export async function deliver(
   opts: { early?: boolean } = {},
 ) {
   const current = (await jobs($))[job.name]
-  if (!current) return
+  if (!current || current.stopped) return
   // A reported job still watched may deliver again, but only a report it has not delivered.
   if (current.status !== 'running' && !((current.tail || !current.closed) && (await fresh($, current)))) return
   // A caller holding an earlier prompt's token does nothing: that prompt has been replaced.
@@ -722,7 +730,21 @@ export async function deliver(
         (await settledQuestions($)).some(d => d.from === job.name && d.question === question && d.token === current.token)
       )
         continue
+      // The same worker's and report's question, still unanswered but changed (other options): the new pin replaces it.
+      const replaced = open
+        ? []
+        : (await openQuestions($)).filter(
+            d =>
+              d.from === job.name &&
+              d.token === current.token &&
+              !!current.token &&
+              (d.question === question || (!!titled && d.title === titled[1])),
+          )
       const id = open?.id ?? (await ask($, job.name, question, options, recommended, titled?.[1], true, current.token))
+      await withdraw(
+        $,
+        replaced.map(d => d.id),
+      )
       ids.push(`D${id}`)
       const shown = options.map((o, i) => (i === recommended ? `${o} (recommended)` : o))
       pinnedLines.push(`D${id} ${titled ? `[${titled[1]}] ` : ''}${question}${shown.length ? ` | ${shown.join(' | ')}` : ''}`)
@@ -756,7 +778,7 @@ export async function deliver(
   // Patch the job as it is now: a message queued or a stop during the awaits above must stay.
   const endedAt = await $.clock.now()
   const { before, after } = await updateJob($, job.name, j =>
-    j.token === current.token && !stoppedSince(j, current)
+    j.token === current.token && !j.stopped && !stoppedSince(j, current)
       ? {
           ...prs.reduce((x, n) => withPr(x, n), j),
           status: 'reported',
@@ -790,6 +812,8 @@ export async function deliver(
     }
   }
   // The header's result and PRs, when it has them (see report.ts).
+  // The prompt above may have waited for minutes: a stop meanwhile sends nothing.
+  if (await stopAsked($, job.name)) return
   const attrs = `${header?.status ? ` result="${header.status}"` : ''}${header?.prs.length ? ` pr="${header.prs.join(',')}"` : ''}${header?.verdict ? ` verdict="${header.verdict}"` : ''}`
   await post(
     $,
@@ -998,7 +1022,9 @@ async function startFailed($: EngineInterface, job: Job, err: unknown) {
     `The worker did not start: ${reason}.${reportFile ? ` The screen of its tab is in ${reportFile}.` : ''}${current.address ? ' Its tab was closed.' : ''}`,
     ...(held.length > 0 ? [`[${held.length} message(s) held for it were not sent: ${held.join(', ')}.]`] : []),
   ].join('\n')
-  await post($, `<herdr-agent name="${job.name}" profile="${job.profile}" status="failed">\n${body}\n</herdr-agent>`, true)
+  await post($, `<herdr-agent name="${job.name}" profile="${job.profile}" status="failed">\n${body}\n</herdr-agent>`, true, {
+    worker: job.name,
+  })
   $.ui.toast(`herdr worker ${job.name}: failed to start`)
   void refresh($)
 }
@@ -1006,7 +1032,7 @@ async function startFailed($: EngineInterface, job: Job, err: unknown) {
 export async function messageWorker($: EngineInterface, e: { worker: string; text: string }) {
   const job = (await jobs($))[e.worker]
   if (!job) return { deny: `no worker ${e.worker}` }
-  if (job.closed)
+  if (job.closed || job.stopped)
     return {
       deny: `${e.worker}'s tab is closed. Spawn a fresh worker in ${job.cwd} with what it needs; its reports are in ${job.dir}.`,
     }
@@ -1126,7 +1152,9 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
   if (job.status === 'starting') {
     const endedAt = await $.clock.now()
     const { after } = await updateJob($, job.name, j =>
-      j.status === 'starting' ? { ...j, status: 'reported', reportStatus: 'stopped', endedAt, closed: true, tail: undefined } : undefined,
+      j.status === 'starting'
+        ? { ...j, status: 'reported', reportStatus: 'stopped', endedAt, closed: true, stopped: true, tail: undefined }
+        : undefined,
     )
     if (after) {
       if (after.address) {
@@ -1146,18 +1174,25 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
     endedAt: await $.clock.now(),
     tail: undefined,
     wait: undefined,
+    // Set first and kept, whether or not the tab closes: nothing is reported, noticed or sent for it after this.
+    stopped: true,
   })
   // A stopped worker is never woken: its wait ends here, even if its tab fails to close.
   await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
-  // Nothing held for the coordinator about it is sent after the stop.
-  await dropHeld($, job.name)
+  // Nothing held for the coordinator about it is sent after the stop; a held report is named, as the coordinator never saw it.
+  const dropped = (await dropHeld($, job.name)).filter(i => i.report)
+  const lost = dropped.length
+    ? ` ${dropped.length} report(s) of its still held for you were dropped, never sent: ${dropped
+        .map(i => (i.token ? `${job.dir}/RESULT-${i.token}.md` : 'one without a RESULT file'))
+        .join(', ')}.`
+    : ''
   try {
     await closeTerminal($, job.name)
   } catch (err) {
-    return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}` }
+    return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}.${lost}` }
   }
   await patchJob($, job.name, { closed: true })
-  return { result: `Stopped ${e.worker} and closed its tab.${await belowTarget($)}` }
+  return { result: `Stopped ${e.worker} and closed its tab.${lost}${await belowTarget($)}` }
 }
 
 // A reported worker keeps its tab, and its CLI, for follow-ups, so finished workers

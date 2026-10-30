@@ -158,6 +158,13 @@ export async function askOwner($: EngineInterface, e: AskArgs) {
   return { result: `Pinned as D${id} and notified the person. Call decided with "D${id}" once they answer.` }
 }
 
+// Takes down open questions without settling them (not asked, not answered): a worker's rewritten report
+// pins its changed question anew, and the old pin must not stay beside it.
+export async function withdraw($: EngineInterface, ids: number[]) {
+  if (!ids.length) return
+  await update($, decisions, list => (list.some(d => ids.includes(d.id)) ? list.filter(d => !ids.includes(d.id)) : list))
+}
+
 export type DecidedArgs = { ids: string[]; answer: string; by: string }
 
 export async function settle($: EngineInterface, e: DecidedArgs) {
