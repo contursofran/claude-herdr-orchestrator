@@ -94,7 +94,7 @@ export async function choose($: EngineInterface, d: Decision, answer: string) {
       `<herdr-decision id="D${d.id}" from="${d.from}">`,
       `Question: ${d.question}`,
       `The owner chose: ${answer}`,
-      'It is already unpinned. Act on it now (tell the worker with message, record it in the state file).',
+      'It is already unpinned. Act on it now (tell the worker with message).',
       '</herdr-decision>',
     ].join('\n'),
   )
@@ -124,7 +124,7 @@ export async function tick($: EngineInterface, t: Todo) {
     [
       `<herdr-owner-done id="T${t.id}" from="${t.from.replace(/"/g, "'")}">`,
       `The owner ticked off: ${t.text}`,
-      'It is already unpinned. Carry on from it (check it, tell the worker with message, record it in the state file).',
+      'It is already unpinned. Carry on from it (check it, tell the worker with message).',
       '</herdr-owner-done>',
     ].join('\n'),
   )

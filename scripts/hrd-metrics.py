@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Baseline metrics for herdr-agents: how a coordinator and its workers spend time and tokens.
 
-Usage: hrd-metrics.py [--days N] [--since "YYYY-MM-DD HH:MM"] [--reports DIR] [--json]   (default 7 days)
+Usage: hrd-metrics.py [--days N] [--since "YYYY-MM-DD HH:MM"] [--reports DIR] [--repo [+]OWNER/NAME] [--json]   (default 7 days)
 
 Reads only what Claude Code and the mod already write:
   - transcripts: $CLAUDE_CONFIG_DIR/projects/*/*.jsonl (default ~/.claude/projects)
@@ -47,6 +47,21 @@ branch% is the share of successful spawns that passed `branch`. start_failed cou
 prompts that start with "The worker did not start".
 Spawn time is the duration of each spawn call that succeeded; a denied one ("Wrapping up") is left out.
 Subagent transcripts (<session>/subagents/*.jsonl) are not top-level files and are not counted.
+
+GitHub section, through `gh`, per repo:
+  repos     the GitHub `origin` remotes of the working folders of every session in the window. --repo OWNER/NAME
+            (repeatable) reports only the repos named and reads no folders, even when mixed with +; --repo +OWNER/NAME
+            alone adds one to the repos found. A folder that is gone, such as a pruned worktree, gives no repo and is
+            counted on one line.
+  window    GitHub filters by date: runs and PRs count from the UTC date the window starts on.
+  CI        per workflow: runs, failures (failure or timed_out), median and worst queue wait (created to started)
+            and run time (started to last update). Runs that never started a job (startup failure, cancelled
+            while queued) are left out and counted on one "ignored" line. Skipped and unfinished runs are left out.
+  PR flow   merged PRs (newest 40): open to merged, fix commits (committed after opening) and failed CI runs on
+            the head branch. A branch that is the base of a merged PR counts as a base, and its runs do not count.
+            Limit: a stacked PR's parent branch is a base too, so its failures are not counted.
+A repo `gh` cannot read or answering in an unexpected shape, or with no runs and no merged PRs, shows one line. pi sessions are not analysed here:
+their count is printed, and agent-metrics.py reads them.
 """
 
 import argparse
@@ -56,8 +71,10 @@ import json
 import os
 import re
 import statistics
+import subprocess
 import time
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 # List prices in USD per million tokens, from pi's model catalogue (~/.pi/agent/models-store.json);
 # not checked against Anthropic's price page. A 1-hour cache write costs 2x input (not in that file).
@@ -110,6 +127,11 @@ RESULT_WRITE = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*[\"']?([^\s\"'<>|;&]*?)RES
 RESULT_OUT = re.compile(r">>?\s*\S*RESULT(?:-\w+)?\.md")  # a segment that writes a RESULT file is not a read
 SKIP_LINES = (b'{"type":"api-request',)  # the big system-prompt dumps; no metric reads them
 DEFAULT_DAYS = 7
+REPO_ARG = re.compile(r"\+?[\w.-]+/[\w.-]+")
+GITHUB_REMOTE = re.compile(r"(?:^|@|//)github\.com[:/]+([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+PR_LIMIT = 40  # newest merged PRs per repo: GitHub caps the commits query size
+RUNS_CAP = 1000  # GitHub returns no more runs than this for a filtered query
+MALFORMED = (ValueError, KeyError, TypeError, AttributeError)  # what a gh reply of the wrong shape raises
 # What woke the coordinator. `report`, `pipeline` and `bgtask` prompts are mechanical: no human asked for them.
 KINDS = ("report", "pipeline", "bgtask", "panel", "compact", "owner")
 MECH = ("report", "pipeline", "bgtask")
@@ -511,13 +533,16 @@ def scan(path, since):
     return s
 
 
-def collect(root, since, reports=None):
-    """Scans every transcript written in the window; returns (coordinator sessions, worker sessions), resolved."""
+def collect(root, since, reports=None, cwds=None):
+    """Scans every transcript written in the window; returns (coordinator sessions, worker sessions), resolved.
+    The working folder of every session, plain ones too, is added to the set `cwds` when one is given."""
     scanned = [
         scan(path, since)
         for path in sorted(glob.glob(os.path.join(root, "*", "*.jsonl")))
         if os.path.getmtime(path) >= since
     ]
+    if cwds is not None:
+        cwds.update(s.cwd for s in scanned if s.cwd)
     coords = [s for s in scanned if s.reports]
     workers = [s for s in scanned if not s.reports and s.worker]
     writes = write_index(scanned)  # a worker's RESULT.md write can only be found once every transcript is read
@@ -835,6 +860,233 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
     print(f"   transcripts from {tilde(root)}")
 
 
+def repo_arg(text):
+    """--repo's value: OWNER/NAME, or +OWNER/NAME to add it to the repos found."""
+    if not REPO_ARG.fullmatch(text):
+        raise argparse.ArgumentTypeError(f"expected OWNER/NAME or +OWNER/NAME, got {text!r}")
+    return text
+
+
+def github_repo(url):
+    """OWNER/NAME of a GitHub remote URL, or None for any other host."""
+    m = GITHUB_REMOTE.search(url.strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def folder_repo(cwd):
+    """(repo, None), or (None, why) when the working folder gives no GitHub repo."""
+    if not os.path.isdir(cwd):
+        return None, "gone"
+    try:
+        p = subprocess.run(["git", "-C", cwd, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None, "no GitHub remote"
+    repo = github_repo(p.stdout) if p.returncode == 0 else None
+    return (repo, None) if repo else (None, "no GitHub remote")
+
+
+def find_repos(cwds):
+    """The sorted GitHub repos of the working folders, and how many folders gave none, by reason."""
+    repos, skipped = {}, collections.Counter()
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for repo, why in ex.map(folder_repo, sorted(cwds)):
+            if repo:
+                repos.setdefault(repo.lower(), repo)
+            else:
+                skipped[why] += 1
+    return [repos[k] for k in sorted(repos)], dict(skipped)
+
+
+def choose_repos(asked, cwds):
+    """The repos to report from --repo's values and the working folders, and the folders that gave none."""
+    only = [r for r in asked if not r.startswith("+")]
+    added = [r[1:] for r in asked if r.startswith("+")]
+    found, skipped = ([], {}) if only else find_repos(cwds)
+    repos = {}
+    for repo in only + found + added:
+        repos.setdefault(repo.lower(), repo)
+    return [repos[k] for k in sorted(repos)], skipped
+
+
+def gh(*args, timeout=120):
+    """Runs gh; returns (stdout, None), or (None, why) when it failed."""
+    try:
+        p = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None, "timed out"
+    except OSError as e:
+        return None, str(e)
+    if p.returncode != 0:
+        lines = p.stderr.strip().splitlines()
+        return None, lines[0][:200] if lines else f"gh exited with {p.returncode}"
+    return p.stdout, None
+
+
+def job_count(repo, run_id):
+    """How many jobs a run has, or None if GitHub cannot tell (then it is treated as a real run)."""
+    out, _ = gh("api", f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=1", "--jq", ".total_count", timeout=60)
+    try:
+        return int(out.strip())
+    except (AttributeError, ValueError):
+        return None
+
+
+def read_runs(repo, day):
+    """The finished runs from `day` on (skipped ones left out); returns (runs, whether GitHub's cap was hit, None), or
+    (None, False, why). The cap counts every row GitHub returned, the ones left out too."""
+    out, why = gh("api", "--paginate", f"repos/{repo}/actions/runs?per_page=100&created=>={day}", "--jq",
+                  ".workflow_runs[]|[.name,.conclusion,.created_at,.run_started_at,.updated_at,(.id|tostring),.head_branch]|@tsv")
+    if why:
+        return None, False, why
+    runs = []
+    lines = out.splitlines()
+    for line in lines:
+        name, concl, created, started, updated, rid, branch = (line.split("\t") + [""] * 7)[:7]
+        if started and concl not in ("skipped", ""):
+            runs.append({"id": rid, "name": name, "concl": concl, "created": created, "started": started,
+                         "updated": updated, "branch": branch})
+    return runs, len(lines) >= RUNS_CAP, None
+
+
+def jobless_runs(repo, runs):
+    """Ids of the runs that never started a job. Only failed-looking ones are probed: a few calls, not one per run."""
+    jobless = {r["id"] for r in runs if r["concl"] == "startup_failure"}
+    suspect = [r["id"] for r in runs if r["concl"] in ("failure", "cancelled", "timed_out") and r["id"] not in jobless]
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        jobless.update(rid for rid, n in zip(suspect, ex.map(lambda rid: job_count(repo, rid), suspect)) if n == 0)
+    return jobless
+
+
+def workflow_rows(runs, jobless):
+    """One row per workflow with at least one real run, most run time first."""
+    wf = collections.defaultdict(lambda: {"failures": 0, "queue": [], "run": []})
+    for r in runs:
+        if r["id"] in jobless:
+            continue
+        w = wf[r["name"]]
+        w["failures"] += r["concl"] in ("failure", "timed_out")
+        w["queue"].append(epoch(r["started"]) - epoch(r["created"]))
+        w["run"].append(epoch(r["updated"]) - epoch(r["started"]))
+    rows = [{"name": name, "runs": len(w["queue"]), "failures": w["failures"],
+             "queue_median": statistics.median(w["queue"]), "queue_max": max(w["queue"]),
+             "run_median": statistics.median(w["run"]), "run_total": sum(w["run"])} for name, w in wf.items()]
+    return sorted(rows, key=lambda w: -w["run_total"])
+
+
+def pr_flow(prs, runs, jobless):
+    """Open to merged, fix commits and failed CI runs over the merged PRs."""
+    bases = {p.get("baseRefName") for p in prs}
+    failed = collections.Counter(r["branch"] for r in runs
+                                 if r["concl"] == "failure" and r["id"] not in jobless and r["branch"] not in bases)
+    rows = []
+    for p in prs:
+        opened = epoch(p["createdAt"])
+        rows.append({"number": int(p["number"]), "title": str(p["title"]),
+                     "author": str((p.get("author") or {}).get("login") or "?"),
+                     "hours": (epoch(p["mergedAt"]) - opened) / 3600,
+                     "fix_commits": sum(1 for c in p.get("commits", []) if c.get("committedDate") and epoch(c["committedDate"]) > opened),
+                     "failed_ci": failed[p["headRefName"]]})
+    rows.sort(key=lambda r: -(r["hours"] + r["fix_commits"] * 2 + r["failed_ci"] * 2))
+    hours = [r["hours"] for r in rows]
+    return {"merged": len(rows), "capped": len(rows) >= PR_LIMIT,
+            "hours_median": statistics.median(hours) if rows else None, "hours_max": max(hours) if rows else None,
+            "fix_commits_median": statistics.median(r["fix_commits"] for r in rows) if rows else None,
+            "failed_ci_median": statistics.median(r["failed_ci"] for r in rows) if rows else None,
+            "slowest": rows[:6]}
+
+
+def repo_flow(repo, day):
+    """CI and PR flow of one repo. A failure ends up in `error` or `prs_error`: it never stops the report."""
+    flow = {"repo": repo}
+    runs, capped, why = read_runs(repo, day)
+    if why:
+        flow["error"] = why
+        return flow
+    jobless = jobless_runs(repo, runs)
+    ignored = collections.Counter(r["name"] for r in runs if r["id"] in jobless)
+    try:
+        flow.update(workflows=workflow_rows(runs, jobless), ignored=dict(ignored), runs_capped=capped)
+    except MALFORMED as e:
+        flow["error"] = f"unexpected reply: {e}"
+        return flow
+    out, why = gh("pr", "list", "-R", repo, "--state", "merged", "--limit", str(PR_LIMIT), "--search", f"merged:>={day}",
+                  "--json", "number,title,author,createdAt,mergedAt,headRefName,baseRefName,commits", timeout=180)
+    if not why:
+        try:
+            prs = json.loads(out)
+            if not isinstance(prs, list):
+                raise TypeError("not a list")
+            flow["prs"] = pr_flow(prs, runs, jobless)
+        except MALFORMED as e:
+            why = f"unexpected reply: {e}"
+    if why:
+        flow["prs_error"] = why
+    return flow
+
+
+def github_flows(repos, since):
+    day = datetime.fromtimestamp(since, timezone.utc).strftime("%Y-%m-%d")
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        return day, list(ex.map(lambda repo: repo_flow(repo, day), repos))
+
+
+def pi_session_count(since):
+    """pi sessions written in the window, by file time; the old script analyses them."""
+    paths = glob.glob(os.path.expanduser("~/.pi/agent/sessions/*/*.jsonl"))
+    return sum(1 for path in paths if os.path.getmtime(path) >= since)
+
+
+def fmt_m(secs):
+    return f"{secs / 60:5.1f}m"
+
+
+def print_flow(flow):
+    repo = flow["repo"]
+    if "error" in flow:
+        print(f"  {repo}: gh cannot read it: {flow['error']}")
+        return
+    wf, prs = flow["workflows"], flow.get("prs")
+    if not wf and not flow["ignored"] and prs and not prs["merged"]:
+        print(f"  {repo}: no CI runs and no merged PRs")
+        return
+    print(f"  {repo}")
+    if flow["ignored"]:
+        detail = ", ".join(f"{name} {n}" for name, n in sorted(flow["ignored"].items(), key=lambda kv: -kv[1]))
+        print(f"    ignored {sum(flow['ignored'].values())} jobless runs (no job ever started): {detail}")
+    if not wf and not flow["ignored"]:
+        print("    no CI runs")
+    if flow["runs_capped"]:
+        print(f"    GitHub returns at most {RUNS_CAP} runs for a filter: the counts may be short")
+    for w in wf:
+        print(f"    {w['name'][:28]:28s} {w['runs']:4d} runs {w['failures']:3d} fail  queue med {fmt_m(w['queue_median'])} "
+              f"max {fmt_m(w['queue_max'])}  run med {fmt_m(w['run_median'])} total {w['run_total'] / 3600:5.1f}h")
+    if "prs_error" in flow:
+        print(f"    PRs: gh cannot read them: {flow['prs_error']}")
+    elif prs["merged"]:
+        newest = f" (newest {PR_LIMIT} only)" if prs["capped"] else ""
+        print(f"    PRs merged: {prs['merged']}{newest}  open→merged median {prs['hours_median']:.1f}h, max {prs['hours_max']:.1f}h  "
+              f"fix commits median {prs['fix_commits_median']:.0f}  failed CI runs median {prs['failed_ci_median']:.0f}")
+        print("    slowest / most reworked:")
+        for r in prs["slowest"]:
+            print(f"      #{r['number']:<5} {r['hours']:5.1f}h  {r['fix_commits']:2d} fix commits  {r['failed_ci']:2d} failed CI  "
+                  f"{r['author'][:14]:14s} {r['title'][:60]}")
+    else:
+        print("    PRs merged: 0")
+
+
+def print_github(day, flows, skipped, pi_sessions):
+    print(f"== GitHub, {len(flows)} repos, from {day} UTC (queue = created → started; run = started → finished)")
+    if not flows:
+        print("  no repos: no session folder in the window has a GitHub remote; --repo OWNER/NAME names one")
+    for flow in flows:
+        print_flow(flow)
+    if skipped:
+        print(f"  session folders with no repo: {missing_text(skipped)}")
+    if pi_sessions:
+        print(f"== pi: {pi_sessions} sessions in the window, not counted here; agent-metrics.py reads them")
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser(description="Coordinator and worker time and tokens from Claude Code transcripts.")
     ap.add_argument("--days", type=int, help=f"count the last N days (default {DEFAULT_DAYS} when --since is not given)")
@@ -842,6 +1094,9 @@ def main():
                     help="count from this local time on; with --days too, the later of the two starts the window")
     ap.add_argument("--reports", default="~/.herdr-agents/reports", metavar="DIR",
                     help="the mod's report archive, read for worker folders that were removed (default %(default)s)")
+    ap.add_argument("--repo", action="append", default=[], type=repo_arg, metavar="[+]OWNER/NAME",
+                    help="report only this repo; a plain OWNER/NAME turns off finding repos from the sessions' folders, even when "
+                         "mixed with +. +OWNER/NAME alone adds it to the repos found (repeatable)")
     ap.add_argument("--json", action="store_true", help="print JSON instead of the tables")
     args = ap.parse_args()
     days = args.days
@@ -851,12 +1106,16 @@ def main():
     label = f"last {days} days" if args.since is None else f"since {datetime.fromtimestamp(since):%Y-%m-%d %H:%M}"
     root = os.path.join(os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"), "projects")
 
-    coords, workers = collect(root, since, os.path.expanduser(args.reports))
+    cwds = set()
+    coords, workers = collect(root, since, os.path.expanduser(args.reports), cwds)
     coords.sort(key=lambda s: s.start)
     rows = [coordinator_row(s) for s in coords]
     tot = totals(rows, coords)
     by_model = worker_models(workers)
     unpriced = {m for s in coords + workers for m in s.unpriced}
+    repos, skipped = choose_repos(args.repo, cwds)
+    day, flows = github_flows(repos, since)
+    pi_sessions = pi_session_count(since)
 
     if args.json:
         out = {
@@ -866,9 +1125,12 @@ def main():
             "totals": tot,
             "workers": {"sessions": len(workers), "by_model": by_model},
             "unpriced": sorted(unpriced),
+            "github": {"from": day, "repos": flows, "folders_without_repo": skipped},
+            "pi_sessions": pi_sessions,
         }
         print(json.dumps(out, indent=2))
         return
+    print_github(day, flows, skipped, pi_sessions)
     print_text(label, rows, tot, workers, by_model, unpriced, root)
 
 

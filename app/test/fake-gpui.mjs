@@ -43,9 +43,20 @@ function makeElement() {
 }
 
 /** What the fake `herdr` module reads and records; a test sets these before it renders. */
-export const app = { props: null, store: {}, opened: [], closed: [], viewport: null, focused: null, ran: [], settings: { zoom: 1 } }
+export const app = {
+  files: {},
+  props: null,
+  store: {},
+  opened: [],
+  closed: [],
+  viewport: null,
+  focused: null,
+  ran: [],
+  settings: { zoom: 1 },
+}
 
 globalThis.__fakeGpui = {
+  appHome: () => '/app-home',
   div: makeElement,
   svg: makeElement,
   View: class {},
@@ -56,6 +67,12 @@ globalThis.__fakeGpui = {
     return `o${app.opened.length}`
   },
   props: () => app.props,
+  readTextFile: async path => {
+    const text = app.files[path]
+    if (text instanceof Error) throw text
+    return text ?? null
+  },
+  theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
   run: (name, args) => app.ran.push([name, args]),
   settings: () => app.settings ?? {},
   setShared: (k, v) => {
@@ -68,6 +85,7 @@ globalThis.__fakeGpui = {
 const names = {
   'gpui-kit': ['div', 'svg', 'View'],
   herdr: [
+    'appHome',
     'closeOverlay',
     'exec',
     'focused',
@@ -84,6 +102,7 @@ const names = {
     'setShared',
     'shared',
     'terminals',
+    'theme',
     'watchFolder',
     'writeTextFile',
   ],
