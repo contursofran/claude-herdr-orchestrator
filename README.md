@@ -70,6 +70,8 @@ Off by default. When agents do the building, you see a lot of new ideas go by wi
 
 `/hrd-config` lays the settings out above the prompt, like Claude Code's `/config`: for all folders or just this one.
 
+In the Herdr app, the same settings are in a dialog: the sliders button in the strip, or ctrl+cmd+, in the `coordinator` layout. Both edit the same files.
+
 ![/hrd-config: the settings listed above the prompt](docs/images/config.png)
 
 ### The board for other apps
