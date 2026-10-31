@@ -2,7 +2,21 @@
 
 Draw checks catch what `herdr-app check` and the tests can't, but a normal second Herdr window comes to the front and takes the keyboard. `scripts/herdr-hidden-window.sh` starts a window that draws real frames while the front app and the keyboard stay where they are and nothing shows on screen.
 
-macOS on Apple Silicon only. It needs Xcode's command line tools (`clang`), Herdr in `/Applications` and `herdr-core` on your PATH or in `~/.local/bin`, which `start` copies.
+macOS on Apple Silicon only. It needs Xcode's command line tools (`clang`), herdr-app and `herdr-core` on your PATH or in `~/.local/bin`, which `start` copies.
+
+## Which app
+
+The window needs herdr-app, bundle id `dev.herdr.app`, from [herdr.dev](https://herdr.dev). `start` copies `/Applications/Herdr.app`, or the app `HERDR_HIDDEN_APP` names, and refuses anything else before it copies.
+
+Homebrew's `herdr-gpui` cask (`penso/tap`, bundle id `so.pen.herdr-gpui`) is a different app that installs at the same path. Upgrading the cask replaces whatever is there, and Homebrew's auto-update can do that unattended. It has no `--version`, `shot`, `do`, `check` or mods and ignores `HERDR_APP_HOME`, so a window of it can start but `herdr-app shot` always exits 2 with `Unknown option: shot`. No hook can change that.
+
+If `/Applications/Herdr.app` is that app, point `start` at any herdr-app you have, such as the mounted release image:
+
+```sh
+HERDR_HIDDEN_APP=/Volumes/Herdr/Herdr.app scripts/herdr-hidden-window.sh start
+```
+
+`start` warns when that copy isn't the version the hooks were tested on.
 
 ## Use
 
@@ -36,7 +50,7 @@ At the end of `start`, the window server must report every window of the copy at
 
 What else is blocked, and how far that goes:
 
-- **Network:** the app process can't open internet connections, which stops its updater and telemetry. The hook does not reach the core, `hc` or programs in its terminals: they have network. An update run there can only replace the copy's `herdr-core`, not yours.
+- **Network:** the app process can't open internet connections itself. Its update checks and downloads run `curl` in a child, which that hook doesn't reach, so `curl` on the window's PATH is a shim that fails. Without it, a copy older than the latest release downloaded the update beside the copy and showed its toast over the strip. A program calling `/usr/bin/curl` by its full path is not stopped. The hook does not reach the core, `hc` or programs in its terminals: they have network. An update run there can only replace the copy's `herdr-core`, not yours.
 - **Clipboard:** the copy's `clipboard_write` setting is off. Nothing blocks the clipboard itself, so a program in its terminals can still use `pbcopy`.
 - **Links:** the app's `openURL:` call does nothing, and `open` and `afplay` found on PATH are silent shims. A program calling `/usr/bin/open` by its full path is not stopped.
 - **Sounds and prompts:** beeps, the notification prompt and hiding other apps are refused. A crash exits quietly, without the crash dialog.
