@@ -321,7 +321,7 @@ export function agedTimes(role, { boards = [], open = null, pinAt = null, pins =
     const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
     return (pins?.view === 'panel' ? list.filter(p => p.id === pins.id) : list).flatMap(p => known(p.at))
   }
-  if ((role === 'card' || role === 'sheet') && open) {
+  if ((role === 'card' || role === 'strip' || role === 'sheet') && open) {
     const board = boards.find(b => b.session === open.session)
     // The sheet stays on an answered item until the owner closes it; the card only draws open ones.
     const needs = role === 'sheet' ? board?.needs : board && openNeeds(board)
@@ -653,7 +653,7 @@ export function nextPick(current, session, key, toggle) {
   return { session, key }
 }
 
-// --- S5: the answer card, a floating block over the terminal ---
+// --- S5: the answer card, floating over the terminal above the tab it opened from ---
 
 /** The `answer` action file body for one decision. */
 export const answerAction = (key, answer) => ({ action: 'answer', key, answer })
@@ -809,12 +809,13 @@ export function cardKeyAction(face, keystroke, { options = 0, url = false, held 
  * The shared("hrd.open") value after opening `key` on `session`: keeps the terminal to give back, else takes `back`.
  * `seq` is a counter bumped on every open, so the card takes the keyboard on each open, even of the same item.
  */
-export const openState = (current, session, key, back, seq = 0, space = null) => ({
+export const openState = (current, session, key, back, seq = 0, space = null, at = null) => ({
   session,
   key,
   back: current?.back ?? back ?? null,
   space: current?.back ? (current.space ?? null) : space,
   seq,
+  at: at ?? current?.at ?? 0,
 })
 
 /** Whether closing the card may hand the keyboard to `open.back`: only while the owner is still in the space it was

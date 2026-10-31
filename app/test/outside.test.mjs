@@ -96,10 +96,10 @@ test('any button dismisses: a right-click closes the card and leaves no toggle f
   assert.equal(app.store['hrd.open'].key, first.key, 'the left click is a press of its own: it opens')
 })
 
-test("a press on Herdr's frame round the card or sheet is a press on the surface", () => {
+test("a press on Herdr's frame round the sheet is a press on the surface; the card has no frame of Herdr's, so it closes", () => {
   const onFrame = press({ local_position: { x: 10, y: -5 }, bounds: { width: 560, height: 200 } })
   out(cardRoot(), onFrame)
-  assert.ok(app.store['hrd.open'])
+  assert.equal(app.store['hrd.open'], null)
   out(sheetRoot(), onFrame)
   assert.ok(app.store['hrd.sheet'])
 })

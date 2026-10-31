@@ -1,3 +1,4 @@
+import { Popup } from 'gpui-base'
 import { div, svg } from 'gpui-kit'
 import { focused, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
@@ -21,6 +22,7 @@ import {
   workRows,
 } from './model.js'
 import { Arrivals } from './arrivals.js'
+import { card } from './card.js'
 import { closeCard, openCard } from './cardctl.js'
 import { handBack, takeDismissed } from './outside.js'
 import { closeSheet, openSheet } from './sheetctl.js'
@@ -146,7 +148,13 @@ export class StripState {
       if (plan.closePopup) closePopupOverlay()
       if (plan.closePins) closePins()
       if (plan.closeSheet) closeSheet(plan.refocus)
-      openCard(board, item, gone)
+      // The card lines up with this tab: its place in the strip is kept while the card moves on to other items.
+      openCard(
+        board,
+        item,
+        gone,
+        stripItems(board).findIndex(i => i.key === item.key),
+      )
     }
   }
 }
@@ -343,7 +351,21 @@ export function strip(board, ctx = {}) {
   const c = counts(board)
   const other = otherCount(ctx.boards ?? [], ctx.terminals ?? terminals(), board)
   const tabs = div().id('strip-tabs').flex_1().min_w(0).pl(8).flex().items_end().overflow_x_scroll()
-  for (const item of items) tabs.child(tab(item, board, state, now))
+  const tabEls = items.map(item => tab(item, board, state, now))
+  // The answer card floats above the tab it opened from, left edges together (the Popup keeps it inside the window). That is
+  // the tab at the place it opened at, so it stays put as the card moves on to other items; with no tab there, the row.
+  const open = ctx.card ? shared('hrd.open') : null
+  if (open) {
+    const content = card(ctx.boards ?? [], ctx.card, ctx.cx)
+    const at = items.length ? Math.max(0, Math.min(open.at ?? 0, items.length - 1)) : -1
+    const float = trigger => Popup.new('answer-card', trigger).anchor('bottom_left').content(content)
+    if (at >= 0) tabEls[at] = float(tabEls[at])
+    else tabs.child(float(div().id('card-anchor')))
+  } else if (ctx.card?.hold) {
+    // After the last item closed, the keyboard waits on an empty element (cardctl.js holdKeyboard).
+    root.child(card(ctx.boards ?? [], ctx.card, ctx.cx))
+  }
+  for (const el of tabEls) tabs.child(el)
   // A divider and a gap before the right-hand group, so a tab cut by the scroll reads as "more this way" and never runs into `ctx`.
   const right = div().id('strip-right').flex_none().h(32).pl(12).pr(8).flex().items_center().gap(12)
   right.child(div().id('strip-divider').w(1).h(16).bg(look.line))

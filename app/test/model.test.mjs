@@ -1127,7 +1127,7 @@ test('agedTimes: the ages each copy has on screen', async () => {
     ],
   }
   const boards = [board]
-  for (const role of ['card', 'sheet']) {
+  for (const role of ['card', 'strip', 'sheet']) {
     assert.deepEqual(agedTimes(role, { boards, open: { session: 's', key: 'D1' } }), [7], role)
     assert.deepEqual(agedTimes(role, { boards, open: null }), [], `${role} closed`)
     assert.deepEqual(agedTimes(role, { boards, open: { session: 'x', key: 'D1' } }), [], `${role} on a board that ended`)
@@ -1140,6 +1140,6 @@ test('agedTimes: the ages each copy has on screen', async () => {
   assert.deepEqual(agedTimes('pins', { pins: { list } }), [1, 2])
   assert.deepEqual(agedTimes('pins', { pins: { list, view: 'panel', id: 'b' } }), [2], 'the drop panel shows one pin')
   assert.deepEqual(agedTimes('pins', { pins: { list }, gone: new Set(['a']) }), [2], 'a pin marked done is not drawn')
-  for (const role of ['strip', 'board', 'agents', 'version'])
+  for (const role of ['board', 'agents', 'version'])
     assert.deepEqual(agedTimes(role, { boards, pinAt: 9, open: { session: 's', key: 'D1' } }), [], role)
 })

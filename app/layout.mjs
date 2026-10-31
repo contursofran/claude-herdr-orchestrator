@@ -1,5 +1,5 @@
 // Makes layouts/coordinator.json from layouts/main.json: the same window with the pin bar under the tabs, the strip
-// under the work area, the answer card floating over the terminal and the version at the right of the status bar. Written only if absent, and never switched to
+// under the work area (the strip draws the answer card above its tabs) and the version at the right of the status bar. Written only if absent, and never switched to
 // (layout.clone would switch the owner's window).
 //
 //   node app/layout.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
@@ -15,15 +15,6 @@ const block = (id, px, role) => ({
   size: { px },
   resizable: false,
   content: { mod: 'herdr-agents', props: { role } },
-})
-
-/** The answer card: a floating block over the `main` block, at the bottom edge, centred. Herdr draws its frame and the
- *  mod draws nothing while no card is open, so the terminal's size never changes. */
-const cardBlock = () => ({
-  id: 'hrd-card',
-  content: { mod: 'herdr-agents', props: { role: 'card' } },
-  edge: 'bottom',
-  align: 'center',
 })
 
 /** The context sheet: a floating block over the `main` block, at the top edge, centred. Like the card it draws nothing
@@ -44,34 +35,26 @@ const findNode = (node, id) => {
   return null
 }
 
-/** Removes the old hidden `hrd-card` row (the panel of S5) from whichever node holds it, in place. true if it was there. */
-function removeCardRow(node) {
-  const kids = node?.children
-  if (!Array.isArray(kids)) return false
-  const at = kids.findIndex(c => c?.id === 'hrd-card')
-  if (at >= 0) {
-    kids.splice(at, 1)
-    return true
+/** Removes the answer card's old blocks from `layout`, in place: the hidden `hrd-card` row (the panel of S5) and the floating
+ *  `hrd-card` (the strip's copy draws the card now, above the tab it opened from). A dragged one goes too: it is not drawn
+ *  any more. true if anything was removed. */
+export function removeCard(layout) {
+  let removed = false
+  const walk = node => {
+    for (const key of ['children', 'floating']) {
+      const kids = node?.[key]
+      if (!Array.isArray(kids)) continue
+      const keep = kids.filter(c => c?.id !== 'hrd-card')
+      if (keep.length !== kids.length) {
+        removed = true
+        if (key === 'floating' && keep.length === 0) delete node.floating
+        else node[key] = keep
+      }
+      node[key]?.forEach(walk)
+    }
   }
-  return kids.some(removeCardRow)
-}
-
-/** Whether any node already floats an `hrd-card` (the owner may have dragged it: its saved spot stays as it is). */
-function hasFloatingCard(node) {
-  if ((node?.floating ?? []).some(f => f?.id === 'hrd-card')) return true
-  return (node?.children ?? []).some(hasFloatingCard)
-}
-
-/** Brings the answer card up to date in `layout`, in place: the old hidden row goes, and a floating `hrd-card` is added
- *  to the `main` block unless one floats already (that one is left alone, spot and all). true if anything changed;
- *  nothing is added when there is no `main` block. */
-export function addCard(layout) {
-  let changed = removeCardRow(layout)
-  if (hasFloatingCard(layout)) return changed
-  const main = findNode(layout, 'main')
-  if (!main) return changed
-  main.floating = [...(main.floating ?? []), cardBlock()]
-  return true
+  walk(layout)
+  return removed
 }
 
 /** Whether any node already floats a block with this `id` (the owner may have dragged it: its saved spot stays). */
@@ -154,15 +137,15 @@ export function coordinatorLayout(main, version) {
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
-  addCard(layout)
+  removeCard(layout)
   addSheet(layout)
   addVersion(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
 
-/** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists', 'updated' or 'updated-no-card' (the old card row was removed but there is no `main` block to float one over). A file that exists keeps
- *  everything but what `repointAgents`, `addCard` and `addVersion` bring up to date (then 'updated'). */
+/** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists' or 'updated'. A file that exists keeps
+ *  everything but what `repointAgents`, `removeCard`, `addSheet` and `addVersion` bring up to date (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) {
@@ -173,11 +156,11 @@ export function writeCoordinatorLayout(home) {
       return 'exists'
     }
     // All the edits run: `||` would skip the later ones.
-    const [repointed, carded, sheeted, versioned] = [repointAgents(layout), addCard(layout), addSheet(layout), addVersion(layout)]
-    if (!repointed && !carded && !sheeted && !versioned) return 'exists'
+    const [repointed, uncarded, sheeted, versioned] = [repointAgents(layout), removeCard(layout), addSheet(layout), addVersion(layout)]
+    if (!repointed && !uncarded && !sheeted && !versioned) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
-    return (repointed || carded) && !hasFloatingCard(layout) ? 'updated-no-card' : 'updated'
+    return 'updated'
   }
   const main = JSON.parse(readFileSync(join(home, 'layouts', 'main.json'), 'utf8'))
   let version
@@ -200,10 +183,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents list, answer card, sheet and version block were brought up to date.'
-          : result === 'updated-no-card'
-            ? 'Layout "coordinator" exists; its agents list was updated and the old answer card row removed, but it has no "main" block to float a card over, so there is no answer card.'
-            : 'Layout "coordinator" exists; left as it is.',
+          ? 'Layout "coordinator" exists; only its agents list, answer card block, sheet and version block were brought up to date.'
+          : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {
     // Not fatal: the install carries on without the layout.
