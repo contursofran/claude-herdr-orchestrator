@@ -141,6 +141,20 @@ async function gitWhileLocked($: EngineInterface, args: string[], timeoutMs?: nu
   return r
 }
 
+const REF_LOCKED = 'cannot lock ref'
+
+// Runs a fetch, and again after each wait while it only lost the race to update a remote-tracking ref to another git
+// process (two spawns off the same base, or the owner's own fetch): the commits did arrive, the ref moved under it.
+async function fetchWhileRaced($: EngineInterface, args: string[]) {
+  let r = await git($, args, 120_000)
+  for (const wait of LOCK_WAITS_MS) {
+    if (r.ok || !r.err.includes(REF_LOCKED)) break
+    await $.clock.sleep(wait)
+    r = await git($, args, 120_000)
+  }
+  return r
+}
+
 // The checkout `repo` names (default: the coordinator's folder), or undefined when it is not one.
 export async function repoTop($: EngineInterface, repo?: string) {
   const dir = !repo ? session.cwd : repo.startsWith('/') ? repo : `${session.cwd}/${repo}`
@@ -196,10 +210,10 @@ export async function createWorktree($: EngineInterface, top: string, branch: st
   for (const name of [base, branch]) if (!(await validBranch($, name))) throw new Error(`${name} is not a valid branch name`)
   const remote = (await git($, ['-C', top, 'remote', 'get-url', 'origin'])).ok
   if (remote) {
-    const fetched = await git($, ['-C', top, 'fetch', 'origin', base], 120_000)
+    const fetched = await fetchWhileRaced($, ['-C', top, 'fetch', 'origin', base])
     if (!fetched.ok) throw new Error(`git fetch origin ${base} failed: ${fetched.err || fetched.out}`)
     // The branch may live only on the remote, or be older here; a failure (no such branch yet) is fine.
-    if (branch !== base) await git($, ['-C', top, 'fetch', 'origin', branch], 120_000)
+    if (branch !== base) await fetchWhileRaced($, ['-C', top, 'fetch', 'origin', branch])
   }
   const has = async (ref: string) => (await git($, ['-C', top, 'rev-parse', '--verify', '--quiet', ref])).ok
   const onBranch = ['worktree', 'add', path, branch]
