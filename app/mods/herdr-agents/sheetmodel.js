@@ -1,6 +1,6 @@
 // The context sheet's logic (S9), with no gpui-kit or herdr imports so node can test it (app/test).
 import { copyTargets } from './copystate.js'
-import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, stripItems } from './model.js'
+import { ageText, answerAction, atZoom, doneAction, liveSent, openNeeds, readKey, stripItems } from './model.js'
 
 const firstLine = text =>
   String(text ?? '')
@@ -55,6 +55,18 @@ export function sheetPage(board, key) {
   if (at < 0) return { i: 0, n: keys.length, prev: keys[keys.length - 1], next: keys[0] }
   const step = d => keys[(at + d + keys.length) % keys.length]
   return { i: at + 1, n: keys.length, prev: keys.length > 1 ? step(-1) : null, next: keys.length > 1 ? step(1) : null }
+}
+
+/** The open item after `key` on the sheet's pager, wrapping, leaving out items whose action waits or went out (`hidden`,
+ *  a Set of read keys). null when no other is left. */
+export function sheetNext(board, key, hidden = new Set()) {
+  const keys = sheetItems(board)
+    .map(i => i.key)
+    .filter(k => k === key || !hidden.has(readKey(board.session, k)))
+  const at = keys.indexOf(key)
+  const rest = at < 0 ? keys : [...keys.slice(at + 1), ...keys.slice(0, at)]
+  const next = rest.find(k => k !== key)
+  return next ? { key: next } : null
 }
 
 /** The item ⌘J opens on: the one the card shows (`cardKey`) if it is an open item here, else the first decision, then
@@ -235,7 +247,7 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
  * page, `1`-`3` press that option when there is one (`options`); anything else is left alone, so the sheet takes
  * nothing it has no use for. A held key is ignored. Returns {type: 'close' | 'prev' | 'next' | 'option', index?} or {type: 'ignore'}.
  */
-export function sheetKeyAction(keystroke, { options = 0, held = false, copy = null } = {}) {
+export function sheetKeyAction(keystroke, { options = 0, held = false, copy = null, settling = false } = {}) {
   if (held) return { type: 'ignore' }
   const k = String(keystroke ?? '').toLowerCase()
   if (k === 'escape') return { type: 'close' }
@@ -243,6 +255,7 @@ export function sheetKeyAction(keystroke, { options = 0, held = false, copy = nu
   if (k === 'right') return { type: 'next' }
   if (copy) return { type: 'copy', chord: copy }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
+  if (n && settling) return { type: 'ignore' } // just after a move: aimed at the old item
   if (n && n <= options) return { type: 'option', index: n - 1 }
   return { type: 'ignore' }
 }

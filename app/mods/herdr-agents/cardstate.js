@@ -1,21 +1,49 @@
 // What the card keeps between draws. No `herdr` import: everything outside comes in as an argument, so it can be tested.
 import { CopyState } from './copystate.js'
+import { rowsSteady } from './model.js'
 import { Outbox } from './outbox.js'
 
 /**
- * The actions waiting out their undo time (the card's own Outbox, so the boards must settle it on every change, or an
- * `ok:false` would never show) and the handle that takes the keyboard when the owner opens it.
- *   send, notify  as for Outbox
- *   handle        the focus handle
+ * The actions waiting out their undo time (an Outbox, so the boards must settle it on every change, or an `ok:false` would
+ * never show) and the handle that takes the keyboard when the owner opens it.
+ *   send, notify, store, surface  as for Outbox
+ *   handle                        the focus handle
  * The card floats over the terminal, so nothing here touches the layout. Only the owner's click or key (cardctl.js)
  * opens or closes it. "hrd.open" is saved in shared.json like any shared value, so clearStaleOpen forgets it at app start.
  */
 export class CardState {
-  constructor({ send, notify, handle }) {
-    this.outbox = new Outbox({ send, notify })
+  constructor({ send, notify, handle, store, surface }) {
+    this.outbox = new Outbox({ send, notify, store, surface })
     this.h = handle
     this.token = null
     this.copy = new CopyState()
+    this.movedAt = undefined // when the card or sheet last moved to another item: presses aimed at the old one are ignored for ROWS_SETTLE_MS
+    this.hold = null // set while the keyboard is held after the last item closed (cardctl.js): the block keeps the handle on an empty element
+  }
+
+  /**
+   * An answer or Done from the card or sheet: queue it, then move to the item `next(hidden)` finds ({key}, or null) with
+   * go(item), or with none close with close(). A press right after a move is ignored, silently (it was aimed at the old
+   * item), and so is one on an item already answered from anywhere. Returns 'ignored', 'moved' or 'closed'.
+   */
+  step(cx, session, action, { now, next, go, close }) {
+    if (!rowsSteady(this, now)) return 'ignored'
+    if (!this.schedule(cx, session, action)) return 'ignored'
+    const item = next(this.outbox.hidden())
+    if (!item) {
+      close()
+      return 'closed'
+    }
+    this.movedAt = now
+    go(item)
+    return 'moved'
+  }
+
+  /** Undo the action of the quiet line (`line` from quietLine) and go back to its item. */
+  undoTo(line, go, now = Date.now()) {
+    if (line.undoId) this.undo(line.undoId)
+    this.movedAt = now // a move like any other: presses aimed at the old item are held off
+    go({ key: line.key })
   }
 
   /** Called with the boards after each change; true when something was settled (redraw). */

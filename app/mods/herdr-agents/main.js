@@ -73,7 +73,7 @@ export default class HerdrAgents extends View {
       clearStaleOverlays(shared, setShared)
       clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
     }
-    // The card has an Outbox of its own: it settles it here, or a failed send would never show.
+    // The card and sheet settle their Outbox here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
     this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.

@@ -1,19 +1,34 @@
 import { div, svg } from 'gpui-kit'
 import { exec, notify, run, settings, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
-import { closeCard, openCard } from './cardctl.js'
+import { closeCard, closeCardHeld, openCard } from './cardctl.js'
 import { copyableText } from './copy.js'
 import { copyKey, copyTargets } from './copystate.js'
 import { noteDismissed } from './outside.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
-import { answerAction, cardFor, cardHint, cardKeyAction, cardSize, doneAction, nextItem, pastFrame } from './model.js'
+import { sharedOutbox } from './outbox.js'
+import {
+  answerAction,
+  cardFor,
+  cardHint,
+  cardKeyAction,
+  cardSize,
+  doneAction,
+  nextItem,
+  pastFrame,
+  quietLines,
+  rowsSteady,
+  showNext,
+} from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
 /** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
  *  its board is likely gone and it would take the first key. */
 export function makeCardState(cx) {
   if (firstThisRun('hrd.cardStarted')) clearStaleOpen(shared, setShared)
-  return new CardState({ send, notify, handle: cx.focus_handle() })
+  const ctl = new CardState({ send, notify, handle: cx.focus_handle(), store: sharedOutbox(shared, setShared), surface: 'card' })
+  ctl.outbox.release()
+  return ctl
 }
 
 export const ghost = (id, label, onClick) =>
@@ -102,6 +117,27 @@ export function faceIcon(face) {
   return svg(icon(name)).size(14).flex_none().text_color(color.text)
 }
 
+/** The quiet line: the choice just made on another item, with `undo` while it waits, or that a choice was not sent, with
+ *  `retry` (both go back to that item; on the failed item itself `retry` sends it again). `line` is from quietLines(). */
+export function quietRow(line, onBack) {
+  const what = [line.verb, line.detail].filter(Boolean).join(' · ')
+  return div()
+    .id('quiet-line')
+    .flex_none()
+    .flex()
+    .items_center()
+    .gap(10)
+    .child(
+      div()
+        .min_w_0()
+        .truncate()
+        .text_size(11)
+        .text_color(color.dim)
+        .child(line.kind === 'failed' ? `${line.key}: not sent · ${what}` : `${line.key}: ${what} · sending`),
+    )
+    .child(button(line.kind === 'failed' ? 'quiet-retry' : 'quiet-undo', line.kind === 'failed' ? 'retry' : 'undo', onBack))
+}
+
 function header(view, onClose) {
   return div()
     .flex()
@@ -130,7 +166,7 @@ export function card(boards, ctl, cx) {
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
     ctl.token = null
-    return div()
+    return ctl.hold ? div().id('card-hold').track_focus(ctl.h) : div()
   }
   const board = (boards ?? []).find(b => b.session === open.session)
 
@@ -139,6 +175,7 @@ export function card(boards, ctl, cx) {
   if (ctl.token !== token) {
     ctl.token = token
     ctl.copy.selected = false
+    ctl.copy.at = null
     cx.spawn(async cx => {
       await cx.sleep(60)
       ctl.h.focus()
@@ -151,9 +188,24 @@ export function card(boards, ctl, cx) {
     closeCard()
     cx.notify()
   }
-  const schedule = (cx, action) => ctl.schedule(cx, board.session, action)
-  const answer = (i, cx) => schedule(cx, answerAction(key, view.options[i]))
-  const done = (_e, cx) => schedule(cx, doneAction(key))
+  // An answer or Done queues the action and moves to the next open item, or closes with none (Esc's way back to the terminal).
+  const act = (action, cx) => {
+    ctl.step(cx, board.session, action, {
+      now: Date.now(),
+      next: hidden => nextItem(board, key, hidden),
+      go: item => openCard(board, item),
+      close: () => closeCardHeld(cx, ctl), // the keyboard goes back to the terminal after the hold
+    })
+    cx.notify()
+  }
+  const answer = (i, cx) => act(answerAction(key, view.options[i]), cx)
+  const done = (_e, cx) => act(doneAction(key), cx)
+  const lines = quietLines(board, key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
+  const back = line => (_e, cx) => {
+    if (line.kind === 'failed' && line.key === key) return act(line.action, cx) // already on the failed item: send it again
+    ctl.undoTo(line, item => openCard(board, item))
+    cx.notify()
+  }
   const link = () => {
     if (view.url) exec('open', [view.url]).catch(() => {})
   }
@@ -164,6 +216,7 @@ export function card(boards, ctl, cx) {
   }
 
   const body = div().id('card-scroll').flex().flex_col().gap(12).flex_1().min_h_0().overflow_y_scroll()
+  for (const line of lines) body.child(quietRow(line, back(line)))
   if (view.face === 'ask') {
     body.child(copyableText(`card-copy-${key}`, view.text, ctl.copy))
     body.child(
@@ -239,7 +292,8 @@ export function card(boards, ctl, cx) {
             }),
           ),
         )
-        .when(more, el => el.child(button('card-next', 'next ›', next, true))),
+        // A choice made here moves on at once, so `next ›` stays only for an item closed from elsewhere.
+        .when(showNext(view, more), el => el.child(button('card-next', 'next ›', next, true))),
     )
   }
 
@@ -261,6 +315,7 @@ export function card(boards, ctl, cx) {
           options: view.options?.length ?? 0,
           url: Boolean(view.url),
           held: e.is_held,
+          settling: !rowsSteady(ctl, Date.now()),
           copy: canCopy ? copyKey(keystroke) : null,
         })
         if (act.type === 'ignore') return
