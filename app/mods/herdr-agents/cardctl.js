@@ -1,15 +1,16 @@
-// Opens and closes the floating card. It is a block that draws nothing while "hrd.open" is empty, so neither call
+// Opens and closes the answer card. It is a popup of the strip's copy that draws only while "hrd.open" is set, so neither call
 // touches the layout or the terminal's size.
 import { focused, run, setShared, shared } from 'herdr'
 import { ROWS_SETTLE_MS, canRefocus, holdRefocus, openState, surfaceOpen } from './model.js'
 
-/** Open the card for `item` ({key}) of `board`; remembers the terminal to hand back, or the one `from` (a surface this press
+/** Open the card for `item` ({key}) of `board`; `at` is the place in the strip of the tab it lines up with (kept while the
+ *  card moves to another item, so it stays where it opened); remembers the terminal to hand back, or the one `from` (a surface this press
  *  just closed) would have. */
-export function openCard(board, item, from = null) {
+export function openCard(board, item, from = null, at = null) {
   const cur = shared('hrd.open') ?? from
   const seq = (shared('hrd.seq') ?? 0) + 1
   setShared('hrd.seq', seq)
-  setShared('hrd.open', openState(cur, board.session, item.key, focused()?.terminal, seq, focused()?.space))
+  setShared('hrd.open', openState(cur, board.session, item.key, focused()?.terminal, seq, focused()?.space, at))
   setShared('hrd.pick', { session: board.session, key: item.key })
 }
 

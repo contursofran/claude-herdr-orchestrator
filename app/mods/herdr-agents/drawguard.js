@@ -2,7 +2,7 @@
 // draw that throws is recorded here, one shared key per part (copies share no memory and two may fail at once). Only changes
 // are written: setShared redraws every mod, and a part that keeps failing or keeps drawing must stay quiet.
 
-const PARTS = ['pinbar', 'strip', 'card']
+const PARTS = ['pinbar', 'strip']
 const keyOf = part => `hrd.drawFailed.${part}`
 
 export const guardsDraw = part => PARTS.includes(part)

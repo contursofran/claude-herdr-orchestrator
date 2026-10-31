@@ -15,14 +15,13 @@ import {
   cardSize,
   doneAction,
   nextItem,
-  pastFrame,
   quietLines,
   rowsSteady,
   showNext,
 } from './model.js'
 import { color, font, icon, card as look } from './tokens.js'
 
-/** The card's state for this copy (main.js, role `card`). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
+/** The card's state for this copy (main.js, role `strip`, which draws the card). A card left open when the app last ran is not brought back (one open before a layout switch or a hot reload is):
  *  its board is likely gone and it would take the first key. */
 export function makeCardState(cx) {
   if (firstThisRun('hrd.cardStarted')) clearStaleOpen(shared, setShared)
@@ -152,16 +151,27 @@ function header(view, onClose) {
 }
 
 /**
- * The floating card: the one open item of `open` (shared "hrd.open"), on its board. It draws nothing until opened (Herdr
- * hides a floating block that renders nothing) and nothing it does touches the terminal's size. Herdr draws the frame
- * (background, border, corners, shadow), so only the content is drawn here, at a fixed width.
+ * The answer card: the one open item of `open` (shared "hrd.open"), on its board. The strip puts it in a Popup anchored to
+ * the tab it opened from (strip.js), so it floats over the terminal and nothing it does touches the terminal's size. Closed,
+ * it is an empty element (or, while the keyboard is held, the element that holds it). It draws its own frame.
  *   ctl    a CardState
  *   boards all boards (the open item's board is found by session, so a change of focus does not blank it)
  * The owner's click or key is the only thing that opens or closes it, and it takes the keyboard.
  */
 export function card(boards, ctl, cx) {
   const size = cardSize(typeof window !== 'undefined' ? window.viewport_size?.() : null, settings()?.zoom)
-  const root = div().id('card').w(size.w).max_h(size.maxH).flex().flex_col().text_size(font.size)
+  const root = div()
+    .id('card')
+    .w(size.w)
+    .max_h(size.maxH)
+    .flex()
+    .flex_col()
+    .text_size(font.size)
+    .bg(look.bg)
+    .border(1)
+    .border_color(look.border)
+    .rounded(10)
+    .shadow_2xl()
   const open = shared('hrd.open')
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
@@ -299,8 +309,8 @@ export function card(boards, ctl, cx) {
 
   const canCopy = copyTargets(view.text).length > 0
   // A press elsewhere closes it and the keyboard stays on what was pressed. Any button: a right-click elsewhere dismisses too.
+  // The tab it opened from is elsewhere too: its press reads this note and toggles.
   root.on_mouse_down_out((e, cx) => {
-    if (!pastFrame(e, settings()?.zoom)) return
     noteDismissed('card', e, open)
     closeCard(false)
     cx.notify()

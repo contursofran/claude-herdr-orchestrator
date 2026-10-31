@@ -2,7 +2,7 @@ import { View, div } from 'gpui-kit'
 import { focused, props, setShared, shared, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
-import { card, makeCardState } from './card.js'
+import { makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
 import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
 import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
@@ -19,8 +19,7 @@ import { readVersion, versionView } from './version.js'
 // branches here. Each of the roles below takes what it needs from the same bag.
 const roles = {
   pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
-  strip: (board, x) => strip(board, x.strip),
-  card: (_board, x) => card(x.strip.boards, x.card, x.cx),
+  strip: (board, x) => strip(board, { ...x.strip, card: x.card, cx: x.cx }),
   sheet: (_board, x) => sheetBlock(x.strip.boards, x.sheet, x.cx),
 }
 
@@ -80,8 +79,8 @@ export default class HerdrAgents extends View {
       clearStaleOverlays(shared, setShared)
       clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
     }
-    // The card and sheet settle their Outbox here, or a failed send would never show.
-    this.card = props()?.role === 'card' ? makeCardState(cx) : null
+    // The card (drawn by the strip's copy) and the sheet settle their Outbox here, or a failed send would never show.
+    this.card = props()?.role === 'strip' ? makeCardState(cx) : null
     this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
     this.part = props()?.role === 'strip' ? new StripState() : null
@@ -101,7 +100,7 @@ export default class HerdrAgents extends View {
     if (pinbarCopy) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
-    if (props()?.role !== 'strip') this.watchAges(cx) // the strip draws no ages
+    this.watchAges(cx) // the strip's card shows an age
   }
 
   /** Ages on screen move with the clock, not with a board write. A look at the time: no process, no read, and a redraw only
@@ -117,7 +116,7 @@ export default class HerdrAgents extends View {
     const role = props()?.role
     return agedTimes(role, {
       boards: this.boards.list(),
-      open: role === 'card' ? shared('hrd.open') : role === 'sheet' ? shared('hrd.sheet') : null,
+      open: role === 'strip' ? shared('hrd.open') : role === 'sheet' ? shared('hrd.sheet') : null,
       pinAt: this.pin?.shownAt,
       pins: role === 'pins' ? { ...props(), list: stillOpen(props().list ?? [], this.pinsBoard()) } : null,
       gone: this.gone,
@@ -202,16 +201,17 @@ export default class HerdrAgents extends View {
       const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
       this.last = found.pick
       if (this.part) this.part.board = found.board
+      const fault = {} // the strip says here when only its card failed to draw
       const el = this.drewAges(
         draw(found.board, {
           pin: this.pin,
           card: this.card,
           sheet: this.sheet,
           cx,
-          strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
+          strip: { part: this.part, boards: this.boards.list(), terminals: terminals(), fault },
         }),
       )
-      this.noteDrawn(cx, null)
+      this.noteDrawn(cx, fault.error ?? null)
       return el
     } catch (error) {
       if (!guardsDraw(props()?.role)) throw error // the sheet stands in for no band: as before

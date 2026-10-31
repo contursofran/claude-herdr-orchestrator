@@ -13,6 +13,7 @@ import {
   popupRefocus,
   projectName,
   rowAction,
+  stripItems,
   workRows,
   wrapUpButton,
 } from './model.js'
@@ -99,7 +100,16 @@ function row(r, board, ctl, now) {
       closeOverlay(props().overlay)
       if (act.type === 'focus') run('pane.focus', { terminal: act.terminal })
       // One overlay at a time, so the pop-up went first.
-      else openCard(board, { key: act.item })
+      else
+        openCard(
+          board,
+          { key: act.item },
+          null,
+          Math.max(
+            0,
+            stripItems(board).findIndex(i => i.key === act.item),
+          ),
+        )
     })
     .child(r.link?.onLabel ? labelCell.child(link(r, r.label, `work-pr-${r.key}`)) : labelCell.child(r.label))
     .child(div().flex_1().min_w_0().truncate().text_color(color.text).child(r.title))
