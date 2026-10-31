@@ -43,6 +43,14 @@ export type Job = {
   reportStatus?: string
   // the status in the last report's header (done, blocked, failed), when it had one; reportStatus is deliver's
   headerStatus?: string
+  // what a builder was started for (a new worktree: feature; an existing folder: fix), for the time comment
+  kind?: 'feature' | 'fix'
+  // the clock of the time comment: when the work it covers began (startedAt when unset) and how long the
+  // worker sat parked on a WAIT.json since then (see timecomment.ts)
+  timeFrom?: number
+  parkedMs?: number
+  // the token of the report whose time was posted, so one report posts once
+  timed?: string
 }
 
 // `every` and `max` in minutes; `lastAt` is when `check` last ran.
@@ -143,7 +151,8 @@ export type Reset = { stage: 'saving'; at: number }
 
 // A worker profile: the CLI hc starts (`kind`), its flags, extra environment, and a
 // short description for the spawn tool and the guides.
-export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string }
+// `label` names the model and effort in a time comment ("Sonnet 5.5 medium"); it is worked out from args when unset.
+export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string; label?: string }
 
 // herdr-agents.json, the user's and a folder's. Every key is optional; see the README.
 export type Settings = {
@@ -165,6 +174,9 @@ export type Settings = {
   learningNotes?: { enabled?: boolean; vault?: string; folder?: string }
   // where the workers and what needs the person show: the band above the prompt or the sidebar
   view?: 'band' | 'side'
+  // the repos (owner/name) where a worker's time is posted on its PR or issue when it reports done, and the
+  // GitHub login the comment says it is for (hooks/timecomment.ts); off by default
+  timeComments?: { repos?: string[]; for?: string }
   // the PR pipeline (pipeline.ts); every key optional, see pipelineSettings
   pipeline?: PipelineFile
 }

@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 import type { Job, Profile } from '../types'
 import { archive } from './archive'
 import { refresh } from './board'
-import { profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
+import { allProfiles, profiles, reviewsOnly, turnedOff, wrappingUp } from './config'
 import { afterFailedRounds } from './coordinator'
 import {
   ADDRESS_LIKE,
@@ -39,6 +39,7 @@ import {
 import { answered as settledQuestions, ask, openQuestions, withdraw } from './owner'
 import { dropHeld, post } from './outbox'
 import { type Header, parseHeader, summaryOf } from './report'
+import { postTime } from './timecomment'
 import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
 import { ensureOpencodePlugin } from './opencode'
@@ -135,6 +136,9 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
     reportStatus: undefined,
     reportFile: undefined,
     noticed: undefined,
+    // A prompt after a report whose time was posted starts the next report's time from now. A wake-up from
+    // a wait is not that: the same work goes on, so its time keeps running.
+    ...(job.timed ? { timeFrom: await $.clock.now(), parkedMs: 0, timed: undefined } : {}),
   }
   await saveJob($, next)
   await $.process.run(['rm', '-f', `${job.dir}/RESULT.md`])
@@ -760,7 +764,10 @@ export async function deliver(
   let reportFile: string | undefined
   let tail: Job['tail']
   let errorToken: string | undefined
+  // A report was written (not a screen of a worker that stopped without one).
+  let wrote = false
   if (await reported($, current)) {
+    wrote = true
     if (status === 'done' && opts.early) tail = 'early'
     body = reportBody(await $.fs.read(resultPath))
     header = parseHeader(body)
@@ -886,6 +893,7 @@ export async function deliver(
       : undefined,
   )
   if (!after) return
+  if (wrote && status === 'done' && header?.status !== 'blocked' && header?.status !== 'failed') void postWorkTime($, after, prs)
   // A worker blocked at a question, or whose CLI errored, may carry on: its next turn is the one to watch.
   if (tail === 'blocked') arm($, after, 'resume')
   // An early report leaves the turn's end to be waited on (a no-op while that wait is still armed).
@@ -914,6 +922,25 @@ export async function deliver(
     true,
     { worker: job.name, token: current.token },
   )
+}
+
+// Posts the time a worker took on its PR or issue (see timecomment.ts), once for each report. Nothing here may
+// fail or hold up a report: a failure goes to TIME-COMMENT.log in the worker's folder.
+async function postWorkTime($: EngineInterface, job: Job, prs: number[]) {
+  try {
+    if (!job.token) return
+    const token = job.token
+    const { before, after } = await updateJob($, job.name, j =>
+      j.token === token && j.timed !== token ? { ...j, timed: token } : undefined,
+    )
+    if (!before || !after) return
+    const failure = await postTime($, after, prs, (await allProfiles($))[job.profile])
+    if (failure) await $.fs.write(`${job.dir}/TIME-COMMENT.log`, `${failure}\n`)
+  } catch (err) {
+    try {
+      await $.fs.write(`${job.dir}/TIME-COMMENT.log`, `${err instanceof Error ? err.message : String(err)}\n`)
+    } catch {}
+  }
 }
 
 // session.start: each running worker gets its watch back, since a reload killed the children.
@@ -1006,7 +1033,16 @@ export async function spawnWorker($: EngineInterface, e: SpawnArgs) {
   // Inside the worktree, so sandboxed CLIs may write RESULT.md there;
   // git's local exclude keeps it out of commits.
   const dir = `${cwd}/.herdr-agents/${worker}`
-  const job: Job = { name: worker, profile, cwd, dir, startedAt: await $.clock.now(), status: 'starting', ...briefRefs(task, worker) }
+  const job: Job = {
+    name: worker,
+    profile,
+    cwd,
+    dir,
+    startedAt: await $.clock.now(),
+    status: 'starting',
+    kind: branch ? 'feature' : 'fix',
+    ...briefRefs(task, worker),
+  }
   await saveJob($, job)
   // The tab, the CLI and the first prompt take many seconds: they run on, and the result of the start
   // (the first report, or a failed one) reaches the coordinator as a message.
