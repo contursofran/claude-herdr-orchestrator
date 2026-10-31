@@ -102,3 +102,37 @@ test('opening again from a card the press just closed still takes the new tab pl
   part.pick(b, items[2], false)
   assert.equal(app.store['hrd.open'].at, 2)
 })
+
+test('a card that throws leaves the strip drawn without it, says so, and closes so a redraw does not throw again', async () => {
+  open(items[0].key, 0)
+  const spawned = []
+  const fault = {}
+  const card = ctl()
+  card.outbox = null // the card reads its outbox: without one it throws
+  const bad = { ...cx, spawn: fn => spawned.push(fn) }
+  const root = strip(b, { part: new StripState(), boards: [b], terminals: [], card, cx: bad, fault })
+  assert.ok(findId(root, `tab-${items[0].key}`), 'the tabs are still drawn')
+  assert.equal(anchoredTab(root), null)
+  assert.ok(fault.error, 'the failure is handed up to be recorded')
+  assert.equal(spawned.length, 1)
+  await spawned[0]({ sleep: async () => {} })
+  assert.equal(app.store['hrd.open'], null, 'closed: the next draw has no card to throw')
+})
+
+test('no board for the focused space: the card hides, and comes back with the board; the keyboard hold ends on its own', async () => {
+  open(items[0].key, 0)
+  const card = ctl()
+  const none = strip(null, { part: new StripState(), boards: [], terminals: [], card, cx })
+  assert.equal(anchoredTab(none), null)
+  assert.ok(app.store['hrd.open'], 'still open')
+  assert.equal(anchoredTab(draw(card)), `tab-${items[0].key}`)
+  // The hold is a timer, not a drawn element: with nothing drawn it still lets go.
+  const { holdKeyboard } = await import('../mods/herdr-agents/cardctl.js')
+  const fns = []
+  const h = { is_focused: () => false }
+  card.h = h
+  holdKeyboard({ ...cx, spawn: fn => fns.push(fn), notify() {} }, { back: 't1', space: 'a' }, card)
+  assert.ok(card.hold)
+  await fns[0]({ sleep: async () => {}, notify() {} })
+  assert.equal(card.hold, null)
+})

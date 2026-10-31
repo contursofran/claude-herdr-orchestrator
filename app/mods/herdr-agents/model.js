@@ -323,7 +323,7 @@ export function agedTimes(role, { boards = [], open = null, pinAt = null, pins =
     const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
     return (pins?.view === 'panel' ? list.filter(p => p.id === pins.id) : list).flatMap(p => known(p.at))
   }
-  if ((role === 'card' || role === 'strip' || role === 'sheet') && open) {
+  if ((role === 'strip' || role === 'sheet') && open) {
     const board = boards.find(b => b.session === open.session)
     // The sheet stays on an answered item until the owner closes it; the card only draws open ones.
     const needs = role === 'sheet' ? board?.needs : board && openNeeds(board)

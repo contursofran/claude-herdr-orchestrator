@@ -356,11 +356,23 @@ export function strip(board, ctx = {}) {
   // the tab at the place it opened at, so it stays put as the card moves on to other items; with no tab there, the row.
   const open = ctx.card ? shared('hrd.open') : null
   if (open) {
-    const content = card(ctx.boards ?? [], ctx.card, ctx.cx)
-    const at = items.length ? Math.max(0, Math.min(open.at ?? 0, items.length - 1)) : -1
-    const float = trigger => Popup.new('answer-card', trigger).anchor('bottom_left').content(content)
-    if (at >= 0) tabEls[at] = float(tabEls[at])
-    else tabs.child(float(div().id('card-anchor')))
+    let content = null
+    try {
+      content = card(ctx.boards ?? [], ctx.card, ctx.cx)
+    } catch (error) {
+      // A card that throws must not blank the strip: draw it without the card, say so, and close it so a redraw doesn't throw again.
+      if (ctx.fault) ctx.fault.error = error
+      ctx.cx?.spawn(async cx => {
+        await cx.sleep(0) // setShared redraws every mod, which a draw should not start from inside
+        closeCard()
+      })
+    }
+    if (content) {
+      const at = items.length ? Math.max(0, Math.min(open.at ?? 0, items.length - 1)) : -1
+      const float = trigger => Popup.new('answer-card', trigger).anchor('bottom_left').content(content)
+      if (at >= 0) tabEls[at] = float(tabEls[at])
+      else tabs.child(float(div().id('card-anchor')))
+    }
   } else if (ctx.card?.hold) {
     // After the last item closed, the keyboard waits on an empty element (cardctl.js holdKeyboard).
     root.child(card(ctx.boards ?? [], ctx.card, ctx.cx))

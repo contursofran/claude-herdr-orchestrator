@@ -194,16 +194,17 @@ export default class HerdrAgents extends View {
       const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
       this.last = found.pick
       if (this.part) this.part.board = found.board
+      const fault = {} // the strip says here when only its card failed to draw
       const el = this.drewAges(
         draw(found.board, {
           pin: this.pin,
           card: this.card,
           sheet: this.sheet,
           cx,
-          strip: { part: this.part, boards: this.boards.list(), terminals: terminals() },
+          strip: { part: this.part, boards: this.boards.list(), terminals: terminals(), fault },
         }),
       )
-      this.noteDrawn(cx, null)
+      this.noteDrawn(cx, fault.error ?? null)
       return el
     } catch (error) {
       if (!guardsDraw(props()?.role)) throw error // the sheet stands in for no band: as before
