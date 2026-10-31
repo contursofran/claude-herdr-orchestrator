@@ -2,7 +2,7 @@ import { nextCommand, notify, setShared, shared } from 'herdr'
 import { openPins } from './pinsctl.js'
 import { takeDismissed } from './outside.js'
 import { send } from './board.js'
-import { Outbox } from './outbox.js'
+import { Outbox, sharedOutbox } from './outbox.js'
 import { deriveBar, doneAction, doneRequests, keyStep, markRead, newBarState, newestPin, pinStepDir, pins, pruneRead } from './model.js'
 
 const FLASH_MS = 2200 // 1.1 s, twice
@@ -13,7 +13,9 @@ const FLASH_MS = 2200 // 1.1 s, twice
  */
 export class PinCtl {
   constructor() {
-    this.outbox = new Outbox({ send, notify })
+    // The queue is shared with the card and sheet: a Done here and a Done there are one action. Only one pin bar copy is live
+    // at a time (a layout switch replaces it), so 'bar' names it; the pinbar copy calls release() when it starts (main.js).
+    this.outbox = new Outbox({ send, notify, store: sharedOutbox(shared, setShared), surface: 'bar' })
     this.bar = newBarState() // see deriveBar()
     this.flashId = null
     this.pruned = false
@@ -65,6 +67,7 @@ export class PinCtl {
     const asked = shared('hrd.doneReq')
     if (asked?.length) {
       setShared('hrd.doneReq', [])
+      // null: that item already waits on a Done or went out (here or on the card), so a second ask is dropped.
       for (const r of doneRequests(asked)) this.outbox.schedule(cx, r.session, doneAction(r.key))
     }
     const { state, view, list, flashStart } = deriveBar(this.bar, board, {
@@ -124,6 +127,7 @@ export class PinCtl {
       },
       onDone: (pin, cx) => {
         pick(null)
+        // null: another surface already queued this Done; the bar shows its undo row from the shared queue.
         this.outbox.schedule(cx, board.session, doneAction(pin.key))
         cx.notify()
       },

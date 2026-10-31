@@ -67,6 +67,7 @@ export default class HerdrAgents extends View {
     this.last = null
     this.pin = new PinCtl()
     const pinbarCopy = props()?.role === 'pinbar'
+    if (pinbarCopy) this.pin.outbox.release() // what the last pin bar copy queued and never sent would go out stale
     // Once per app run: overlays stay open across a layout switch, and a Done asked for on `main` waits for this copy.
     if (pinbarCopy && firstThisRun('hrd.pinbarStarted')) {
       clearStaleOverlays(shared, setShared)

@@ -6,8 +6,8 @@ import { registerHooks } from 'node:module'
 const COLOUR = /^#([0-9a-f]{6}|[0-9a-f]{8})$/i
 const COLOUR_CALLS = new Set(['bg', 'text_color', 'border_color'])
 
-function makeElement() {
-  const node = { calls: {}, kids: [] }
+function makeElement(...init) {
+  const node = { calls: {}, kids: [], init } // `init`: what the element was made with, e.g. an svg's path
   const el = new Proxy(node, {
     get(_t, name) {
       if (name === 'node') return node
