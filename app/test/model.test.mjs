@@ -275,7 +275,7 @@ test('the debug line is the folder and the open count, and empty without a board
 const know = (key, extra = {}) => ({ key, kind: 'know', isOpen: true, at: 100, from: 'w-api', text: `${key} text`, ...extra })
 const pinBoard = (needs, session = 's') => ({ session, needs })
 
-test('pins are the open know and do items, in board order; ask and closed ones are not pins', () => {
+test('pins are the open know items, in board order; ask, do and closed ones are not pins', () => {
   const b = pinBoard([
     know('K1'),
     { key: 'D1', kind: 'ask', isOpen: true },
@@ -285,26 +285,23 @@ test('pins are the open know and do items, in board order; ask and closed ones a
   ])
   assert.deepEqual(
     pins(b).map(p => p.key),
-    ['K1', 'T1', 'K3'],
-  )
-  assert.deepEqual(
-    pins(b).map(p => p.kind),
-    ['know', 'do', 'know'],
+    ['K1', 'K3'],
   )
   assert.deepEqual(pins(null), [])
 })
 
-test('a board with only a to-do has a pin: the bar is not empty, can go slim once read, and the strip keeps the tab', () => {
+test('a board with only a to-do has no pin: the bar is empty and the strip keeps the tab', () => {
   const b = pinBoard([{ key: 'T1', kind: 'do', isOpen: true, text: 'Merge #7', at: 5 }])
-  assert.equal(pinbarMode(pins(b)), 'full')
-  assert.equal(pinbarMode(pins(b, { [readKey('s', 'T1')]: true })), 'slim', 'a read to-do counts as read')
-  assert.equal(slimLine(pins(b, { [readKey('s', 'T1')]: true })), '1 pin · nothing new · last: Merge #7')
+  assert.deepEqual(pins(b), [])
+  assert.equal(pinbarMode(pins(b)), 'empty')
   assert.deepEqual(
     stripItems(b).map(i => i.key),
     ['T1'],
     'the strip tab stays',
   )
-  assert.equal(deriveBar(newBarState(), b).view.mode, 'full')
+  const { view } = deriveBar(newBarState(), b)
+  assert.equal(view.mode, 'empty')
+  assert.deepEqual(view.waiting, [])
 })
 
 test('pin fields fall back: title from the first line of text, summary from the rest, no tag, key as the last title', () => {
@@ -514,7 +511,7 @@ test('deriveBar: the first draw of a board never resets by "new pins"; waiting t
     { id: 'f3', session: 'x', key: 'K1' },
   ]
   const r = bar(newBarState(), b, { waiting, hidden: new Set(['s:K1']) })
-  assert.deepEqual(r.view.waiting, [{ id: 'f1', title: 'Retry', kind: 'know' }])
+  assert.deepEqual(r.view.waiting, [{ id: 'f1', title: 'Retry' }])
   assert.equal(r.view.mode, 'empty', 'hidden pins are left out')
   assert.equal(bar(newBarState(), b, { now: 100 + 5 * 60000 }).view.meta, 'w-api · 5m')
 })
