@@ -51,6 +51,7 @@ export async function ask(
   title?: string,
   quiet = false,
   token?: string,
+  images?: string[],
 ) {
   const at = await $.clock.now()
   const used = [...(await read($, decisions)), ...(await read($, settled))].map(d => d.id)
@@ -67,6 +68,7 @@ export async function ask(
       ...(options?.length ? { options, recommended } : {}),
       ...(quiet ? { quiet } : {}),
       ...(token ? { token } : {}),
+      ...(images?.length ? { images } : {}),
     },
   ])
   if (!quiet) notify($, `Decision D${id} needed (${from})`, question)
@@ -102,13 +104,13 @@ export async function choose($: EngineInterface, d: Decision, answer: string) {
 
 // Pins one line for the person at the top of the band. The same text already
 // pinned keeps its id. Ids never repeat within a session.
-export async function pin($: EngineInterface, text: string, kind: Todo['kind'], from: string) {
+export async function pin($: EngineInterface, text: string, kind: Todo['kind'], from: string, images?: string[]) {
   const same = (await read($, todos)).find(t => t.text === text)
   if (same) return { id: same.id, isNew: false }
   const at = await $.clock.now()
   let id = 0
   await update($, lastTodo, n => (id = n + 1))
-  await update($, todos, list => [...list, { id, kind, text, from, at }])
+  await update($, todos, list => [...list, { id, kind, text, from, at, ...(images?.length ? { images } : {}) }])
   if (kind === 'do') notify($, `For you: T${id}`, text)
   else $.ui.toast(`T${id}: ${text}`)
   return { id, isNew: true }
@@ -151,10 +153,15 @@ export async function pingAfterReports($: EngineInterface, turnId: string) {
   await pingQuiet($, d => names.has(d.from))
 }
 
-export type AskArgs = { question: string; title?: string; options?: string[]; recommended?: number; from?: string }
+export type AskArgs = { question: string; title?: string; options?: string[]; recommended?: number; from?: string; images?: string[] }
+
+// What a tool call may attach: absolute paths of pictures and recordings, nothing else, at most Discord's ten.
+const MEDIA = /^\/.+\.(png|jpe?g|gif|webp|mp4|mov|webm)$/i
+export const mediaPaths = (paths: unknown): string[] =>
+  (Array.isArray(paths) ? paths : []).filter((p): p is string => typeof p === 'string' && MEDIA.test(p)).slice(0, 10)
 
 export async function askOwner($: EngineInterface, e: AskArgs) {
-  const id = await ask($, e.from ?? 'coordinator', e.question, e.options, e.recommended, e.title)
+  const id = await ask($, e.from ?? 'coordinator', e.question, e.options, e.recommended, e.title, false, undefined, mediaPaths(e.images))
   return { result: `Pinned as D${id} and notified the person. Call decided with "D${id}" once they answer.` }
 }
 
@@ -206,7 +213,7 @@ export async function settle($: EngineInterface, e: DecidedArgs) {
   }
 }
 
-export type PinArgs = { text: string; kind?: string; from?: string }
+export type PinArgs = { text: string; kind?: string; from?: string; images?: string[] }
 
 export async function pinForOwner($: EngineInterface, e: PinArgs) {
   const text = String(e.text ?? '')
@@ -214,7 +221,7 @@ export async function pinForOwner($: EngineInterface, e: PinArgs) {
     .trim()
   if (!text) return { deny: 'text is empty' }
   const from = String(e.from ?? '').trim() || 'coordinator'
-  const { id, isNew } = await pin($, text, e.kind === 'know' ? 'know' : 'do', from)
+  const { id, isNew } = await pin($, text, e.kind === 'know' ? 'know' : 'do', from, mediaPaths(e.images))
   return { result: `${isNew ? 'Pinned' : 'Already pinned'} as T${id}. Unpin it with unpin_for_owner once it is done.` }
 }
 

@@ -61,6 +61,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     '- Waiting: never poll or sleep; reports, WAIT.json checks and decisions arrive by themselves.',
     '- The owner: ask only what is theirs (product, design or rule choices, approvals) with ask_owner, a few at a time; settle the rest yourself with decided. Merge only as the repo rules allow.',
     '- Things the owner must do (test a build, merge a PR that waits for them) or should know: pin each with pin_for_owner, never only in a message, and unpin it with unpin_for_owner once it is done.',
+    '- Show the work: when a report lists screenshots or recordings, or a change shows on screen, pass them in `images` on ask_owner or pin_for_owner, so the owner can look from their phone. To have them judge a look, ask_owner with images and options such as Approve and Changes.',
     `- When the owner runs ${cmd('wrap-up')}: start nothing new, let the running workers finish, then update the state file and stop.`,
     ...(Array.isArray(extra) ? extra : [extra]).map((line: string) => `- ${line}`),
   ].join('\n')

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { Bot, ensureChannels, makeApi } from '../discord/bot.mjs'
+import { Bot, ensureChannels, makeApi, withFiles } from '../discord/bot.mjs'
 import { Gateway } from '../discord/gateway.mjs'
 import {
   allowed,
@@ -16,6 +16,7 @@ import {
   metricsText,
   needText,
   parseTap,
+  pickImages,
   planTap,
   pruneSeen,
 } from '../discord/model.mjs'
@@ -281,7 +282,7 @@ test('channels: what exists is kept, what is missing is made under the category'
   const ids = await ensureChannels(fake, 'g')
   assert.deepEqual(
     made.map(m => m.name),
-    ['decisions', 'to-do', 'metrics'],
+    ['decisions', 'to-do', 'review', 'metrics'],
   )
   assert.ok(made.every(m => m.parent_id === 'c1'))
   assert.equal(ids.updates, 'x')
@@ -534,4 +535,86 @@ test('gateway: asked to reconnect it does; a bad token waits longer', () => {
   timers.later[0].f()
   socket().onclose({ code: 4004 })
   assert.equal(timers.later[1].ms, 300000)
+})
+
+// Screenshots.
+test('an item with images goes to review with them; news with images stays in updates', () => {
+  const [a, t, k] = diff(
+    board({
+      needs: [
+        { ...ask, images: ['/x/a.png'] },
+        { ...todo, images: ['/x/b.png'] },
+        { ...todo, key: 'T2', kind: 'know', images: ['/x/c.png'] },
+      ],
+    }),
+  )
+  assert.deepEqual([a.channel, a.images], ['review', ['/x/a.png']])
+  assert.equal(a.components[0].components.length, 2)
+  assert.deepEqual([t.channel, t.images], ['review', ['/x/b.png']])
+  assert.deepEqual([k.channel, k.images], ['updates', ['/x/c.png']])
+  const [plain] = diff(board({ needs: [{ ...ask, images: [] }] }))
+  assert.equal(plain.channel, 'decisions')
+})
+
+test('files: only pictures and videos, what is left out says why', () => {
+  const sizes = { '/a.png': 1000, '/b.JPG': 2000, '/huge.mp4': 20 * 1024 * 1024 }
+  const { files, note } = pickImages(['/a.png', '/b.JPG', '/huge.mp4', '/gone.png', '/secrets.env'], p => sizes[p] ?? null)
+  assert.deepEqual(
+    files.map(f => f.name),
+    ['a.png', 'b.JPG'],
+  )
+  assert.match(note, /huge\.mp4 \(too big\)/)
+  assert.match(note, /gone\.png \(not found\)/)
+  assert.match(note, /secrets\.env \(not found\)/)
+  assert.deepEqual(
+    pickImages(undefined, () => 1),
+    { files: [], note: '' },
+  )
+  const many = pickImages(
+    Array.from({ length: 12 }, (_, i) => `/${i}.png`),
+    () => 1,
+  )
+  assert.equal(many.files.length, 10)
+  const total = pickImages(['/1.png', '/2.png'], () => 6 * 1024 * 1024)
+  assert.equal(total.files.length, 1)
+})
+
+test('a message with a file goes as a form; a missing file leaves plain text that says so', async () => {
+  const path = join(home, 'shot.png')
+  writeFileSync(path, 'pixels')
+  const form = withFiles({ content: 'look', components: [] }, [path, '/nope.png'])
+  assert.ok(form instanceof FormData)
+  const payload = JSON.parse(form.get('payload_json'))
+  assert.match(payload.content, /^look\n\*Not attached: nope\.png/)
+  assert.deepEqual(payload.attachments, [{ id: 0, filename: 'shot.png' }])
+  assert.equal(await form.get('files[0]').text(), 'pixels')
+  const plain = withFiles({ content: 'look' }, ['/nope.png'])
+  assert.equal(plain instanceof FormData, false)
+  assert.match(plain.content, /Not attached/)
+  assert.deepEqual(withFiles({ content: 'look' }, undefined), { content: 'look' })
+})
+
+test('the api sends a form untouched, with no JSON content type', async () => {
+  let init
+  const call = makeApi('t', async (_u, i) => ((init = i), { status: 200, ok: true, json: async () => ({}) }))
+  const form = new FormData()
+  await call('POST', '/x', form)
+  assert.equal(init.body, form)
+  assert.equal(init.headers['Content-Type'], undefined)
+  await call('POST', '/x', { a: 1 })
+  assert.equal(init.body, '{"a":1}')
+  assert.equal(init.headers['Content-Type'], 'application/json')
+})
+
+test('the bot posts an item with a screenshot as a form to review', async () => {
+  writeFileSync(join(home, 'discord-state.json'), '{"seen":{},"metricsDay":null}')
+  const path = join(home, 'shot.png')
+  writeFileSync(path, 'pixels')
+  writeBoard(live({ needs: [{ ...ask, images: [path] }] }))
+  const bot = makeBot({ channels: { decisions: 'cd', 'to-do': 'ct', review: 'cr', updates: 'cu', metrics: 'cm' } })
+  await bot.look()
+  assert.equal(calls[0].path, '/channels/cr/messages')
+  const payload = JSON.parse(calls[0].body.get('payload_json'))
+  assert.deepEqual(payload.allowed_mentions, { parse: [], users: ['me'] })
+  assert.equal(payload.components[0].components.length, 2)
 })

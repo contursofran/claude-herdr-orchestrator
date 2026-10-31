@@ -114,7 +114,12 @@
           "end": { "type": ["string", "null"], "description": "How a closed one ended: the answer, done, dismissed." },
           "options": { "type": "array", "items": { "type": "string" } },
           "recommended": { "type": ["integer", "null"], "description": "Index into options." },
-          "url": { "type": ["string", "null"], "description": "A link in a to-do's text (https://…, localhost:5173)." }
+          "url": { "type": ["string", "null"], "description": "A link in a to-do's text (https://…, localhost:5173)." },
+          "images": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Optional, so older boards stay valid. Absolute paths of screenshots or recordings to show with an open item."
+          }
         }
       }
     },

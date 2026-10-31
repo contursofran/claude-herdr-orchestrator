@@ -18,7 +18,7 @@ Pre-check before you report (these are what reviews most often send back):
 6. Coverage: every acceptance line of the issue is done, or the report says which are left and why.
 7. Duties: for code you removed or replaced, each thing it did still happens somewhere; say where.
 8. Paperwork: run the repo's PR check script if it has one (such as `pnpm pr:check`); otherwise check each thing the repo rules ask of a PR (changelog fragment, PR body sections, labels) against the rule's own words. Anything that needs the PR number, such as a changelog line, is written after the PR exists.
-9. Evidence: take screenshots and other proof last, after your final code commit; a later code change means taking them again.
+9. Evidence: take screenshots and other proof last, after your final code commit; a later code change means taking them again. When the change shows on screen, take a screenshot or recording, and end your report with a `Screenshots:` line giving each file's absolute path, so the coordinator can show them to the owner.
 Add a short "Pre-check" section to the PR body with one line per item; for item 1, name each test you saw fail with the change undone.
 
 While you work, run only the test files you touched (the repo's rules or README say how to run one file). Run the whole suite once, at the end, before you push. It can outlast the 2 minute Bash limit, so start it with `run_in_background` and wait for its one notification: don't poll it, and don't start it again while it runs. Run the repo's formatter before you push too (`npm run format` if package.json has one): a formatting failure costs a whole CI round. CI still runs everything.
