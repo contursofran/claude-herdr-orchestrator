@@ -163,6 +163,9 @@ EOF
   grep -q ' loaded$' "$dir/hooks.log" || die "The hooks did not load; no window started."
   printf '{ "frame.welcomed": "finished" }\n' >"$dir/app/shared.json"
   printf '{ "sounds": { "enabled": false }, "clipboard_write": false, "telemetry": false }\n' >"$dir/app/settings.json"
+  # Not a first run of this version: the "Updated to" pill would cover the end of the strip.
+  printf '{ "last_run": "%s", "presented": [] }\n' \
+    "$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$copy/Contents/Info.plist")" >"$dir/app/update-notes.json"
 }
 
 sync_mod() {
