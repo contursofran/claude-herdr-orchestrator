@@ -341,3 +341,8 @@ test('sheetDoneLine: says sent or sending only for what went out; a closed item 
   assert.equal(sheetDoneLine({ verb: 'answer', detail: 'Cursor', sent: true }), 'answer · Cursor · sent')
   assert.equal(sheetDoneLine({ verb: 'done', detail: '', sent: false }), 'done · sending')
 })
+
+test('sheetKeyAction: a number right after a move is ignored, so a repeated 2 cannot open a link', () => {
+  assert.deepEqual(sheetKeyAction('2', { options: 3, settling: true }), { type: 'ignore' })
+  assert.deepEqual(sheetKeyAction('right', { settling: true }), { type: 'next' })
+})

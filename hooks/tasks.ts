@@ -75,6 +75,8 @@ export type Task = {
   // nothing runs and nothing waits on the person: Clear done may remove it
   isFinished: boolean
   isMerged: boolean
+  // when the merged PR merged, in ms; absent until the PR is asked for it
+  mergedAt?: number | null
 }
 
 type Input = {
@@ -215,6 +217,7 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
       ...((isGone ? undefined : (blocked ?? working ?? waiting)) ? { tab: (blocked ?? working ?? waiting)!.name } : {}),
       isFinished: running.length === 0 && stuck.length === 0 && open.length === 0,
       isMerged,
+      ...(isMerged && state?.mergedAt ? { mergedAt: state.mergedAt } : {}),
     })
   }
   return tasks

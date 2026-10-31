@@ -33,6 +33,36 @@ test('a WAIT.json check that cannot start wakes the worker at once, naming the f
   await stopAll($, s.clock, ['w-busy'])
 })
 
+// The sweeps fall on whole minutes of the session, and the turn's end runs the first check off that beat.
+test('a sweep a little short of every still runs the check, so a 1 minute wait does not become 2', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }, { exitCode: 0 }])
+  await s.clock.advance(10_000)
+  await s.finish('w-busy')
+  expect(s.typed.length).toBe(before)
+  await s.clock.advance(50_000)
+  expect(s.typed.at(-1)).toContain('Your wait is over')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a sweep far short of every leaves the check for the next one', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }, { exitCode: 0 }])
+  await s.clock.advance(45_000)
+  await s.finish('w-busy')
+  await s.clock.advance(15_000)
+  expect(s.typed.length).toBe(before)
+  await s.clock.advance(60_000)
+  expect(s.typed.at(-1)).toContain('Your wait is over')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
 test('the report rule names the folder a WAIT.json check runs in', async ($, on) => {
   const { typed, clock } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-busy', profile: 'builder', cwd: '/repo/wt', task: 'Fix it.' })

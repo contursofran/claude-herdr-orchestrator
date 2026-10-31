@@ -62,6 +62,7 @@ export default class HerdrAgents extends View {
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
       this.boards.startOne(cx, props().session, props().board, cx => this.drawnChanged() && cx.notify())
       this.drawnChanged() // the board the strip passed is what the first draw shows
+      this.watchAges(cx) // the merge ages of its rows
       return
     }
     this.last = null
@@ -72,7 +73,7 @@ export default class HerdrAgents extends View {
       clearStaleOverlays(shared, setShared)
       clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
     }
-    // The card has an Outbox of its own: it settles it here, or a failed send would never show.
+    // The card and sheet settle their Outbox here, or a failed send would never show.
     this.card = props()?.role === 'card' ? makeCardState(cx) : null
     this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
@@ -113,6 +114,7 @@ export default class HerdrAgents extends View {
       pinAt: this.pin?.shownAt,
       pins: role === 'pins' ? { ...props(), list: stillOpen(props().list ?? [], this.pinsBoard()) } : null,
       gone: this.gone,
+      session: props()?.session,
     })
   }
 
@@ -178,9 +180,11 @@ export default class HerdrAgents extends View {
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
     if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))
     if (props()?.role === 'board')
-      return popupView(
-        this.boards.list().find(b => b.session === props().session),
-        this.popup,
+      return this.drewAges(
+        popupView(
+          this.boards.list().find(b => b.session === props().session),
+          this.popup,
+        ),
       )
     const draw = roles[props()?.role]
     if (!draw) return div()

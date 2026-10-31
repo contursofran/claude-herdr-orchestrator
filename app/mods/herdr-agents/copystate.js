@@ -56,6 +56,7 @@ export class CopyState {
     this.presses = 0
     this.press = null
     this.selected = false
+    this.at = null
   }
 
   /** Put `value` on the clipboard, and label button `id` "Copied" until a one-shot timer ends, unless a later copy took over. */
@@ -70,6 +71,13 @@ export class CopyState {
       this.copied = null
       cx.notify()
     })
+  }
+
+  /** The surface now shows item `id`: a selection made on the one before is not on this text. */
+  moveTo(id) {
+    if (this.at === id) return
+    this.at = id
+    this.selected = false
   }
 
   /** A press in the text ends any selection. A drag or a double click may start one. The kit does not tell a mod if it did. */

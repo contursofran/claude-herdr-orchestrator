@@ -1,10 +1,21 @@
 // The board pop-up: the work table of the one board the strip shows, opened from `board ▴` (or ctrl-cmd-b).
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, focused, notify, props, run, setShared, shared, terminals } from 'herdr'
+import { closeOverlay, exec, focused, notify, props, run, setShared, shared, terminals } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
 import { noteDismissed } from './outside.js'
-import { POPUP_ROW, POPUP_W, boardSpace, popupKeyAction, popupRefocus, projectName, rowAction, workRows, wrapUpButton } from './model.js'
+import {
+  POPUP_ROW,
+  POPUP_W,
+  boardSpace,
+  popupKeyAction,
+  mergedText,
+  popupRefocus,
+  projectName,
+  rowAction,
+  workRows,
+  wrapUpButton,
+} from './model.js'
 import { color, font, icon, popup as look } from './tokens.js'
 
 /** A handle that takes the keyboard after the first draw, as the card does: Esc would otherwise go to the terminal. */
@@ -52,7 +63,23 @@ function cell(name) {
   return box.child(name === 'working' ? glyph.spin(1400) : glyph)
 }
 
-function row(r, board, ctl) {
+/** A PR number that opens the PR. Its press stops here: the row's own press would select it or close the pop-up. */
+function link(r, text, id) {
+  return div()
+    .id(id)
+    .cursor_pointer()
+    .text_color(color.soft)
+    .hover(el => el.text_color(color.text))
+    .on_mouse_down('left', (_e, cx) => {
+      cx.stop_propagation()
+      exec('open', [r.link.url]).catch(() => {})
+    })
+    .child(text)
+}
+
+function row(r, board, ctl, now) {
+  const merged = mergedText(r, now)
+  const labelCell = div().w(44).flex_none().text_color(color.dim)
   return div()
     .id(`work-${r.key}`)
     .h(POPUP_ROW)
@@ -74,9 +101,26 @@ function row(r, board, ctl) {
       // One overlay at a time, so the pop-up went first.
       else openCard(board, { key: act.item })
     })
-    .child(div().w(44).flex_none().text_color(color.dim).child(r.label))
+    .child(r.link?.onLabel ? labelCell.child(link(r, r.label, `work-pr-${r.key}`)) : labelCell.child(r.label))
     .child(div().flex_1().min_w_0().truncate().text_color(color.text).child(r.title))
-    .child(div().w(70).flex_none().truncate().text_size(11).text_color(whoColor(r.who.kind)).child(r.who.text))
+    .when(r.link && !r.link.onLabel, el =>
+      el.child(
+        div()
+          .flex_none()
+          .child(link(r, r.link.text, `work-pr-${r.key}`)),
+      ),
+    )
+    .when(merged, el => el.child(div().flex_none().text_size(11).text_color(color.dim).child(merged)))
+    .child(
+      div()
+        .w(70)
+        .flex_none()
+        .truncate()
+        .text_size(11)
+        .text_color(whoColor(r.who.kind))
+        // The merged text beside the title says it already.
+        .child(merged && r.who.text === 'merged' ? '' : r.who.text),
+    )
     .children(r.stages.map(cell))
 }
 
@@ -148,6 +192,7 @@ export function popupView(board, ctl) {
     .child(div().w(70).flex_none())
     .children(stageNames.map(n => div().w(look.cell).flex_none().flex().justify_center().text_size(11).text_color(look.head).child(n)))
   const rows = workRows(board)
+  const now = Date.now()
   return root.child(head).child(
     div()
       .id('work-rows')
@@ -156,6 +201,6 @@ export function popupView(board, ctl) {
       .flex()
       .flex_col()
       .overflow_y_scroll()
-      .children(rows.map(r => row(r, board, ctl))),
+      .children(rows.map(r => row(r, board, ctl, now))),
   )
 }
