@@ -30,25 +30,23 @@ import { isSheetCommand, sheetTarget } from './sheetmodel.js'
 import { closePins, closePopupOverlay } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
-const white = color.text
-
-/** What a tab's icon is: white-on-dark glyph on a white disc (decide), outline (do) or a filled octagon (blocked). */
+/** What a tab's icon is: a chip-coloured glyph on a text-coloured disc (decide), outline (do) or a filled octagon (blocked). */
 function tabIcon(kind, fg) {
   if (kind === 'ask') {
     return div()
       .size(12)
       .flex_none()
       .rounded_full()
-      .bg(white)
+      .bg(color.text)
       .flex()
       .items_center()
       .justify_center()
-      .child(svg(icon('decide')).size(11).text_color('#111111'))
+      .child(svg(icon('decide')).size(11).text_color(color.chipText))
   }
   return svg(icon(kind === 'blocked' ? 'blocked' : 'do'))
     .size(12)
     .flex_none()
-    .text_color(kind === 'blocked' ? white : fg)
+    .text_color(kind === 'blocked' ? color.text : fg)
 }
 
 /** The inside of a tab: icon, bold id, short label. Drawn twice for a flashing tab (the second copy inverted). */
@@ -254,7 +252,7 @@ function tab(item, board, state, now) {
     // The bottom edge: the strip's line under an off tab, the tab's own colour under the selected one.
     .child(div().absolute().left(0).right(0).bottom(0).h(1).bg(t.bottom))
   if (!flash) return el
-  // A flashing tab alternates to light: an inverted copy fades in and out on top, four swings.
+  // A flashing tab alternates with its inverse: an inverted copy fades in and out on top, four swings.
   return el.child(
     div()
       .absolute()
@@ -278,7 +276,7 @@ function count(name, n) {
   const glyph = svg(icon(name))
     .size(12)
     .flex_none()
-    .text_color(n > 0 ? white : color.dim)
+    .text_color(n > 0 ? color.text : color.dim)
   return div()
     .id(`count-${name}`)
     .h(24)
@@ -288,7 +286,7 @@ function count(name, n) {
     .gap(5)
     .rounded(5)
     .hover(el => el.bg(look.pillHover))
-    .text_color(n > 0 ? white : color.dim)
+    .text_color(n > 0 ? color.text : color.dim)
     .child(spin ? glyph.spin(look.spin) : glyph)
     .child(String(n))
 }

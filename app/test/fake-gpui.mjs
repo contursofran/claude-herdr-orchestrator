@@ -41,6 +41,7 @@ function makeElement(...init) {
       }
       return (...args) => {
         if (COLOUR_CALLS.has(name) && !COLOUR.test(args[0])) throw new Error(`\`${args[0]}\` is not a color value`)
+        if (COLOUR_CALLS.has(name)) app.colours.add(args[0])
         if (name === 'line_height' && typeof args[0] === 'number') throw new Error('line_height needs a length, such as "20px"')
         node.calls[name] = args
         return el
@@ -63,6 +64,9 @@ export const app = {
   execs: [],
   settings: { zoom: 1 },
   notes: [],
+  theme: null, // fields merged over the fake theme, e.g. { chrome: '#f1f1ee' } for a light one
+  themeReads: 0,
+  colours: new Set(), // every colour any element was given, hover styles included
 }
 
 globalThis.__fakeGpui = {
@@ -107,7 +111,10 @@ globalThis.__fakeGpui = {
     if (text instanceof Error) throw text
     return text ?? null
   },
-  theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
+  theme: () => {
+    app.themeReads++
+    return { chrome: '#101010', border: '#202020', dim: '#303030', ...app.theme }
+  },
   run: (name, args) => app.ran.push([name, args]),
   settings: () => app.settings ?? {},
   setShared: (k, v) => {
