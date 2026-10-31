@@ -42,7 +42,7 @@ export function releasePopup(ctl) {
 
 const whoColor = kind => (kind === 'you' ? color.text : kind === 'text' ? color.soft : color.dim)
 
-/** One stage cell: a 14 px icon in a 44 px column. A decision (`ask`) is the white disc with the dark glyph. */
+/** One stage cell: a 14 px icon in a 44 px column. A decision (`ask`) is the text-coloured disc with the chip-coloured glyph. */
 function cell(name) {
   const box = div().w(look.cell).flex_none().flex().items_center().justify_center()
   if (!name) return box

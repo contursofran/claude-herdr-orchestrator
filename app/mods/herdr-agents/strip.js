@@ -30,7 +30,7 @@ import { isSheetCommand, sheetTarget } from './sheetmodel.js'
 import { closePins, closePopupOverlay } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
-/** What a tab's icon is: white-on-dark glyph on a white disc (decide), outline (do) or a filled octagon (blocked). */
+/** What a tab's icon is: a chip-coloured glyph on a text-coloured disc (decide), outline (do) or a filled octagon (blocked). */
 function tabIcon(kind, fg) {
   if (kind === 'ask') {
     return div()
@@ -252,7 +252,7 @@ function tab(item, board, state, now) {
     // The bottom edge: the strip's line under an off tab, the tab's own colour under the selected one.
     .child(div().absolute().left(0).right(0).bottom(0).h(1).bg(t.bottom))
   if (!flash) return el
-  // A flashing tab alternates to light: an inverted copy fades in and out on top, four swings.
+  // A flashing tab alternates with its inverse: an inverted copy fades in and out on top, four swings.
   return el.child(
     div()
       .absolute()

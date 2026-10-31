@@ -1,5 +1,5 @@
-// The look, in one place. Two palettes of the design's greys, picked from theme().appearance on every read. The design has
-// no hue, so this does not map tokens onto the theme's colours. Missing or unknown appearance means dark.
+// The look, in one place. Two palettes of the design's greys, picked on every read from how light the theme's chrome is. The
+// design has no hue, so this does not map tokens onto the theme's colours.
 import { theme } from 'herdr'
 
 export const font = { size: 12, line: 18, terminalSize: 13, terminalLine: 20 }
@@ -92,7 +92,7 @@ export const palettes = {
       pillOpen: '#E2E2E2',
       muted: '#6E6E6E',
       spin: 1400,
-      ctxWarning: '#9A6700',
+      ctxWarning: '#966400',
       ctxError: '#CF222E',
     },
     card: {
@@ -119,8 +119,17 @@ export const palettes = {
   },
 }
 
-/** The mode now. Anything but "light" is dark. */
-export const mode = () => (theme()?.appearance === 'light' ? 'light' : 'dark')
+/**
+ * The mode now, from the colours the theme really draws. theme() has no appearance field, and settings().dark is the
+ * appearance, which a fixed theme ignores: fixed dark under a light system would get white cards in a dark window.
+ * A chrome that isn't a hex colour means dark.
+ */
+export function mode() {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(theme()?.chrome ?? '')
+  if (!hex) return 'dark'
+  const [r, g, b] = hex.slice(1).map(c => parseInt(c, 16) / 255)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b >= 0.5 ? 'light' : 'dark'
+}
 
 const at = (path, m) => path.reduce((o, k) => o[k], palettes[m])
 

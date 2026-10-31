@@ -7,11 +7,20 @@ const tokens = await import('../mods/herdr-agents/tokens.js')
 const { pinbar } = await import('../mods/herdr-agents/pinbar.js')
 const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
 const { palettes, color, strip: stripLook, card, mode } = tokens
+const { strip } = await import('../mods/herdr-agents/strip.js')
+const { card: drawCard } = await import('../mods/herdr-agents/card.js')
+const { CardState } = await import('../mods/herdr-agents/cardstate.js')
+const { popupView } = await import('../mods/herdr-agents/popup.js')
+const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
+const { sheetBlock, SheetState } = await import('../mods/herdr-agents/sheet.js')
 
 const cx = { notify() {}, spawn() {}, focus_handle: () => ({ focus() {} }), timer: { after() {}, every() {} } }
 
 afterEach(() => {
   app.theme = null
+  app.props = null
+  app.settings = { zoom: 1 }
+  globalThis.window = undefined
 })
 
 // Every key path of a palette, with its value type; and every leaf value.
@@ -29,12 +38,31 @@ test('both palettes have the same keys, and non-colour values match', () => {
   }
 })
 
-test('mode: missing or unknown appearance is dark', () => {
+const LIGHT = { chrome: '#f1f1ee' }
+const DARK = { chrome: '#101114' }
+
+test('mode: read from the chrome the theme draws', () => {
   assert.equal(mode(), 'dark')
   assert.equal(color.text, '#EDEDED')
-  app.theme = { appearance: 'sepia' }
+  app.theme = LIGHT
+  assert.equal(mode(), 'light')
+  app.theme = DARK
   assert.equal(mode(), 'dark')
-  app.theme = { appearance: 'light' }
+  app.theme = { chrome: '#FFFFFFFF' }
+  assert.equal(mode(), 'light')
+  for (const chrome of [undefined, '', 'red', '#fff']) {
+    app.theme = { chrome }
+    assert.equal(mode(), 'dark', String(chrome))
+  }
+})
+
+test('mode: ignores the fields it must not trust', () => {
+  // The real theme() has no appearance; settings().dark says the system's, not a fixed theme's.
+  app.theme = { ...DARK, appearance: 'light', is_dark: false }
+  app.settings = { zoom: 1, dark: false }
+  assert.equal(mode(), 'dark')
+  app.theme = { ...LIGHT, appearance: 'dark', is_dark: true }
+  app.settings = { zoom: 1, dark: true }
   assert.equal(mode(), 'light')
 })
 
@@ -42,28 +70,68 @@ test('tokens follow a theme change live, nested groups too', () => {
   const tabOn = stripLook.tabOn
   assert.equal(color.text, '#EDEDED')
   assert.equal(tabOn.bg, '#1A1A1A')
-  app.theme = { appearance: 'light' }
+  app.theme = LIGHT
   assert.equal(color.text, '#1A1A1A')
   assert.equal(tabOn.bg, '#FFFFFF')
   assert.equal(stripLook.flash.bg, '#1A1A1A')
   assert.equal(card.bg, '#FFFFFF')
-  app.theme = { appearance: 'dark' }
+  app.theme = DARK
   assert.equal(tabOn.bg, '#1A1A1A')
 })
 
-test('a rendered view repaints on a theme change without a reload', () => {
-  const needs = [{ key: 'K1', kind: 'know', isOpen: true, text: 'K1 text' }]
-  const board = { session: 's', needs }
-  const draw = () => pinbar(board, new PinCtl().ui(board, cx)).node.calls.bg[0]
-  assert.equal(draw(), palettes.dark.color.bar)
-  app.theme = { appearance: 'light' }
-  assert.equal(draw(), palettes.light.color.bar)
-})
+const full = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
+const CONSUMERS = ['strip', 'pinbar', 'card', 'popup', 'sheet', 'copy']
 
-test('the strip keeps no colour from module load and none hard-coded', () => {
-  const src = readFileSync(new URL('../mods/herdr-agents/strip.js', import.meta.url), 'utf8')
-  assert.doesNotMatch(src, /#[0-9a-f]{6}/i)
-  assert.doesNotMatch(src, /^const \w+ = color\./m)
+// Every surface, drawn with the full fixture and a decision open.
+const SURFACES = {
+  pinbar: b => pinbar(b, new PinCtl().ui(b, cx)),
+  strip: b => strip(b, { boards: [b], terminals: [] }),
+  card: b => {
+    app.store['hrd.open'] = { session: b.session, key: 'D7', seq: 1 }
+    return drawCard([b], new CardState({ send() {}, notify() {}, handle: { focus() {} } }), cx)
+  },
+  popup: b => popupView(b, { h: {}, leaving: false }),
+  pins: () => {
+    const list = [{ key: 'K2', kind: 'know', isOpen: true, text: 'K2 full text', from: 'builder' }]
+    app.props = { view: 'panel', session: 's', id: 's:K2', list, width: 900, height: 200, overlay: 'o1' }
+    return pinsView(new Set(), {})
+  },
+  sheet: b => {
+    app.store['hrd.sheet'] = { session: b.session, key: 'D7', seq: 1 }
+    return sheetBlock([b], new SheetState({ send() {}, notify() {}, handle: { focus() {} } }), cx)
+  },
+}
+
+const values = m => new Set(leaves(palettes[m]).map(([, v]) => v))
+
+for (const [name, draw] of Object.entries(SURFACES)) {
+  test(`${name} draws only the palette of the mode, and switches without a reload`, () => {
+    globalThis.window = { viewport_size: () => ({ width: 1280, height: 821 }) }
+    for (const [m, theme] of [
+      ['light', LIGHT],
+      ['dark', DARK],
+      ['light', LIGHT],
+    ]) {
+      app.theme = theme
+      app.colours.clear()
+      app.store = {}
+      draw(full())
+      const allowed = values(m)
+      const stray = [...app.colours].filter(c => !allowed.has(c) && !Object.values(theme).includes(c))
+      assert.ok(app.colours.size > 0, `${name} drew no colour`)
+      assert.deepEqual(stray, [], `${name} in ${m}`)
+    }
+  })
+}
+
+test('no view keeps a colour from module load or hard-codes one', async () => {
+  for (const name of CONSUMERS) {
+    const url = new URL(`../mods/herdr-agents/${name}.js`, import.meta.url)
+    assert.doesNotMatch(readFileSync(url, 'utf8'), /#[0-9a-f]{6}\b/i, name)
+    const before = app.themeReads
+    await import(`${url.href}?load`)
+    assert.equal(app.themeReads, before, `${name}.js reads the theme as it loads`)
+  }
 })
 
 // WCAG contrast ratio of two hex colours.
@@ -94,7 +162,8 @@ test('light: text reads on the background it sits on', () => {
     [L.strip.ctxError, L.strip.tabOff.bg],
     [L.card.meta, L.card.bg],
     [L.card.impact, L.card.bg],
-    [L.card.kbdRec, L.card.kbd],
+    [L.color.chipText, L.card.kbdRec],
+    [L.color.text, L.card.kbd],
     [L.color.text, L.card.bg],
     [L.popup.head, L.popup.bg],
     [L.color.text, L.popup.rowHover],
@@ -103,5 +172,5 @@ test('light: text reads on the background it sits on', () => {
     [L.sheet.impact, L.sheet.well],
     [L.color.text, L.sheet.well],
   ]
-  for (const [fg, bg] of pairs) assert.ok(ratio(fg, bg) >= 4.4, `${fg} on ${bg} is ${ratio(fg, bg).toFixed(2)}`)
+  for (const [fg, bg] of pairs) assert.ok(ratio(fg, bg) >= 4.5, `${fg} on ${bg} is ${ratio(fg, bg).toFixed(2)}`)
 })
