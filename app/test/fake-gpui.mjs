@@ -19,6 +19,14 @@ function makeElement(...init) {
           return el
         }
       }
+      if (name === 'content') {
+        // A Popup's content slot: drawn, so a test finds what is in it.
+        return kid => {
+          node.kids.push(kid)
+          node.popupContent = kid
+          return el
+        }
+      }
       if (name === 'children') {
         return kids => {
           node.kids.push(...kids)
@@ -63,6 +71,14 @@ globalThis.__fakeGpui = {
   div: makeElement,
   svg: makeElement,
   View: class {},
+  Popup: {
+    new: (id, trigger) => {
+      const el = makeElement().id(id)
+      el.node.kids.push(trigger)
+      el.node.popup = true
+      return el
+    },
+  },
   TextView: {
     markdown: (id, markdown) => {
       const el = makeElement().id(id)
@@ -102,7 +118,7 @@ globalThis.__fakeGpui = {
 }
 
 const names = {
-  'gpui-base': ['TextView'],
+  'gpui-base': ['Popup', 'TextView'],
   'gpui-kit': ['div', 'svg', 'View'],
   herdr: [
     'appHome',

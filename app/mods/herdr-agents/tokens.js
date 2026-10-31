@@ -39,6 +39,8 @@ export const strip = {
 
 // The answer card (S5), floating over the terminal.
 export const card = {
+  bg: '#181818',
+  border: '#3A3A3A',
   meta: '#7A7A7A',
   impact: '#8A8A8A',
   keyBorder: '#333333',

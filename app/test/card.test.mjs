@@ -131,15 +131,23 @@ test('cardView: a sent answer with no outcome stops counting after SENT_HIDE_MS,
 })
 
 test('openState keeps the terminal to give back while a card is already open', () => {
-  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', space: null, seq: 0 })
+  assert.deepEqual(openState(null, 's', 'D7', 't1'), { session: 's', key: 'D7', back: 't1', space: null, seq: 0, at: 0 })
   assert.deepEqual(openState({ session: 's', key: 'D7', back: 't1' }, 's', 'D8', 't9'), {
     session: 's',
     key: 'D8',
     back: 't1',
     space: null,
     seq: 0,
+    at: 0,
   })
-  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, space: null, seq: 0 })
+  assert.deepEqual(openState(null, 's', 'D7', undefined), { session: 's', key: 'D7', back: null, space: null, seq: 0, at: 0 })
+})
+
+test('openState: the tab the card lines up with is kept while it moves on, and replaced when opened from another tab', () => {
+  const opened = openState(null, 's', 'D7', 't1', 1, null, 2)
+  assert.equal(opened.at, 2)
+  assert.equal(openState(opened, 's', 'D8', 't1', 2).at, 2, 'moving to the next item stays where it opened')
+  assert.equal(openState(opened, 's', 'D9', 't1', 3, null, 0).at, 0, 'another tab realigns it, even the first')
 })
 
 function outbox() {

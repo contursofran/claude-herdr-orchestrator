@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { addCard, addSheet, addVersion, coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
+import { removeCard, addSheet, addVersion, coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
 
 // The shape of Herdr's main layout where it matters: work is tabs / work-body / status.
 const main = () => ({
@@ -30,7 +30,6 @@ test("the pin bar goes after tabs and the strip after work-body, with the plan's
   assert.deepEqual(ids(layout), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
   const [, pins, body, strip] = layout.children[1].children
   assert.deepEqual(body.children[0].floating, [
-    { id: 'hrd-card', content: { mod: 'herdr-agents', props: { role: 'card' } }, edge: 'bottom', align: 'center' },
     { id: 'hrd-sheet', content: { mod: 'herdr-agents', props: { role: 'sheet' } }, edge: 'top', align: 'center' },
   ])
   assert.deepEqual(pins, {
@@ -64,7 +63,7 @@ test('everything else is main as it was, and main is not changed', () => {
   layout.children[1].children.push({ ...row.children[0], size: row.size })
   layout.children[1].children = layout.children[1].children.filter(c => !c.id.startsWith('hrd-'))
   layout.children[0].children[0].content = { mod: 'agents' }
-  assert.equal(layout.children[1].children[1].children[0].floating.length, 2, 'only the floating card and sheet are added to main')
+  assert.equal(layout.children[1].children[1].children[0].floating.length, 1, 'only the floating sheet is added to main')
   delete layout.children[1].children[1].children[0].floating
   assert.deepEqual(layout, main())
 })
@@ -152,12 +151,12 @@ test('a coordinator layout that exists gets its agents block repointed and nothi
     const got = JSON.parse(readFileSync(target, 'utf8'))
     assert.deepEqual(got.children[0].children[0].content, { mod: 'herdr-agents', props: { role: 'agents' } })
     got.children[0].children[0].content = { mod: 'agents' }
-    // The floating card on `main` is another addition; the owner's own block stays where it was.
+    // The floating sheet on `main` is another addition; the owner's own block stays where it was.
     assert.deepEqual(
       got.children[1].children.map(c => c.id),
       ['tabs', 'mine', 'work-body', 'hrd-status-row'],
     )
-    assert.equal(got.children[1].children[2].children[0].floating[0].id, 'hrd-card')
+    assert.equal(got.children[1].children[2].children[0].floating[0].id, 'hrd-sheet')
     delete got.children[1].children[2].children[0].floating
     // ...and the status block's row, which has a test of its own.
     got.children[1].children[3] = old.children[1].children[3]
@@ -180,7 +179,7 @@ const layoutHome = (t, layout) => {
   return { home, target: join(home, 'layouts', 'coordinator.json') }
 }
 
-test("the old hidden card row is removed and the floating card added, and the owner's edits stay", t => {
+test("the old hidden card row and the floating card are removed, and the owner's edits stay", t => {
   const old = coordinatorLayout(main())
   const kids = old.children[1].children
   kids.splice(3, 0, {
@@ -191,7 +190,12 @@ test("the old hidden card row is removed and the floating card added, and the ow
     hidden: true,
     content: { mod: 'herdr-agents', props: { role: 'card' } },
   })
-  delete kids[2].children[0].floating
+  kids[2].children[0].floating.unshift({
+    id: 'hrd-card',
+    content: { mod: 'herdr-agents', props: { role: 'card' } },
+    edge: 'bottom',
+    align: 'center',
+  })
   kids[1].size = { px: 50 } // the owner's own edit
   const { home, target } = layoutHome(t, old)
   assert.equal(writeCoordinatorLayout(home), 'updated')
@@ -200,42 +204,52 @@ test("the old hidden card row is removed and the floating card added, and the ow
   assert.deepEqual(got.children[1].children[1].size, { px: 50 })
   assert.deepEqual(
     got.children[1].children[2].children[0].floating.map(f => f.id),
-    ['hrd-card', 'hrd-sheet'],
+    ['hrd-sheet'],
   )
   assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
 })
 
-test('a floating card the owner dragged is left alone, and a leftover hidden row is still removed', t => {
+test('a floating card the owner dragged goes too: nothing draws it now', t => {
   const old = coordinatorLayout(main())
   const kids = old.children[1].children
   const dragged = { id: 'hrd-card', content: { mod: 'herdr-agents', props: { role: 'card' } }, edge: 'right', align: 'start' }
   const sheet = kids[2].children[0].floating.find(f => f.id === 'hrd-sheet')
   kids[2].children[0].floating = [dragged, sheet]
   const { home, target } = layoutHome(t, old)
-  assert.equal(writeCoordinatorLayout(home), 'exists', 'nothing to change')
-  const before = readFileSync(target, 'utf8')
-  kids.splice(3, 0, { id: 'hrd-card', type: 'block', hidden: true })
-  writeFileSync(target, JSON.stringify(old))
   assert.equal(writeCoordinatorLayout(home), 'updated')
   const got = JSON.parse(readFileSync(target, 'utf8'))
-  assert.deepEqual(got.children[1].children[2].children[0].floating, [dragged, sheet])
-  assert.deepEqual(ids(got), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
-  assert.equal(before.includes('"edge":"right"'), true)
+  assert.deepEqual(got.children[1].children[2].children[0].floating, [sheet])
+  assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
 })
 
-test('addCard adds the floating block once, keeps other floating blocks, and does nothing without a main block', () => {
+test('a leftover hidden card row is still removed', t => {
+  const old = coordinatorLayout(main())
+  old.children[1].children.splice(3, 0, { id: 'hrd-card', type: 'block', hidden: true })
+  const { home, target } = layoutHome(t, old)
+  assert.equal(writeCoordinatorLayout(home), 'updated')
+  assert.deepEqual(ids(JSON.parse(readFileSync(target, 'utf8'))), ['tabs', 'hrd-pins', 'work-body', 'hrd-strip', 'hrd-status-row'])
+})
+
+test('removeCard takes the floating card out, keeps other floating blocks, drops an emptied list, and does nothing without one', () => {
   const layout = main()
-  layout.children[1].children[1].children[0].floating = [{ id: 'board', content: { mod: 'board' }, edge: 'left', align: 'center' }]
-  assert.equal(addCard(layout), true)
+  const main0 = layout.children[1].children[1].children[0]
+  main0.floating = [
+    { id: 'board', content: { mod: 'board' }, edge: 'left', align: 'center' },
+    { id: 'hrd-card', content: { mod: 'herdr-agents', props: { role: 'card' } }, edge: 'bottom', align: 'center' },
+  ]
+  assert.equal(removeCard(layout), true)
   assert.deepEqual(
-    layout.children[1].children[1].children[0].floating.map(f => f.id),
-    ['board', 'hrd-card'],
+    main0.floating.map(f => f.id),
+    ['board'],
   )
-  assert.equal(addCard(layout), false)
-  assert.equal(addCard({ id: 'root', children: [] }), false)
+  assert.equal(removeCard(layout), false)
+  main0.floating = [{ id: 'hrd-card' }]
+  assert.equal(removeCard(layout), true)
+  assert.equal('floating' in main0, false)
+  assert.equal(removeCard({ id: 'root', children: [] }), false)
 })
 
-test('with no main block the old card row goes, no card is added, and the result says so', t => {
+test('with no main block the old card row still goes', t => {
   const old = main()
   const kids = old.children[1].children
   kids.splice(3, 0, {
@@ -247,7 +261,7 @@ test('with no main block the old card row goes, no card is added, and the result
   })
   old.children[1].children[1].children[0].id = 'elsewhere'
   const { home, target } = layoutHome(t, old)
-  assert.equal(writeCoordinatorLayout(home), 'updated-no-card')
+  assert.equal(writeCoordinatorLayout(home), 'updated')
   assert.equal(JSON.stringify(JSON.parse(readFileSync(target, 'utf8'))).includes('hrd-card'), false)
 })
 
@@ -331,7 +345,7 @@ test('a layout with the card but no sheet gets the floating sheet added, and a s
   const got = JSON.parse(readFileSync(target, 'utf8'))
   assert.deepEqual(
     got.children[1].children[2].children[0].floating.map(f => f.id),
-    ['hrd-card', 'hrd-sheet'],
+    ['hrd-sheet'],
   )
   assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
   const moved = { id: 'hrd-sheet', content: { mod: 'herdr-agents', props: { role: 'sheet' } }, edge: 'left', align: 'start' }

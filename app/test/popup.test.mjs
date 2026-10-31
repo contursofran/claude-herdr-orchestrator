@@ -303,3 +303,25 @@ test('the pop-up row: narrow, the title is what truncates; the link and the age 
     assert.ok(!k.node.calls.truncate, text)
   }
 })
+
+// --- a card opened from the pop-up lines up with its item's tab (#93) ---
+
+test('the pop-up row: the card opens at the place of its item in the strip, else the first tab', async () => {
+  const { stripItems } = await import('../mods/herdr-agents/model.js')
+  const full = { ...board(), session: 's' }
+  const items = stripItems(full)
+  assert.ok(items.length >= 3)
+  app.focused = { terminal: 't1', space: 'a' }
+  app.props = { role: 'board', session: 's', overlay: 'o9', height: 300 }
+  app.store = {}
+  for (const [item, at] of [
+    [items[2].key, 2],
+    ['not-in-the-strip', 0],
+  ]) {
+    full.tasks = [prTask({ key: 'r', item })]
+    app.store['hrd.open'] = null
+    click(findId(popupView(full, { h: {}, leaving: false }), 'work-r'))
+    assert.equal(app.store['hrd.open'].key, item)
+    assert.equal(app.store['hrd.open'].at, at)
+  }
+})

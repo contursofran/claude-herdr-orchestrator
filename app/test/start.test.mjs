@@ -7,6 +7,7 @@ import { beforeEach, test } from 'node:test'
 const state = { props: null, store: {}, closed: [], reads: [], file: null }
 globalThis.__startFake = {
   View: class {},
+  Popup: { new: () => globalThis.__startFake.div() },
   appHome: () => '/home',
   // Chains anything; records the text it is given.
   div: () => {
@@ -62,7 +63,7 @@ globalThis.__startFake = {
 }
 const shim = {
   'gpui-kit': ['View', 'div', 'image', 'svg'],
-  'gpui-base': ['TextView', 'h_flex', 'v_flex'],
+  'gpui-base': ['Popup', 'TextView', 'h_flex', 'v_flex'],
   herdr: [
     'agents',
     'appHome',
@@ -148,23 +149,23 @@ test('the next run clears again', () => {
   assert.equal(state.store['hrd.doneReq'], null)
 })
 
-test('the card copy forgets a card left open by the last run, on the first start of a run', () => {
+test('the strip copy (it draws the card) forgets a card left open by the last run, on the first start of a run', () => {
   state.store = { 'hrd.open': card, 'hrd.pick': card }
-  startCopy('card')
+  startCopy('strip')
   assert.deepEqual(state.store, { 'hrd.open': null, 'hrd.pick': null })
 })
 
-test('a card copy started again in the same run keeps the open card', () => {
-  startCopy('card')
+test('a strip copy started again in the same run keeps the open card', () => {
+  startCopy('strip')
   state.store = { 'hrd.open': card, 'hrd.pick': card }
-  startCopy('card')
+  startCopy('strip')
   assert.deepEqual(state.store, { 'hrd.open': card, 'hrd.pick': card })
 })
 
 test('the first copies of a run clear their own keys, whichever starts first', () => {
   state.store = { ...left(), 'hrd.open': card }
-  startCopy('card')
-  assert.equal(state.store['hrd.pins'], 'o2', 'the card leaves the overlay ids to the pin bar')
+  startCopy('strip')
+  assert.equal(state.store['hrd.pins'], 'o2', 'the strip leaves the overlay ids to the pin bar')
   startCopy('pinbar')
   assert.equal(state.store['hrd.pins'], null)
 })
@@ -276,8 +277,8 @@ function startTimed(props) {
 
 test('only the copies that draw ages and have no timer for them start the age timer', () => {
   globalThis.localStorage = { getItem: () => null, setItem() {} }
-  for (const role of ['pinbar', 'card', 'sheet', 'pins', 'board']) assert.ok(startTimed({ role, list: [] }).every[AGE_TICK_MS], role)
-  for (const role of ['strip', 'agents', 'version']) assert.equal(startTimed({ role, session: 's' }).every[AGE_TICK_MS], undefined, role)
+  for (const role of ['pinbar', 'strip', 'sheet', 'pins', 'board']) assert.ok(startTimed({ role, list: [] }).every[AGE_TICK_MS], role)
+  for (const role of ['agents', 'version']) assert.equal(startTimed({ role, session: 's' }).every[AGE_TICK_MS], undefined, role)
 })
 
 test('a pins copy on screen redraws when an age moves with the clock, and not within the minute', t => {
@@ -328,7 +329,7 @@ test('the board pop-up with no merged row asks for no redraw as the clock moves'
 test('a closed card or sheet asks for no redraw as the clock moves', t => {
   let clock = 1_000_000_000
   t.mock.method(Date, 'now', () => clock)
-  for (const role of ['card', 'sheet']) {
+  for (const role of ['strip', 'sheet']) {
     const { counts, tick } = startTimed({ role })
     clock += 10 * 60_000
     tick()
@@ -336,7 +337,7 @@ test('a closed card or sheet asks for no redraw as the clock moves', t => {
   }
 })
 
-test('an open card, an open sheet and the pin bar redraw when the age they show moves, and not within the minute', t => {
+test('an open card (drawn by the strip), an open sheet and the pin bar redraw when the age they show moves, and not within the minute', t => {
   const T0 = 1_000_000_000
   let clock = T0 + 2 * 60_000
   t.mock.method(Date, 'now', () => clock)
@@ -344,7 +345,7 @@ test('an open card, an open sheet and the pin bar redraw when the age they show 
   const pin = { key: 'K1', kind: 'know', isOpen: true, at: T0, title: 'p', text: 'p' }
   const board = { session: 's', needs: [need, pin] }
   const copies = {
-    card: startTimed({ role: 'card' }),
+    strip: startTimed({ role: 'strip' }),
     sheet: startTimed({ role: 'sheet' }),
     pinbar: startTimed({ role: 'pinbar' }),
   }
@@ -459,7 +460,7 @@ test('commands before the first board read wait for it: the last one then does i
   state.terminals = [{ address: 't1', state: 'live', program: { agent: true } }]
   state.focused = { terminal: 't1', space: 'a' }
   state.file = JSON.stringify({ session: 's', coordinator: { terminal: 't1' }, needs: [], tasks: [] })
-  const own = { notify() {}, sleep: async () => {}, timer: { every() {}, after() {} }, spawn: f => f(own) }
+  const own = { notify() {}, sleep: async () => {}, focus_handle: () => ({}), timer: { every() {}, after() {} }, spawn: f => f(own) }
   new HerdrAgents().init(state.props, own)
   await settle()
   assert.equal(state.opened, null, 'no board yet')
@@ -533,7 +534,7 @@ const live = () => {
   state.terminals = [{ address: 't1', state: 'live', program: { agent: true } }]
 }
 
-for (const role of ['strip', 'card', 'pinbar']) {
+for (const role of ['strip', 'pinbar']) {
   test(`a ${role} that throws records it and draws nothing; a later good draw clears it`, async () => {
     const { draw } = drawCopy(role)
     state.drawThrows = true
@@ -604,7 +605,7 @@ test('the sheet is not a band part: its throw stays the app’s', () => {
   assert.throws(() => copy.render(drawCx()), /boom/)
 })
 
-for (const role of ['strip', 'card', 'pinbar']) {
+for (const role of ['strip', 'pinbar']) {
   test(`the heartbeat lists no terminal while the ${role} fails, at once, and lists again after a good draw`, async () => {
     live()
     const boards = [{ session: 's', coordinator: { terminal: 't1' } }]
@@ -642,11 +643,11 @@ for (const role of ['strip', 'card', 'pinbar']) {
 }
 
 test('a new run forgets last run’s failures; a closing part forgets only its own', async () => {
-  state.store = { [failKey('card')]: 'old', [failKey('strip')]: 'old' }
-  const card = drawCopy('card')
-  await card.copy.close()
-  assert.equal(state.store[failKey('card')], null)
-  assert.equal(state.store[failKey('strip')], 'old')
-  startCopy('pinbar')
+  state.store = { [failKey('pinbar')]: 'old', [failKey('strip')]: 'old' }
+  const strip = drawCopy('strip')
+  await strip.copy.close()
   assert.equal(state.store[failKey('strip')], null)
+  assert.equal(state.store[failKey('pinbar')], 'old')
+  startCopy('pinbar')
+  assert.equal(state.store[failKey('pinbar')], null)
 })
