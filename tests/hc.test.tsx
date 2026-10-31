@@ -564,8 +564,8 @@ const pruneJob = {
   closed: false,
   token: 'tok-done',
 }
-const prunable = async ($: Parameters<typeof start>[0], on: Parameters<typeof start>[1]) => {
-  const h = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': pruneJob } } })
+const prunable = async ($: Parameters<typeof start>[0], on: Parameters<typeof start>[1], job: object = pruneJob) => {
+  const h = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': job } } })
   h.files['/repo/wt/x'] = ''
   h.runs.set('git -C /repo/wt rev-parse --path-format=absolute --git-common-dir', [{ exitCode: 0, stdout: '/repo/.git\n' }])
   h.runs.set('git --git-dir=/repo/.git worktree list --porcelain', [
@@ -601,6 +601,29 @@ test("prune closes the mod's own idle workers in a merged worktree", async ($, o
   expect(JSON.stringify(out)).toContain('app-client#12')
   expect(closed).toEqual(['w-done'])
   expect(removed).toEqual(['w-done'])
+})
+
+test('prune keeps a worktree whose job is still running while its worker sits idle between turns', async ($, on) => {
+  const { clock, closed, addTerm, status, shell } = await prunable($, on, {
+    ...pruneJob,
+    endedAt: undefined,
+    status: 'running',
+    address: 'w-done',
+  })
+  addTerm('w-done', '/repo/wt', WORKER)
+  status['w-done'] = 'idle'
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(removes(shell)).toBe(false)
+  expect(closed).toEqual([])
+})
+
+test('prune keeps a worktree whose job is parked on a WAIT.json', async ($, on) => {
+  const wait = { for: 'CI', check: 'true', every: 1, max: 30, since: 900_000 }
+  const { clock, shell } = await prunable($, on, { ...pruneJob, endedAt: undefined, status: 'running', wait })
+  await clock.settle()
+  await command($, 'hrd-prune')
+  expect(removes(shell)).toBe(false)
 })
 
 test('prune keeps a worktree where an unlabelled terminal sits idle', async ($, on) => {

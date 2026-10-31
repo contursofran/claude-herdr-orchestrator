@@ -1,11 +1,12 @@
 import type { EngineInterface } from 'claude-code'
 import { closeTerminal, type HcListed, listTerminals } from './hc'
 import { session } from './session'
-import { dropOldJobs, jobs } from './state'
+import { active, dropOldJobs, jobs } from './state'
 
 // Every `pruneMinutes`, and on the prune command: removes the linked worktrees of the
 // repos this session's workers used once their branch's PR is merged on GitHub, the
-// tree is clean and no terminal there is working or blocked. Closes those workers' terminals
+// tree is clean, no terminal there is working or blocked and no job of this session that has not reported is
+// still living there (a worker idle between turns is not finished). Closes those workers' terminals
 // and deletes the local branch. Ignored files (node_modules, target) go with the tree;
 // anything uncommitted keeps it.
 let pruning = false
@@ -20,6 +21,8 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
       return r.exitCode === 0 ? r.stdout.trim() : undefined
     }
     await dropOldJobs($)
+    // A job with no report yet (running, starting or waiting) is live even while its terminal sits idle between turns.
+    const liveJobs = Object.values(await jobs($)).filter(j => !j.closed && !j.stopped && (active(j) || j.wait))
     const commons = new Set<string>()
     // One rev-parse per folder, however many jobs ran there.
     for (const cwd of new Set(Object.values(await jobs($)).map(j => j.cwd))) {
@@ -55,6 +58,8 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
       for (const { path, branch } of trees) {
         if (!path || !branch || !(await $.fs.exists(path))) continue
         const here = inside(path)
+        // A live job whose home folder is this tree keeps it, whatever its terminal's status.
+        if (liveJobs.some(j => j.cwd === path || j.cwd.startsWith(`${path}/`) || here.some(a => a.address === j.address))) continue
         // Only a labelled worker that is idle, done or error is safe to close; any other terminal keeps the tree.
         if (here.some(a => !mine.has(a.address) || !['idle', 'done', 'error'].includes(a.status ?? ''))) continue
         if ((await run(['git', '-C', path, 'status', '--porcelain'])) !== '') continue
