@@ -4,6 +4,7 @@ import { send } from './board.js'
 import { copyableText } from './copy.js'
 import { copyKey } from './copystate.js'
 import { CardState, clearStaleSheet, firstThisRun } from './cardstate.js'
+import { sharedOutbox } from './outbox.js'
 import { button, faceIcon, ghost, keyButton, quietRow } from './card.js'
 import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetNext, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, closeSheetHeld, pageSheet } from './sheetctl.js'
@@ -11,7 +12,7 @@ import { noteDismissed } from './outside.js'
 import { pastFrame, quietLines } from './model.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
-/** The sheet's state for this copy (main.js, role `sheet`): the card's (an Outbox for the undo window, the focus handle),
+/** The sheet's state for this copy (main.js, role `sheet`): the card's (the Outbox of the undo window, the focus handle),
  *  plus the RESULT.md files read so far. A sheet left open when the app last ran is not brought back. */
 export class SheetState extends CardState {
   constructor(args) {
@@ -47,7 +48,9 @@ export class SheetState extends CardState {
 
 export function makeSheetState(cx) {
   if (firstThisRun('hrd.sheetStarted')) clearStaleSheet(shared, setShared)
-  return new SheetState({ send, notify, handle: cx.focus_handle() })
+  const ctl = new SheetState({ send, notify, handle: cx.focus_handle(), store: sharedOutbox(shared, setShared), surface: 'sheet' })
+  ctl.outbox.release()
+  return ctl
 }
 
 const label = text => div().flex_none().text_color(sheetLook.label).child(text)
@@ -119,7 +122,7 @@ export function sheetBlock(boards, ctl, cx) {
   if (!open) {
     ctl.token = null
     ctl.opened = null
-    return div()
+    return ctl.hold ? div().id('sheet-hold').track_focus(ctl.h) : div()
   }
   const board = (boards ?? []).find(b => b.session === open.session)
   const raw = sheetView(board, open.key, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, now: Date.now() })
@@ -149,22 +152,21 @@ export function sheetBlock(boards, ctl, cx) {
     cx.notify()
   }
   // An answer or Done queues the action and pages to the next open item, or closes with none.
-  const held = { get: () => shared('hrd.held'), set: v => setShared('hrd.held', v), surface: 'sheet' }
   const choose = (opt, cx) => {
     if (opt.action && board) {
       ctl.step(cx, board.session, opt.action, {
         now: Date.now(),
         next: hidden => sheetNext(board, open.key, hidden),
         go: item => pageSheet(item.key),
-        close: () => closeSheetHeld(cx), // the keyboard goes back to the terminal after the hold
-        held,
+        close: () => closeSheetHeld(cx, ctl), // the keyboard goes back to the terminal after the hold
       })
       cx.notify()
     } else if (opt.url) exec('open', [opt.url]).catch(() => {})
   }
   const lines = quietLines(board, open.key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
   const back = line => (_e, cx) => {
-    ctl.undoTo(line, item => pageSheet(item.key), { held, session: board.session, now: Date.now() })
+    if (line.kind === 'failed' && line.key === open.key) return choose(line, cx) // already on the failed item: send it again
+    ctl.undoTo(line, item => pageSheet(item.key))
     cx.notify()
   }
   const askPrincipal = (_e, cx) => {
@@ -286,7 +288,7 @@ export function sheetBlock(boards, ctl, cx) {
     .when(view.undoId, el =>
       el.child(
         button('sheet-undo', 'undo', (_e, cx) => {
-          ctl.undo(view.undoId, held, board.session, open.key)
+          ctl.undo(view.undoId)
           cx.notify()
         }),
       ),

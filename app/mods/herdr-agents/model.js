@@ -371,9 +371,9 @@ export const doneAction = key => ({ action: 'done', key })
 /** A file name that sorts by time: `<ms>-<random>.json`. */
 export const actionFile = (ms, rand) => `${String(ms).padStart(13, '0')}-${rand}.json`
 
-/** The queue with one more action that goes out at now + UNDO_MS. `id` is its action file name. */
-export function queueAction(queue, { id, session, action, now }) {
-  return [...queue, { id, session, action, key: action.key ?? null, due: now + UNDO_MS }]
+/** The queue with one more action that goes out at now + UNDO_MS. `id` is its action file name, `surface` the copy that queued it. */
+export function queueAction(queue, { id, session, action, now, surface = null }) {
+  return [...queue, { id, session, action, key: action.key ?? null, due: now + UNDO_MS, surface }]
 }
 
 /** The queue without the action (undo). */
@@ -758,7 +758,8 @@ export function quietLine(board, key, state = {}) {
 }
 
 /** Every quiet line, the waiting action's undo first (it lasts seconds) and a failed send after it, so the failure never hides
- *  an undo. [] when there is none. As quietLine otherwise. */
+ *  an undo. A failed send is also shown on its own item, first among failures, while that item is open; its line has the
+ *  `action`, to send it again. [] when there is none. As quietLine otherwise. */
 export function quietLines(board, key, { queue = [], failed = [], now = 0 } = {}) {
   if (!board) return []
   const other = q => q.session === board.session && q.key && q.key !== key
@@ -766,11 +767,13 @@ export function quietLines(board, key, { queue = [], failed = [], now = 0 } = {}
     const answered = q.action?.action === 'answer'
     return { key: q.key, verb: answered ? 'answer' : 'done', detail: answered ? String(q.action.answer ?? '') : '' }
   }
-  const bad = failed.filter(f => other(f) && now - f.at < FAIL_LINE_MS).pop()
+  const isOpen = k => (board.needs ?? []).some(n => n.key === k && n.isOpen === true)
+  const fails = failed.filter(f => f.session === board.session && isOpen(f.key) && now - f.at < FAIL_LINE_MS)
+  const bad = fails.filter(f => f.key === key).pop() ?? fails.pop()
   const waiting = queue.filter(other).pop()
   return [
     ...(waiting ? [{ kind: 'waiting', ...say(waiting), undoId: waiting.id }] : []),
-    ...(bad ? [{ kind: 'failed', ...say(bad), undoId: null }] : []),
+    ...(bad ? [{ kind: 'failed', ...say(bad), undoId: null, action: bad.action }] : []),
   ]
 }
 
@@ -818,16 +821,20 @@ export const openState = (current, session, key, back, seq = 0, space = null) =>
  *  opened from (focusing it from another space would jump there). */
 export const canRefocus = (open, space) => Boolean(open?.back) && (open.space ?? null) === (space ?? null)
 
+/** Whether the card, sheet, board pop-up or pins overlay is open (`get` is shared). */
+export const surfaceOpen = get => ['hrd.open', 'hrd.sheet', 'hrd.popup', 'hrd.pins'].some(key => Boolean(get(key)))
+
 /**
  * After the last item closed the surface at once, the keyboard goes back to the terminal only after ROWS_SETTLE_MS, so a
- * repeated key cannot type there. `closed` is the open state the surface had; `now` = {focusedTerminal, space, open}: what
- * is true when the hold ends. Refocus only if the owner is still where the surface was (same space, the same terminal, or
- * none known) and opened no other surface meanwhile; otherwise they went elsewhere on purpose and the keyboard stays there.
+ * repeated key cannot type there. `closed` is the open state the surface had; `now` = {holding, focusedTerminal, space, open}:
+ * what is true when the hold ends. `holding`: the surface's handle still has the keyboard, so nothing else took it (a terminal,
+ * an overlay, a dialog). `focusedTerminal` stays on `closed.back` through a close (seen live) and is null on a mod pane, so
+ * another terminal or a null both mean the owner went elsewhere. Anything but all of this leaves the keyboard alone.
  */
 export function holdRefocus(closed, now) {
   if (!canRefocus(closed, now.space)) return false
   if (now.open) return false
-  return !now.focusedTerminal || now.focusedTerminal === closed.back
+  return Boolean(now.holding) && now.focusedTerminal === closed.back
 }
 
 /** How long a note of a dismissing press stays good, in ms. One press reaches its button at once; this only outlives a slow draw. */

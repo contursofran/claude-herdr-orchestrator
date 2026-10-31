@@ -6,6 +6,7 @@ import { copyableText } from './copy.js'
 import { copyKey, copyTargets } from './copystate.js'
 import { noteDismissed } from './outside.js'
 import { CardState, clearStaleOpen, firstThisRun } from './cardstate.js'
+import { sharedOutbox } from './outbox.js'
 import {
   answerAction,
   cardFor,
@@ -25,7 +26,9 @@ import { color, font, icon, card as look } from './tokens.js'
  *  its board is likely gone and it would take the first key. */
 export function makeCardState(cx) {
   if (firstThisRun('hrd.cardStarted')) clearStaleOpen(shared, setShared)
-  return new CardState({ send, notify, handle: cx.focus_handle() })
+  const ctl = new CardState({ send, notify, handle: cx.focus_handle(), store: sharedOutbox(shared, setShared), surface: 'card' })
+  ctl.outbox.release()
+  return ctl
 }
 
 export const ghost = (id, label, onClick) =>
@@ -114,8 +117,8 @@ export function faceIcon(face) {
   return svg(icon(name)).size(14).flex_none().text_color(color.text)
 }
 
-/** The quiet line on the item the owner moved on to: the choice just made on another item, with `undo` while it waits, or
- *  that it was not sent, with `retry` (both go back to that item). `line` is from quietLine(). */
+/** The quiet line: the choice just made on another item, with `undo` while it waits, or that a choice was not sent, with
+ *  `retry` (both go back to that item; on the failed item itself `retry` sends it again). `line` is from quietLines(). */
 export function quietRow(line, onBack) {
   const what = [line.verb, line.detail].filter(Boolean).join(' · ')
   return div()
@@ -163,7 +166,7 @@ export function card(boards, ctl, cx) {
   const view = cardFor(boards, open, { queue: ctl.outbox.queue, sent: ctl.outbox.sent, terminals: terminals(), now: Date.now() })
   if (!view) {
     ctl.token = null
-    return div()
+    return ctl.hold ? div().id('card-hold').track_focus(ctl.h) : div()
   }
   const board = (boards ?? []).find(b => b.session === open.session)
 
@@ -186,14 +189,12 @@ export function card(boards, ctl, cx) {
     cx.notify()
   }
   // An answer or Done queues the action and moves to the next open item, or closes with none (Esc's way back to the terminal).
-  const held = { get: () => shared('hrd.held'), set: v => setShared('hrd.held', v), surface: 'card' }
   const act = (action, cx) => {
     ctl.step(cx, board.session, action, {
       now: Date.now(),
       next: hidden => nextItem(board, key, hidden),
       go: item => openCard(board, item),
-      close: () => closeCardHeld(cx), // the keyboard goes back to the terminal after the hold
-      held,
+      close: () => closeCardHeld(cx, ctl), // the keyboard goes back to the terminal after the hold
     })
     cx.notify()
   }
@@ -201,14 +202,15 @@ export function card(boards, ctl, cx) {
   const done = (_e, cx) => act(doneAction(key), cx)
   const lines = quietLines(board, key, { queue: ctl.outbox.queue, failed: ctl.outbox.failed, now: Date.now() })
   const back = line => (_e, cx) => {
-    ctl.undoTo(line, item => openCard(board, item), { held, session: board.session, now: Date.now() })
+    if (line.kind === 'failed' && line.key === key) return act(line.action, cx) // already on the failed item: send it again
+    ctl.undoTo(line, item => openCard(board, item))
     cx.notify()
   }
   const link = () => {
     if (view.url) exec('open', [view.url]).catch(() => {})
   }
   const next = (_e, cx) => {
-    const item = nextItem(board, key, ctl.hiddenAll(held, Date.now()))
+    const item = nextItem(board, key, ctl.outbox.hidden())
     if (item) openCard(board, item)
     cx.notify()
   }
@@ -272,7 +274,7 @@ export function card(boards, ctl, cx) {
   } else if (view.face === 'gone') {
     body.child(div().text_color(color.soft).child('Its board is gone: the session ended or the app restarted.'))
   } else {
-    const more = nextItem(board, key, ctl.hiddenAll(held, Date.now()))
+    const more = nextItem(board, key, ctl.outbox.hidden())
     const text = view.detail
       ? `${view.verb} · ${view.detail} · ${view.sent ? 'sent' : 'sending'}`
       : `${view.verb} · ${view.sent ? 'sent' : 'sending'}`
@@ -285,7 +287,7 @@ export function card(boards, ctl, cx) {
         .when(view.undoId, el =>
           el.child(
             button('card-undo', 'undo', (_e, cx) => {
-              ctl.undo(view.undoId, held, board.session, key)
+              ctl.undo(view.undoId)
               cx.notify()
             }),
           ),

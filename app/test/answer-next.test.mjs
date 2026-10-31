@@ -110,7 +110,7 @@ test('the next item shows one quiet line with the choice and an undo while the s
   )
   assert.equal(quietLine(b, 'D7', { queue: ctl.outbox.queue, now: t.now }), null, 'not on the item it is about')
   assert.equal(quietLine(b, 'D8', { queue: ctl.outbox.queue, sent: [], now: t.now }).kind, 'waiting')
-  ctl.outbox.queue = []
+  ctl.outbox.update({ queue: [] })
   assert.equal(quietLine(b, 'D8', { queue: ctl.outbox.queue, now: t.now }), null, 'gone once the send went out')
   assert.equal(quietLine(null, 'D8', { queue: [{ session: 's', key: 'D7', action: doneAction('D7') }] }), null)
 })
@@ -148,7 +148,7 @@ test('a send that fails after moving on shows on the quiet line with retry, and 
 
 test('a failure the board reports (ok:false) reaches the quiet line too', () => {
   const { t, ctl, b } = setup()
-  ctl.outbox.sent = [{ id: 'a1', session: b.session, key: 'D7', action: answerAction('D7', 'Cursor'), at: t.now }]
+  ctl.outbox.update({ sent: [{ id: 'a1', session: b.session, key: 'D7', action: answerAction('D7', 'Cursor'), at: t.now }] })
   b.actions = [{ id: 'a1', ok: false, message: 'nope' }]
   ctl.onBoards([b])
   assert.equal(quietLine(b, 'D8', { failed: ctl.outbox.failed, now: t.now }).kind, 'failed')
