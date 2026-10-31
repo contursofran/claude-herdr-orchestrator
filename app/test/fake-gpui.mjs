@@ -102,7 +102,7 @@ globalThis.__fakeGpui = {
 }
 
 const names = {
-  'gpui-base': ['TextView'],
+  'gpui-base': ['TextView', 'h_flex', 'v_flex'],
   'gpui-kit': ['div', 'svg', 'View'],
   herdr: [
     'appHome',
@@ -112,9 +112,11 @@ const names = {
     'hc',
     'home',
     'layout',
+    'machines',
     'nextCommand',
     'notify',
     'openOverlay',
+    'panes',
     'playSound',
     'props',
     'readTextFile',
@@ -122,9 +124,11 @@ const names = {
     'settings',
     'setShared',
     'shared',
+    'spaces',
     'terminals',
     'theme',
     'watchFolder',
+    'window',
     'writeTextFile',
   ],
 }

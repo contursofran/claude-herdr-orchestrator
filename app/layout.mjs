@@ -134,6 +134,25 @@ export function repointAgents(layout) {
   return true
 }
 
+const spacesList = { mod: 'herdr-agents', props: { role: 'spaces' } }
+
+/** Points the `spaces` block (Herdr's Spaces list) at this mod's copy, which has the CPU, RAM and disk line under each
+ *  machine. Edits `layout` in place; true if it changed anything. Only a block that still shows Herdr's own `spaces` mod is touched. */
+export function repointSpaces(layout) {
+  const find = node => {
+    if (node?.id === 'spaces' && node.content?.mod === 'spaces') return node
+    for (const child of node?.children ?? []) {
+      const found = find(child)
+      if (found) return found
+    }
+    return null
+  }
+  const node = find(layout)
+  if (!node) return false
+  node.content = { ...node.content, ...structuredClone(spacesList), props: { ...node.content.props, ...spacesList.props } }
+  return true
+}
+
 /** `main` with (`version` is the app's, for `cloned_from`) the pin bar after `tabs` and the strip after `work-body`, both in the `work` column, and the `agents` block on this mod's list. Throws if main has another shape. */
 export function coordinatorLayout(main, version) {
   const layout = structuredClone(main)
@@ -154,6 +173,7 @@ export function coordinatorLayout(main, version) {
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
+  repointSpaces(layout)
   addCard(layout)
   addSheet(layout)
   addVersion(layout)
@@ -162,7 +182,7 @@ export function coordinatorLayout(main, version) {
 }
 
 /** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists', 'updated' or 'updated-no-card' (the old card row was removed but there is no `main` block to float one over). A file that exists keeps
- *  everything but what `repointAgents`, `addCard` and `addVersion` bring up to date (then 'updated'). */
+ *  everything but what `repointAgents`, `repointSpaces`, `addCard`, `addSheet` and `addVersion` bring up to date (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) {
@@ -173,8 +193,14 @@ export function writeCoordinatorLayout(home) {
       return 'exists'
     }
     // All the edits run: `||` would skip the later ones.
-    const [repointed, carded, sheeted, versioned] = [repointAgents(layout), addCard(layout), addSheet(layout), addVersion(layout)]
-    if (!repointed && !carded && !sheeted && !versioned) return 'exists'
+    const [repointed, carded, sheeted, versioned, spaced] = [
+      repointAgents(layout),
+      addCard(layout),
+      addSheet(layout),
+      addVersion(layout),
+      repointSpaces(layout),
+    ]
+    if (!repointed && !carded && !sheeted && !versioned && !spaced) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
     return (repointed || carded) && !hasFloatingCard(layout) ? 'updated-no-card' : 'updated'
@@ -200,7 +226,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents list, answer card, sheet and version block were brought up to date.'
+          ? 'Layout "coordinator" exists; only its agents and Spaces lists, answer card, sheet and version block were brought up to date.'
           : result === 'updated-no-card'
             ? 'Layout "coordinator" exists; its agents list was updated and the old answer card row removed, but it has no "main" block to float a card over, so there is no answer card.'
             : 'Layout "coordinator" exists; left as it is.',
