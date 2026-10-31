@@ -73,6 +73,7 @@ const shim = {
     'hc',
     'home',
     'layout',
+    'machines',
     'nextCommand',
     'notify',
     'openOverlay',

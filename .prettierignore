@@ -3,3 +3,4 @@ view/.claude-plugin/types/
 node_modules/
 *.md
 app/mods/herdr-agents/agents.js
+app/mods/herdr-agents/spaces.js

@@ -9,12 +9,13 @@ import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEm
 import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
+import { SpacesList } from './spaces.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
 import { readVersion, versionView } from './version.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
-// Role `agents` is the agents list (agents.js), which keeps state of its own; `version`, `pins` and `board` have their own
+// Role `agents` is the agents list (agents.js) and `spaces` the Spaces list (spaces.js), which keep state of their own; `version`, `pins` and `board` have their own
 // branches here. Each of the roles below takes what it needs from the same bag.
 const roles = {
   pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
@@ -30,6 +31,11 @@ export default class HerdrAgents extends View {
         this.version = await readVersion()
         if (this.version) cx.notify()
       })
+      return
+    }
+    if (props()?.role === 'spaces') {
+      this.spacesList = new SpacesList()
+      this.spacesList.init(cx)
       return
     }
     if (props()?.role === 'agents') {
@@ -177,6 +183,7 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (props()?.role === 'version') return versionView(this.version)
+    if (this.spacesList) return this.spacesList.render()
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
     if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))
     if (props()?.role === 'board')

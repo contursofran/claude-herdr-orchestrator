@@ -3,7 +3,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { removeCard, addSheet, addVersion, coordinatorLayout, repointAgents, writeCoordinatorLayout } from '../layout.mjs'
+import { removeCard, addSheet, addVersion, coordinatorLayout, repointAgents, repointSpaces, writeCoordinatorLayout } from '../layout.mjs'
 
 // The shape of Herdr's main layout where it matters: work is tabs / work-body / status.
 const main = () => ({
@@ -365,4 +365,52 @@ test('addSheet adds the floating block once, keeps other floating blocks, and do
   )
   assert.equal(addSheet(layout), false)
   assert.equal(addSheet({ id: 'root', children: [] }), false)
+})
+
+// Herdr's main layout has its Spaces list above the agents list in the sidebar.
+const withSpaces = () => {
+  const layout = main()
+  layout.children[0].children.unshift({ id: 'spaces', type: 'block', min: 90, content: { mod: 'spaces' } })
+  return layout
+}
+
+test("the coordinator layout points the spaces block at this mod with role spaces; main keeps Herdr's own", () => {
+  const input = withSpaces()
+  const layout = coordinatorLayout(input)
+  assert.deepEqual(layout.children[0].children[0], {
+    id: 'spaces',
+    type: 'block',
+    min: 90,
+    content: { mod: 'herdr-agents', props: { role: 'spaces' } },
+  })
+  assert.deepEqual(input.children[0].children[0].content, { mod: 'spaces' })
+})
+
+test("repointSpaces touches only a block still on Herdr's spaces mod", () => {
+  const mine = withSpaces()
+  mine.children[0].children[0].content = { mod: 'my-spaces' }
+  assert.equal(repointSpaces(mine), false)
+  assert.deepEqual(mine.children[0].children[0].content, { mod: 'my-spaces' })
+  assert.equal(repointSpaces(main()), false, 'no spaces block: nothing to do')
+  const again = coordinatorLayout(withSpaces())
+  assert.equal(repointSpaces(again), false, 'already on this mod: nothing changes')
+})
+
+test('a coordinator layout that exists gets its spaces block repointed in place, once', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hrd-layout-'))
+  try {
+    mkdirSync(join(home, 'layouts'))
+    writeFileSync(join(home, 'layouts', 'main.json'), JSON.stringify(withSpaces()))
+    const target = join(home, 'layouts', 'coordinator.json')
+    // The owner's copy from before: everything else already up to date, spaces still Herdr's own.
+    const current = coordinatorLayout(withSpaces())
+    current.children[0].children[0].content = { mod: 'spaces' }
+    writeFileSync(target, JSON.stringify(current))
+    assert.equal(writeCoordinatorLayout(home), 'updated')
+    const got = JSON.parse(readFileSync(target, 'utf8'))
+    assert.deepEqual(got.children[0].children[0].content, { mod: 'herdr-agents', props: { role: 'spaces' } })
+    assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
