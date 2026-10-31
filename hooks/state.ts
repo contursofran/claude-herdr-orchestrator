@@ -22,14 +22,24 @@ export async function jobs($: EngineInterface): Promise<Record<string, Job>> {
   return read($, jobsAtom)
 }
 
+// A job whose wait ends in this change has sat parked since the wait began: that time is kept apart from its
+// working time (see timecomment.ts). A change that opens a new time window (timeFrom) starts from zero.
+function parked(before: Job | undefined, after: Job, now: number): Job {
+  // A wait that is replaced by another (a new `for`) ends too; one that only moves its check time does not.
+  if (!before?.wait || (after.wait && after.wait.since === before.wait.since) || after.timeFrom !== before.timeFrom) return after
+  return { ...after, parkedMs: (after.parkedMs ?? 0) + Math.max(0, now - before.wait.since) }
+}
+
 export async function saveJob($: EngineInterface, job: Job) {
-  await update($, jobsAtom, all => ({ ...all, [job.name]: job }))
+  const now = await $.clock.now()
+  await update($, jobsAtom, all => ({ ...all, [job.name]: parked(all[job.name], job, now) }))
   await keep($)
 }
 
 // Merges `patch` into a job as it is by now, so a status saved meanwhile stays.
 export async function patchJob($: EngineInterface, name: string, patch: Partial<Job>) {
-  await update($, jobsAtom, all => (all[name] ? { ...all, [name]: { ...all[name], ...patch } } : all))
+  const now = await $.clock.now()
+  await update($, jobsAtom, all => (all[name] ? { ...all, [name]: parked(all[name], { ...all[name], ...patch }, now) } : all))
   await keep($)
 }
 
@@ -39,11 +49,13 @@ export async function patchJob($: EngineInterface, name: string, patch: Partial<
 export async function updateJob($: EngineInterface, name: string, fn: (j: Job) => Job | undefined): Promise<{ before?: Job; after?: Job }> {
   let before: Job | undefined
   let after: Job | undefined
+  const now = await $.clock.now()
   await update($, jobsAtom, all => {
     before = all[name]
     after = undefined
     if (!before) return all
     after = fn(before)
+    if (after) after = parked(before, after, now)
     return after ? { ...all, [name]: after } : all
   })
   if (after) await keep($)
