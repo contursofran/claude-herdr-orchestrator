@@ -464,9 +464,13 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
       segments: segments(list, current),
       slim: slimLine(list, slim),
       meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
+      // Only pins and to-dos: the queue is shared with the card and sheet, whose answers to questions are not the bar's.
       waiting: waiting
         .filter(q => q.session === board.session)
-        .map(q => ({ id: q.id, title: all.find(p => p.key === q.key)?.title ?? q.key })),
+        .flatMap(q => {
+          const pin = all.find(p => p.key === q.key)
+          return pin ? [{ id: q.id, title: pin.title, kind: pin.kind }] : []
+        }),
     },
   }
 }
@@ -1015,8 +1019,8 @@ export const isBoardCommand = name => /(?:^|\.)board$/.test(String(name))
 // ---- Sound and notification (S10) ----
 
 /**
- * New `know`, `do` and `ask` items on one board (a `do` is both a pin and a strip tab: one sound for it). `prevKeys` is the Set this returned last time for the board, or null the first
- * time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
+ * New `know`, `do` and `ask` items on one board (a `do` is both a pin and a strip tab: one sound for it). `prevKeys` is the Set
+ * this returned last time for the board, or null the first time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
  * Returns {keys, fresh}: every open know/do/ask key now, and the items in it that were not in `prevKeys` ({key, kind, text}).
  */
 export function newArrivals(prevKeys, board) {

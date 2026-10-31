@@ -91,7 +91,12 @@ export function pinbar(board, ui) {
   if (ui.waiting.length) {
     const w = ui.waiting[ui.waiting.length - 1]
     return base()
-      .child(svg(icon('pin')).size(14).text_color(color.dim).flex_none())
+      .child(
+        svg(icon(w.kind === 'do' ? 'do' : 'pin'))
+          .size(14)
+          .text_color(color.dim)
+          .flex_none(),
+      )
       .child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(`Done: ${w.title}`))
       .child(ghost('pin-undo', 'undo', (_e, cx) => ui.onUndo(w.id, cx)))
   }
@@ -157,7 +162,7 @@ export function pinbar(board, ui) {
           .when(pin.summary, el => el.child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(pin.summary))),
       )
       .child(div().flex_none().text_color(color.dim).child(ui.meta))
-      .child(ghost('pin-caret', '▾', (_e, cx) => ui.onRead(pin.id, cx)).tooltip('Open this pin'))
+      .child(ghost('pin-caret', '▾', (_e, cx) => ui.onRead(pin.id, cx)).tooltip(pin.kind === 'do' ? 'Open this to-do' : 'Open this pin'))
       .when(ui.many, el => el.child(ghost('pin-prev', '‹', (_e, cx) => ui.onStep(-1, cx)).tooltip('Previous pin')))
       .child(segmentsRow(ui.segments, ui))
       .when(ui.many, el => el.child(ghost('pin-next', '›', (_e, cx) => ui.onStep(1, cx)).tooltip('Next pin')))

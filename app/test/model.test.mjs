@@ -506,7 +506,7 @@ test('deriveBar: the selection resets on a new board and when a new pin arrives,
   assert.equal(bar(picked, pinBoard([know('K1'), know('K2'), know('K3')])).state.sel, null, 'new pin')
 })
 
-test('deriveBar: the first draw of a board never resets by "new pins"; waiting titles come from the key', () => {
+test('deriveBar: the first draw of a board never resets by "new pins"; waiting titles come from the pin; a key that is no pin (a card answer) is left out', () => {
   const b = pinBoard([know('K1', { title: 'Retry' })])
   const waiting = [
     { id: 'f1', session: 's', key: 'K1' },
@@ -514,10 +514,7 @@ test('deriveBar: the first draw of a board never resets by "new pins"; waiting t
     { id: 'f3', session: 'x', key: 'K1' },
   ]
   const r = bar(newBarState(), b, { waiting, hidden: new Set(['s:K1']) })
-  assert.deepEqual(r.view.waiting, [
-    { id: 'f1', title: 'Retry' },
-    { id: 'f2', title: 'Zed' },
-  ])
+  assert.deepEqual(r.view.waiting, [{ id: 'f1', title: 'Retry', kind: 'know' }])
   assert.equal(r.view.mode, 'empty', 'hidden pins are left out')
   assert.equal(bar(newBarState(), b, { now: 100 + 5 * 60000 }).view.meta, 'w-api · 5m')
 })
