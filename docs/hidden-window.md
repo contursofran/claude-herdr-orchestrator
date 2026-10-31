@@ -36,6 +36,8 @@ $w stop                                  # closes it and removes every trace
 
 Only one `start` or `stop` runs per window: another one refuses and leaves the first alone. `start` over a window that died closes what it left first. A `start` that fails at any step leaves no process or folder.
 
+The window follows the system's light or dark. To see the other one, set `"appearance": "light"` or `"dark"` in `/private/tmp/hw-$name/app/settings.json` (`hw` by default): it applies live and leaves the system alone. `herdr-app do app.theme --name <theme>` picks a theme.
+
 To draw your own board, pass it to `demo`. By hand, its file must be `.herdr-agents/board/<session>.json` in the window's home and its `coordinator.terminal` a live agent, or the bar and strip stay empty and the pop-up has no content.
 
 ## What it does
