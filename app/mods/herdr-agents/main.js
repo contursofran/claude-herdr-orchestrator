@@ -10,6 +10,7 @@ import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { SpacesList } from './spaces.js'
+import { SettingsState, settingsView } from './settingsview.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
 import { readVersion, versionView } from './version.js'
@@ -31,6 +32,10 @@ export default class HerdrAgents extends View {
         this.version = await readVersion()
         if (this.version) cx.notify()
       })
+      return
+    }
+    if (props()?.role === 'settings') {
+      this.settings = new SettingsState(cx)
       return
     }
     if (props()?.role === 'spaces') {
@@ -183,6 +188,7 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (props()?.role === 'version') return versionView(this.version)
+    if (this.settings) return settingsView(this.settings, cx)
     if (this.spacesList) return this.spacesList.render()
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
     if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))

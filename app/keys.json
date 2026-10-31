@@ -9,6 +9,7 @@
     "ctrl-cmd-[": "herdr-agents.prevpin",
     "ctrl-cmd-]": "herdr-agents.nextpin",
     "ctrl-cmd-b": "herdr-agents.board",
-    "cmd-j": "herdr-agents.sheet"
+    "cmd-j": "herdr-agents.sheet",
+    "ctrl-cmd-,": "herdr-agents.settings"
   }
 }

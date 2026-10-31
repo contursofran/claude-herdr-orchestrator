@@ -29,6 +29,8 @@ globalThis.__startFake = {
     return state.file
   },
   theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
+  Input: {},
+  InputState: {},
   closeOverlay: id => state.closed.push(id),
   focused: () => {
     if (state.focusThrows) throw new Error('boom')
@@ -63,7 +65,7 @@ globalThis.__startFake = {
 }
 const shim = {
   'gpui-kit': ['View', 'div', 'image', 'svg'],
-  'gpui-base': ['Popup', 'TextView', 'h_flex', 'v_flex'],
+  'gpui-base': ['Input', 'InputState', 'Popup', 'TextView', 'h_flex', 'v_flex'],
   herdr: [
     'agents',
     'appHome',

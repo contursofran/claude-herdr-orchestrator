@@ -71,8 +71,36 @@ export const app = {
 
 globalThis.__fakeGpui = {
   appHome: () => '/app-home',
+  home: () => '/home',
+  writeTextFile: async (path, text, expected) => {
+    if (app.staleWrite || (app.files[path] ?? null) !== expected) throw new Error('the file changed')
+    app.files[path] = text
+    return null
+  },
   notify: n => app.notes.push(n),
   div: makeElement,
+  Input: { new: state => makeElement(state) },
+  InputState: {
+    new: (options = {}) => {
+      const handlers = {}
+      let value = options.value ?? ''
+      return {
+        placeholder: options.placeholder,
+        value: () => value,
+        set_value: next => {
+          value = next
+        },
+        on: (event, handler) => {
+          handlers[event] = handler
+        },
+        type: text => {
+          value = text
+        },
+        fire: (event, cx) => handlers[event]?.({}, cx),
+        focus() {},
+      }
+    },
+  },
   svg: makeElement,
   View: class {},
   Popup: {
@@ -125,7 +153,7 @@ globalThis.__fakeGpui = {
 }
 
 const names = {
-  'gpui-base': ['Popup', 'TextView', 'h_flex', 'v_flex'],
+  'gpui-base': ['Input', 'InputState', 'Popup', 'TextView', 'h_flex', 'v_flex'],
   'gpui-kit': ['div', 'svg', 'View'],
   herdr: [
     'appHome',

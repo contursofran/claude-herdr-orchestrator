@@ -26,6 +26,8 @@ import { card } from './card.js'
 import { closeCard, openCard } from './cardctl.js'
 import { handBack, takeDismissed } from './outside.js'
 import { closeSheet, openSheet } from './sheetctl.js'
+import { isSettingsCommand } from './settingsmodel.js'
+import { openSettings } from './settingsview.js'
 import { isSheetCommand, sheetTarget } from './sheetmodel.js'
 import { closePins, closePopupOverlay } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
@@ -105,6 +107,7 @@ export class StripState {
       toggleSheet(this.board)
       return cx.notify()
     }
+    if (isSettingsCommand(name)) return openSettings(this.board?.cwd)
     const n = pickNumber(name)
     if (!n) return
     const item = pickAt(stripItems(this.board), n)
@@ -320,6 +323,20 @@ const sheetPill = board =>
     })
     .child('⌘J')
 
+/** Opens the settings dialog for the coordinator shown. */
+const settingsPill = board =>
+  div()
+    .id('strip-settings')
+    .size(24)
+    .flex()
+    .items_center()
+    .justify_center()
+    .rounded(5)
+    .cursor_pointer()
+    .hover(el => el.bg(look.pillHover))
+    .on_mouse_down('left', () => openSettings(board.cwd))
+    .child(svg(icon('settings')).size(14).text_color(look.muted))
+
 /** `board ▴`: opens the work table above it. */
 const boardPill = board =>
   div()
@@ -411,6 +428,7 @@ export function strip(board, ctx = {}) {
         .child(count('blocked', c.blocked)),
     )
     .child(boardPill(board))
+    .child(settingsPill(board))
     .child(sheetPill(board))
   return root.child(tabs).child(right)
 }
