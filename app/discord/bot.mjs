@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// The Discord bot: watches the boards and posts what changed. Run by app/discord/service.sh; `--once` looks once and exits.
+// The Discord bot: watches the boards, posts what changed, and turns button taps into the same action files Herdr writes.
+// Run by app/discord/service.sh; `--once` looks once and exits.
 // Reads <home>/discord-token and <home>/discord.json; keeps its place in <home>/discord-state.json.
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { CHANNELS, allowed, diffBoard, metricsDue, metricsText, pruneSeen } from './model.mjs'
+import { Gateway } from './gateway.mjs'
+import { CHANNELS, allowed, diffBoard, metricsDue, metricsText, parseTap, planTap, pruneSeen } from './model.mjs'
 
 const API = 'https://discord.com/api/v10'
 const CATEGORY = 'Herdr'
@@ -113,15 +116,18 @@ export class Bot {
       const channel = this.channels[action.channel]
       const message = await this.api('POST', `/channels/${channel}/messages`, {
         content: action.content,
+        components: action.components ?? [],
         allowed_mentions: { parse: [], users: action.mention && this.config.ownerId ? [this.config.ownerId] : [] },
       })
       seen[action.id] = { at: action.at, message: message.id, channel, open: Boolean(action.open) }
     } else if (action.type === 'edit') {
       await this.api('PATCH', `/channels/${action.channel}/messages/${action.message}`, {
         content: action.content,
+        components: action.components ?? [],
         allowed_mentions: { parse: [] },
       })
-      seen[action.id] = { ...seen[action.id], open: false }
+      const { pending: _done, ...rest } = seen[action.id]
+      seen[action.id] = { ...rest, open: Boolean(action.keepOpen) }
     }
     this.save() // after each one: a crash mid-look never posts the same thing twice
   }
@@ -137,6 +143,46 @@ export class Bot {
       this.save()
     }
     this.state.seen = pruneSeen(this.state.seen, now)
+  }
+
+  readBoard(session) {
+    return readJson(join(this.boardDir, `${session}.json`), null)
+  }
+
+  /** One action file, moved into place whole, as the app mod does (board.js). Returns its name, the id its outcome comes under. */
+  writeAction(session, action) {
+    const name = `${String(this.now()).padStart(13, '0')}-${randomBytes(4).toString('hex')}.json`
+    const outgoing = join(this.home, 'outgoing')
+    const inbox = join(this.boardDir, `${session}.actions`)
+    mkdirSync(outgoing, { recursive: true })
+    mkdirSync(inbox, { recursive: true })
+    writeFileSync(join(outgoing, name), JSON.stringify(action))
+    renameSync(join(outgoing, name), join(inbox, name))
+    return name
+  }
+
+  /** A button was tapped. Discord wants a reply within 3 seconds. A tap that isn't ours gets none, as another copy may answer. */
+  async tap(interaction) {
+    const custom = interaction.data?.custom_id
+    const parsed = parseTap(custom)
+    if (!parsed) return
+    const board = this.readBoard(parsed.session)
+    const plan = planTap(custom, { interaction, config: this.config, seen: this.state.seen, board, now: this.now() })
+    if (!plan) return
+    const reply = (type, data) => this.api('POST', `/interactions/${interaction.id}/${interaction.token}/callback`, { type, data })
+    if (plan.say) {
+      await reply(4, { content: plan.say, flags: 64, allowed_mentions: { parse: [] } })
+      if (plan.gone) {
+        const track = this.state.seen[`${parsed.session}:${parsed.key}`]
+        await this.api('PATCH', `/channels/${track.channel}/messages/${track.message}`, { components: [] })
+      }
+      return
+    }
+    const id = `${parsed.session}:${parsed.key}`
+    const pending = this.writeAction(parsed.session, plan.action)
+    this.state.seen[id] = { ...this.state.seen[id], pending }
+    this.save()
+    await reply(7, { content: plan.content, components: [], allowed_mentions: { parse: [] } })
   }
 
   async metrics() {
@@ -175,6 +221,11 @@ async function main() {
   const bot = new Bot({ api, home, userHome, config, channels, runMetrics: once ? null : runMetrics })
   log(`watching ${bot.boardDir}${bot.first ? ', first look posts nothing' : ''}`)
   if (once) return bot.look()
+  new Gateway({
+    token,
+    log,
+    onTap: interaction => bot.tap(interaction).catch(error => log('tap failed:', error.message)),
+  }).start()
   let metricsRunning = false
   for (;;) {
     let wait = EVERY_MS

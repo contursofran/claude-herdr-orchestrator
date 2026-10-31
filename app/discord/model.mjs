@@ -1,4 +1,4 @@
-// What the Discord bot posts: board changes as messages, with no network or files here. Issue #251, step 1: post only.
+// What the Discord bot posts and what a tap on its buttons does, with no network or files here. Issue #251.
 
 export const CHANNELS = ['decisions', 'to-do', 'updates', 'metrics']
 
@@ -30,11 +30,81 @@ function options(need) {
   return `\n${lines.join('\n')}`
 }
 
+// Questions about these stay in Herdr: a stray tap on a phone should not ship anything.
+const HERDR_ONLY = /\b(deploy\w*|releas\w*|promot\w*|production|prod|rollback|roll back|force[- ]push\w*)\b/i
+
+export const herdrOnly = need => HERDR_ONLY.test([need.title, need.text, ...(need.options ?? [])].join(' '))
+
+const ID_PREFIX = 'hrd'
+const STALE_BOARD_MS = 3 * 60 * 1000
+
+/** The buttons of an open item: one per option, or Done. None for what must be answered in Herdr. */
+export function buttons(need, board) {
+  if (herdrOnly(need)) return []
+  const list =
+    need.kind === 'do'
+      ? [{ type: 2, style: 3, label: 'Done', custom_id: `${ID_PREFIX}|d|${board.session}|${need.key}` }]
+      : need.kind === 'ask'
+        ? (need.options ?? []).slice(0, 25).map((option, i) => ({
+            type: 2,
+            style: need.recommended === i ? 1 : 2,
+            label: clip(`${i + 1}. ${option}`, 80),
+            custom_id: `${ID_PREFIX}|a|${board.session}|${need.key}|${i}`,
+          }))
+        : []
+  const rows = []
+  for (let i = 0; i < list.length; i += 5) rows.push({ type: 1, components: list.slice(i, i + 5) })
+  return rows
+}
+
+const inHerdrNote = need => (need.kind === 'know' ? false : herdrOnly(need) || (need.kind === 'ask' && !need.options?.length))
+
+/** A tap's custom_id, or null when it isn't one of ours. */
+export function parseTap(id) {
+  const [prefix, kind, session, key, index] = String(id).split('|')
+  if (prefix !== ID_PREFIX || !/^[\w-]+$/.test(session ?? '') || !/^[A-Z]+\d+$/.test(key ?? '')) return null
+  if (kind === 'd') return { kind, session, key }
+  if (kind === 'a' && /^\d+$/.test(index ?? '')) return { kind, session, key, index: Number(index) }
+  return null
+}
+
+/**
+ * What a tap does. `null`: not ours to answer, another copy of the bot may be. `{ say }`: tell only the person who tapped.
+ * `{ action, content }`: write the action file and show `content` on the message. `{ gone }` also takes the buttons away.
+ */
+export function planTap(tap, { interaction, config, seen, board, now }) {
+  const parsed = parseTap(tap)
+  if (!parsed) return null
+  const id = `${parsed.session}:${parsed.key}`
+  const track = seen[id]
+  if (!track?.message || track.message !== interaction.message?.id) return null
+  const user = interaction.member?.user?.id ?? interaction.user?.id
+  if (user !== config.ownerId || interaction.guild_id !== config.guildId) return { say: 'Only the owner of this server can answer.' }
+  if (track.pending) return { say: 'Already sent. Waiting for the coordinator.' }
+  const need = board?.needs?.find(n => n.key === parsed.key)
+  if (!need?.isOpen) return { say: 'This one is already closed.', gone: true }
+  if (herdrOnly(need)) return { say: 'Answer this one in Herdr.', gone: true }
+  if (!(now - board.at < STALE_BOARD_MS)) return { say: "That coordinator isn't running, so nothing was sent. Try again once it's back." }
+  const title = `**${need.key} · ${need.title}** (${folderName(board)})`
+  if (parsed.kind === 'd') {
+    if (need.kind !== 'do') return { say: 'This one has changed. Answer it in Herdr.', gone: true }
+    return {
+      action: { action: 'done', key: need.key },
+      content: `${title}
+→ Done, sent to the coordinator`,
+    }
+  }
+  const answer = need.kind === 'ask' ? need.options?.[parsed.index] : undefined
+  if (answer === undefined) return { say: 'This one has changed. Answer it in Herdr.', gone: true }
+  return { action: { action: 'answer', key: need.key, answer }, content: clip(`${title}\n→ ${answer}, sent to the coordinator`) }
+}
+
 /** An open decision or to-do. Discord's limit is 2000 characters. */
 export function needText(need, board, owner) {
   const head = `${owner ? `<@${owner}> ` : ''}**${need.key} · ${need.title}** (${folderName(board)}${need.from ? `, ${need.from}` : ''})`
   const link = need.url ? `\n${need.url}` : ''
-  const tail = `${options(need)}${link}`
+  const note = inHerdrNote(need) ? '\n*Answer this one in Herdr.*' : ''
+  const tail = `${options(need)}${link}${note}`
   return `${head}\n${clip(need.text, MAX - head.length - tail.length - 2)}${tail}`
 }
 
@@ -80,10 +150,24 @@ export function diffBoard(board, seen, { now, owner, first = false }) {
               type: 'post',
               channel: need.kind === 'ask' ? 'decisions' : 'to-do',
               content: needText(need, board, owner),
+              components: buttons(need, board),
               open: true,
               mention: true,
             },
       )
+      // The plugin refused a tap's answer: the buttons come back, with why.
+      const outcome = track?.pending && board.actions?.find?.(a => a.id === track.pending)
+      if (outcome && !outcome.ok) {
+        actions.push({
+          type: 'edit',
+          id,
+          channel: track.channel,
+          message: track.message,
+          keepOpen: true,
+          content: clip(`${needText(need, board, null)}\n*That didn't go through: ${outcome.message}*`),
+          components: buttons(need, board),
+        })
+      }
     } else if (track?.open && track.message) {
       actions.push({ type: 'edit', id, channel: track.channel, message: track.message, content: closedText(need, board) })
     } else if (!track) {

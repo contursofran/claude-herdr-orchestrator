@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { Bot, ensureChannels, makeApi } from '../discord/bot.mjs'
-import { allowed, clip, closedText, diffBoard, metricsDue, metricsText, needText, pruneSeen } from '../discord/model.mjs'
+import { Gateway } from '../discord/gateway.mjs'
+import {
+  allowed,
+  buttons,
+  clip,
+  closedText,
+  diffBoard,
+  herdrOnly,
+  metricsDue,
+  metricsText,
+  needText,
+  parseTap,
+  planTap,
+  pruneSeen,
+} from '../discord/model.mjs'
 
 const NOW = 1_800_000_000_000
 const ask = {
@@ -291,4 +305,233 @@ test('the api waits out a rate limit, then retries; an error says what failed wi
   assert.deepEqual(waits, [600])
   assert.equal(seen[0], 'Bot secret')
   await assert.rejects(call('GET', '/y'), e => /403 Missing Access/.test(e.message) && !e.message.includes('secret'))
+})
+
+// Buttons.
+const live = over => board({ at: NOW - 1000, needs: [ask, todo], ...over })
+const tapOf = (id, over = {}) => ({
+  id: 'i1',
+  token: 'tok',
+  type: 3,
+  guild_id: 'g',
+  member: { user: { id: 'me' } },
+  message: { id: 'm' },
+  data: { custom_id: id },
+  ...over,
+})
+const TRACK = { 's:D1': { open: true, message: 'm', channel: 'cd' }, 's:T1': { open: true, message: 'm', channel: 'ct' } }
+const plan = (id, b = live(), seen = TRACK, over = {}) =>
+  planTap(id, { interaction: tapOf(id, over), config: { ownerId: 'me', guildId: 'g' }, seen, board: b, now: NOW })
+
+test('buttons: one per option, the recommended one stands out, and Done for a to-do', () => {
+  const [row] = buttons(ask, board())
+  assert.deepEqual(
+    row.components.map(b => [b.label, b.style]),
+    [
+      ['1. A', 2],
+      ['2. B', 1],
+    ],
+  )
+  assert.equal(row.components[1].custom_id, 'hrd|a|s|D1|1')
+  assert.equal(buttons(todo, board())[0].components[0].label, 'Done')
+  assert.deepEqual(buttons({ ...todo, kind: 'know' }, board()), [])
+  assert.deepEqual(buttons({ ...ask, options: [] }, board()), [])
+})
+
+test('buttons: rows of five, labels Discord accepts', () => {
+  const rows = buttons({ ...ask, options: Array.from({ length: 7 }, (_, i) => `${i}${'x'.repeat(100)}`) }, board())
+  assert.deepEqual(
+    rows.map(r => r.components.length),
+    [5, 2],
+  )
+  assert.ok(rows.flatMap(r => r.components).every(b => b.label.length <= 80 && b.custom_id.length <= 100))
+  const long = buttons(ask, board({ session: '0a9feb0d-9ffd-4d08-9555-00bf44eff4c4' }))[0].components[0]
+  assert.ok(long.custom_id.length <= 100)
+  assert.deepEqual(parseTap(long.custom_id), { kind: 'a', session: '0a9feb0d-9ffd-4d08-9555-00bf44eff4c4', key: 'D1', index: 0 })
+})
+
+test('deploys and releases are answered in Herdr: no buttons, and the message says so', () => {
+  for (const text of ['Deploy tonight?', 'Run the promotion to main?', 'Cut the release', 'Touch production?', 'force-push it?']) {
+    const need = { ...ask, text }
+    assert.equal(herdrOnly(need), true, text)
+    assert.deepEqual(buttons(need, board()), [], text)
+    assert.match(needText(need, board(), 'me'), /Answer this one in Herdr/)
+  }
+  assert.equal(herdrOnly({ ...ask, options: ['Yes', 'Deploy it'] }), true)
+  assert.equal(herdrOnly(ask), false)
+  assert.equal(herdrOnly({ ...ask, text: 'The progress bar' }), false)
+  assert.doesNotMatch(needText(ask, board(), 'me'), /in Herdr/)
+})
+
+test('a question with no options says to answer in Herdr', () => {
+  assert.match(needText({ ...ask, options: [] }, board(), 'me'), /Answer this one in Herdr/)
+})
+
+test('a tap sends the full option text, and Done the to-do', () => {
+  const b = live({ needs: [{ ...ask, options: ['A', 'x'.repeat(200)] }, todo] })
+  assert.deepEqual(plan('hrd|a|s|D1|1', b).action, { action: 'answer', key: 'D1', answer: 'x'.repeat(200) })
+  const done = plan('hrd|d|s|T1')
+  assert.deepEqual(done.action, { action: 'done', key: 'T1' })
+  assert.match(done.content, /Done, sent to the coordinator/)
+})
+
+test('nobody but the owner can answer', () => {
+  assert.match(plan('hrd|a|s|D1|0', live(), TRACK, { member: { user: { id: 'other' } } }).say, /Only the owner/)
+  assert.match(plan('hrd|a|s|D1|0', live(), TRACK, { guild_id: 'elsewhere' }).say, /Only the owner/)
+  assert.equal(plan('hrd|a|s|D1|0', live(), TRACK, { member: { user: { id: 'other' } } }).action, undefined)
+})
+
+test('a late tap sends nothing and takes the buttons away', () => {
+  const closed = plan('hrd|a|s|D1|0', live({ needs: [{ ...ask, isOpen: false }] }))
+  assert.equal(closed.action, undefined)
+  assert.equal(closed.gone, true)
+  assert.equal(plan('hrd|a|s|D1|0', live({ needs: [] })).gone, true)
+  assert.equal(plan('hrd|a|s|D1|0', null).action, undefined)
+})
+
+test('a second tap, a stopped coordinator and a changed question send nothing', () => {
+  assert.match(plan('hrd|a|s|D1|0', live(), { 's:D1': { ...TRACK['s:D1'], pending: 'f' } }).say, /Already sent/)
+  const stopped = plan('hrd|a|s|D1|0', live({ at: NOW - 4 * 60 * 1000 }))
+  assert.match(stopped.say, /isn't running/)
+  assert.equal(stopped.gone, undefined)
+  assert.equal(plan('hrd|a|s|D1|0', live({ at: undefined })).action, undefined)
+  assert.equal(plan('hrd|a|s|D1|9').gone, true)
+  assert.equal(plan('hrd|d|s|D1').gone, true)
+  assert.equal(plan('hrd|a|s|T1|0').gone, true)
+  // A question that became a deploy after it was posted.
+  assert.equal(plan('hrd|a|s|D1|0', live({ needs: [{ ...ask, text: 'Deploy now?' }] })).action, undefined)
+})
+
+test('a tap that is not ours gets no reply: wrong message, unknown item, or a forged id', () => {
+  assert.equal(plan('other|a|s|D1|0'), null)
+  assert.equal(plan('hrd|a|s|D2|0'), null)
+  assert.equal(plan('hrd|a|s|D1|0', live(), TRACK, { message: { id: 'different' } }), null)
+  assert.equal(parseTap('hrd|a|../../etc|D1|0'), null)
+  assert.equal(parseTap('hrd|a|s|../x|0'), null)
+  assert.equal(parseTap('hrd|a|s|D1|x'), null)
+  assert.equal(parseTap('hrd|z|s|D1'), null)
+})
+
+test('closing takes the buttons away; a refused answer brings them back with why', () => {
+  const seen = { 's:D1': { open: true, message: 'm', channel: 'c', pending: 'f1' } }
+  assert.equal(diff(board({ needs: [{ ...ask, isOpen: false }] }), seen)[0].components, undefined)
+  const [back] = diff(board({ needs: [ask], actions: [{ id: 'f1', ok: false, message: 'D1 is not an open decision' }] }), seen)
+  assert.equal(back.keepOpen, true)
+  assert.match(back.content, /didn't go through: D1 is not an open decision/)
+  assert.equal(back.components[0].components.length, 2)
+  assert.doesNotMatch(back.content, /<@/)
+  assert.deepEqual(diff(board({ needs: [ask], actions: [{ id: 'f1', ok: true, message: '' }] }), seen), [])
+})
+
+test('tap end to end: the same action file Herdr writes, one reply, and a retry after a refusal', async () => {
+  writeFileSync(join(home, 'discord-state.json'), '{"seen":{},"metricsDay":null}')
+  writeBoard(live({ needs: [ask] }))
+  const bot = makeBot({ config: { ownerId: 'me', guildId: 'g' } })
+  await bot.look()
+  const post = calls.pop()
+  assert.equal(post.body.components[0].components.length, 2)
+  const interaction = tapOf('hrd|a|s|D1|1', { message: { id: 'm1' } })
+  await bot.tap(interaction)
+  const files = readdirSync(join(home, 'board', 's.actions'))
+  assert.equal(files.length, 1)
+  assert.deepEqual(JSON.parse(readFileSync(join(home, 'board', 's.actions', files[0]), 'utf8')), {
+    action: 'answer',
+    key: 'D1',
+    answer: 'B',
+  })
+  assert.deepEqual(readdirSync(join(home, 'outgoing')), [])
+  assert.equal(calls[0].path, '/interactions/i1/tok/callback')
+  assert.equal(calls[0].body.type, 7)
+  assert.deepEqual(calls[0].body.data.components, [])
+  calls.length = 0
+  await bot.tap(interaction)
+  assert.equal(readdirSync(join(home, 'board', 's.actions')).length, 1)
+  assert.equal(calls[0].body.data.flags, 64)
+  calls.length = 0
+  // The plugin refused it: the buttons come back and a new tap can go.
+  writeBoard(live({ needs: [ask], actions: [{ id: files[0], ok: false, message: 'no' }] }))
+  bot.mtimes = {}
+  await bot.look()
+  assert.equal(calls[0].method, 'PATCH')
+  assert.equal(calls[0].body.components[0].components.length, 2)
+  calls.length = 0
+  await bot.tap(interaction)
+  assert.equal(readdirSync(join(home, 'board', 's.actions')).length, 2)
+})
+
+test('a tap that is not ours touches nothing and gets no reply', async () => {
+  writeBoard(live({ needs: [ask] }))
+  const bot = makeBot({ config: { ownerId: 'me', guildId: 'g' } })
+  await bot.tap(tapOf('hrd|a|s|D1|0'))
+  await bot.tap(tapOf('something-else'))
+  assert.deepEqual(calls, [])
+})
+
+// The gateway with a fake socket.
+function gateway() {
+  const sockets = []
+  class Socket {
+    constructor() {
+      this.sent = []
+      sockets.push(this)
+    }
+    send(text) {
+      this.sent.push(JSON.parse(text))
+    }
+    close() {
+      this.onclose({ code: 1000 })
+    }
+  }
+  const timers = { later: [], every: [], stopped: [] }
+  const taps = []
+  const g = new Gateway({
+    token: 'tok',
+    onTap: t => taps.push(t),
+    Socket,
+    later: (f, ms) => timers.later.push({ f, ms }),
+    every: (f, ms) => (timers.every.push({ f, ms }), timers.every.length),
+    stopEvery: id => timers.stopped.push(id),
+  })
+  g.start()
+  const socket = () => sockets.at(-1)
+  const receive = m => socket().onmessage({ data: JSON.stringify(m) })
+  return { g, sockets, socket, receive, timers, taps }
+}
+
+test('gateway: identifies with no intents, and hands on button taps only', () => {
+  const { socket, receive, timers, taps } = gateway()
+  receive({ op: 10, d: { heartbeat_interval: 1000 } })
+  assert.equal(timers.every[0].ms, 1000)
+  assert.deepEqual([socket().sent[0].op, socket().sent[0].d.token, socket().sent[0].d.intents], [2, 'tok', 0])
+  receive({ op: 0, s: 5, t: 'INTERACTION_CREATE', d: { type: 3, id: 'tap' } })
+  receive({ op: 0, s: 6, t: 'INTERACTION_CREATE', d: { type: 2, id: 'slash' } })
+  receive({ op: 0, s: 7, t: 'GUILD_CREATE', d: {} })
+  assert.deepEqual(
+    taps.map(t => t.id),
+    ['tap'],
+  )
+})
+
+test('gateway: heartbeats with the last sequence, and reconnects when none is answered', () => {
+  const { socket, receive, timers, sockets } = gateway()
+  receive({ op: 10, d: { heartbeat_interval: 1000 } })
+  receive({ op: 0, s: 9, t: 'READY', d: {} })
+  timers.every[0].f()
+  assert.deepEqual(socket().sent.at(-1), { op: 1, d: 9 })
+  receive({ op: 11 })
+  timers.every[0].f()
+  timers.every[0].f()
+  assert.deepEqual(timers.stopped, [1])
+  assert.equal(timers.later.length, 1)
+  timers.later[0].f()
+  assert.equal(sockets.length, 2)
+})
+
+test('gateway: asked to reconnect it does; a bad token waits longer', () => {
+  const { receive, timers, socket } = gateway()
+  receive({ op: 7 })
+  assert.equal(timers.later[0].ms, 5000)
+  timers.later[0].f()
+  socket().onclose({ code: 4004 })
+  assert.equal(timers.later[1].ms, 300000)
 })
