@@ -171,7 +171,8 @@ function textParts(text) {
 }
 
 /**
- * The pins on a board: open items of kind `know`, in board order.
+ * The pins on a board: open items of kind `know` and `do` (a `do` also stays in the strip), in board order. `ask` is
+ * the strip's only. `kind` says which it is.
  *   read    {"<session>:<key>": true}
  *   hidden  a Set of read keys to leave out (a Done × waiting to be sent, or sent and not yet gone from the board)
  * Fields from #83/#84 are used when present: title (else the first line of text, else the key), summary (else, with a
@@ -180,7 +181,7 @@ function textParts(text) {
 export function pins(board, read = {}, hidden = new Set()) {
   if (!board) return []
   return (board.needs ?? [])
-    .filter(n => n.kind === 'know' && n.isOpen === true)
+    .filter(n => (n.kind === 'know' || n.kind === 'do') && n.isOpen === true)
     .map(n => {
       const id = readKey(board.session, n.key)
       const { first, rest } = textParts(n.text)
@@ -192,6 +193,7 @@ export function pins(board, read = {}, hidden = new Set()) {
       return {
         id,
         key: n.key,
+        kind: n.kind,
         title,
         summary,
         tag: typeof n.tag === 'string' && n.tag.trim() ? n.tag.trim() : null,
@@ -365,7 +367,8 @@ export const markRead = (read, id) => (read?.[id] === true ? read : { ...(read ?
 
 // ---- Sending (S4): an action waits UNDO_MS in the mod, then is written to the board's actions folder ----
 
-/** `{action:"done", key}`: an open to-do is done; an open know is dismissed. */
+/** `{action:"done", key}`: an open to-do is done (the coordinator gets its "owner done" prompt); an open know is dismissed.
+ *  The card, the sheet and the pin bar all send this one for a to-do. */
 export const doneAction = key => ({ action: 'done', key })
 
 /** A file name that sorts by time: `<ms>-<random>.json`. */
@@ -461,9 +464,13 @@ export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting 
       segments: segments(list, current),
       slim: slimLine(list, slim),
       meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
+      // Only pins and to-dos: the queue is shared with the card and sheet, whose answers to questions are not the bar's.
       waiting: waiting
         .filter(q => q.session === board.session)
-        .map(q => ({ id: q.id, title: all.find(p => p.key === q.key)?.title ?? q.key })),
+        .flatMap(q => {
+          const pin = all.find(p => p.key === q.key)
+          return pin ? [{ id: q.id, title: pin.title, kind: pin.kind }] : []
+        }),
     },
   }
 }
@@ -545,7 +552,7 @@ const firstLine = text =>
 
 /**
  * What the strip draws, in order: workers that are blocked, then open asks, then open dos, each in board order.
- * (`know` items belong to the pin bar.) An item is {key, id, kind: 'blocked' | 'ask' | 'do', label, terminal?}:
+ * (`know` items belong to the pin bar; a `do` shows there too.) An item is {key, id, kind: 'blocked' | 'ask' | 'do', label, terminal?}:
  * `id` is the bold part of the tab (the worker's name, or D7 / T12), `label` the short text after it, `key` is
  * unique on the board.
  */
@@ -1012,12 +1019,12 @@ export const isBoardCommand = name => /(?:^|\.)board$/.test(String(name))
 // ---- Sound and notification (S10) ----
 
 /**
- * New `know` and `ask` items on one board. `prevKeys` is the Set this returned last time for the board, or null the first
- * time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
- * Returns {keys, fresh}: every open know/ask key now, and the items in it that were not in `prevKeys` ({key, kind, text}).
+ * New `know`, `do` and `ask` items on one board (a `do` is both a pin and a strip tab: one sound for it). `prevKeys` is the Set
+ * this returned last time for the board, or null the first time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
+ * Returns {keys, fresh}: every open know/do/ask key now, and the items in it that were not in `prevKeys` ({key, kind, text}).
  */
 export function newArrivals(prevKeys, board) {
-  const items = openNeeds(board).filter(n => n.kind === 'know' || n.kind === 'ask')
+  const items = openNeeds(board).filter(n => n.kind === 'know' || n.kind === 'do' || n.kind === 'ask')
   const keys = new Set(items.map(n => n.key))
   if (!prevKeys) return { keys, fresh: [] }
   const fresh = items
@@ -1038,12 +1045,14 @@ export function arrivalNotice(arrivals) {
   const terminal = list.find(a => typeof a.terminal === 'string')?.terminal ?? null
   if (all.length === 1) {
     const [one] = all
-    return { title: one.kind === 'ask' ? 'New question' : 'New pin', body: one.text, terminal }
+    return { title: one.kind === 'ask' ? 'New question' : one.kind === 'do' ? 'New to-do' : 'New pin', body: one.text, terminal }
   }
   const asks = all.filter(i => i.kind === 'ask').length
-  const pinsN = all.length - asks
+  const dos = all.filter(i => i.kind === 'do').length
+  const pinsN = all.length - asks - dos
   const parts = []
   if (asks) parts.push(`${asks} ${asks === 1 ? 'question' : 'questions'}`)
+  if (dos) parts.push(`${dos} ${dos === 1 ? 'to-do' : 'to-dos'}`)
   if (pinsN) parts.push(`${pinsN} ${pinsN === 1 ? 'pin' : 'pins'}`)
   return { title: `${all.length} new items`, body: parts.join(', '), terminal }
 }

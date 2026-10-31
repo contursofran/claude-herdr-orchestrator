@@ -4,11 +4,14 @@ import { app, findId, textOf } from './fake-gpui.mjs'
 
 // After the fake is registered: these import `gpui-kit` and `herdr`.
 const { closePinsOverlay, pinbar, pinsView } = await import('../mods/herdr-agents/pinbar.js')
+const { sheetView } = await import('../mods/herdr-agents/sheetmodel.js')
 const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
+const { Outbox, sharedOutbox } = await import('../mods/herdr-agents/outbox.js')
+const { setShared, shared } = await import('herdr')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
 const { releasePopup } = await import('../mods/herdr-agents/popup.js')
-const { ROWS_SETTLE_MS, allPinsHeight, pinsOverlayEmpty } = await import('../mods/herdr-agents/model.js')
+const { ROWS_SETTLE_MS, allPinsHeight, doneAction, pinsOverlayEmpty } = await import('../mods/herdr-agents/model.js')
 
 const pin = (key, extra = {}) => ({
   id: `s:${key}`,
@@ -406,6 +409,157 @@ test('a resolved pin has no row to press while the others hold still', t => {
   pinsView(new Set(), ctl, boardOf('K1', 'K2', 'K3'))
   const moved = pinsView(new Set(), ctl, boardOf('K2', 'K3'))
   assert.equal(findId(moved, 'pin-done-K1'), null)
+})
+
+const todoBoard = () => ({
+  session: 's',
+  needs: [
+    { key: 'T1', kind: 'do', isOpen: true, text: 'Merge #7', at: 5 },
+    { key: 'K1', kind: 'know', isOpen: true, text: 'Disk full', at: 4 },
+  ],
+})
+
+test('Done on a to-do in the bar queues the very action the card sends for it', () => {
+  const board = todoBoard()
+  const ctl = new PinCtl()
+  const ui = ctl.ui(board, cx)
+  ui.onDone(ui.current, cx)
+  const sheet = sheetView(board, 'T1').options.find(o => o.label === 'Done')
+  assert.equal(ui.current.key, 'T1', 'the newest pin is the to-do')
+  // The card's Done is doneAction(key) (card.js); the sheet's Done is the same file.
+  assert.deepEqual(ctl.outbox.queue[0].action, sheet.action)
+  assert.deepEqual(ctl.outbox.queue[0].action, doneAction('T1'))
+  assert.deepEqual(ctl.outbox.queue[0].action, { action: 'done', key: 'T1' })
+  // Undo brings it back like any pin.
+  ctl.outbox.undo(ctl.outbox.queue[0].id)
+  assert.equal(ctl.ui(board, cx).current.key, 'T1')
+})
+
+// ---- #217: the bar, the card and the sheet share one pending queue ----
+
+const clock = { skew: 0 }
+const cardBox = sent =>
+  new Outbox({
+    send: async (session, action) => sent.push({ session, action }),
+    notify() {},
+    store: sharedOutbox(shared, setShared),
+    surface: 'card',
+    now: () => Date.now() + clock.skew,
+  })
+const timerCx = { ...cx, spawn: fn => fn({ notify() {} }) }
+
+test('Done in the bar, Done on the card, Undo in the bar: nothing goes out', async () => {
+  clock.skew = 0
+  const sent = []
+  const card = cardBox(sent)
+  const ctl = new PinCtl()
+  const ui = ctl.ui(todoBoard(), cx)
+  ui.onDone(ui.current, cx)
+  assert.equal(card.schedule(cx, 's', doneAction('T1')), null, 'the card cannot queue a second Done')
+  const undo = ctl.ui(todoBoard(), cx)
+  assert.ok(textOf(pinbar(todoBoard(), undo)).includes('Done: Merge #7'))
+  undo.onUndo(undo.waiting[0].id, cx)
+  clock.skew = 60_000
+  card.flush(timerCx)
+  await Promise.resolve()
+  assert.deepEqual(sent, [])
+})
+
+test('Done on the card, Done in the bar, Undo on the card: nothing goes out', async () => {
+  clock.skew = 0
+  const sent = []
+  const card = cardBox(sent)
+  const id = card.schedule(cx, 's', doneAction('T1'))
+  const ctl = new PinCtl()
+  const ui = ctl.ui(todoBoard(), cx)
+  assert.equal(ui.current.key, 'K1', 'the card is waiting on T1, so the bar leaves it out')
+  ui.onDone({ key: 'T1' }, cx)
+  assert.equal(card.queue.length, 1, 'the bar did not queue a second Done')
+  card.undo(id)
+  clock.skew = 60_000
+  card.flush(timerCx)
+  await Promise.resolve()
+  assert.deepEqual(sent, [])
+  assert.equal(ctl.ui(todoBoard(), cx).current.key, 'T1')
+})
+
+test("the bar's undo row lists only pins and to-dos, not the card's answers", () => {
+  const board = { ...todoBoard(), needs: [...todoBoard().needs, { key: 'Q1', kind: 'ask', isOpen: true, text: 'Which?' }] }
+  const card = cardBox([])
+  card.schedule(cx, 's', { action: 'answer', key: 'Q1', answer: 'a' })
+  const ctl = new PinCtl()
+  assert.deepEqual(ctl.ui(board, cx).waiting, [])
+  card.schedule(cx, 's', doneAction('T1'))
+  assert.deepEqual(
+    ctl.ui(board, cx).waiting.map(w => w.title),
+    ['Merge #7'],
+  )
+})
+
+const iconsOf = el => {
+  const seen = []
+  const walk = e => {
+    if (!e || typeof e !== 'object') return
+    seen.push(...e.node.init)
+    e.node.kids.forEach(walk)
+  }
+  walk(el)
+  return seen.map(String)
+}
+
+test("a to-do's undo row wears the to-do icon, a pin's the pin icon", () => {
+  const ctl = new PinCtl()
+  const todo = ctl.ui(todoBoard(), cx)
+  todo.onDone(todo.current, cx)
+  assert.ok(iconsOf(pinbar(todoBoard(), ctl.ui(todoBoard(), cx))).some(p => p.endsWith('do.svg')))
+  const note = new PinCtl()
+  const know = note.ui({ session: 'n', needs: [{ key: 'K1', kind: 'know', isOpen: true, text: 'x' }] }, cx)
+  know.onDone(know.current, cx)
+  const row = pinbar({ session: 'n' }, note.ui({ session: 'n', needs: [{ key: 'K1', kind: 'know', isOpen: true, text: 'x' }] }, cx))
+  assert.ok(!iconsOf(row).some(p => p.endsWith('do.svg')))
+})
+
+test("the caret's tooltip says to-do for a to-do and pin for a pin", () => {
+  const tip = board => findId(pinbar(board, new PinCtl().ui(board, cx)), 'pin-caret').node.calls.tooltip.flat()
+  assert.ok(tip(todoBoard()).includes('Open this to-do'))
+  assert.ok(tip({ session: 's', needs: [todoBoard().needs[1]] }).includes('Open this pin'))
+})
+
+test('a to-do wears a to-do icon and tag in the bar and the all-pins list; a pin does not', () => {
+  const ctl = new PinCtl()
+  const ui = ctl.ui(todoBoard(), cx)
+  const bar = pinbar(todoBoard(), ui)
+  assert.ok(textOf(bar).includes('to-do'))
+  const know = ctl.ui({ session: 's', needs: [todoBoard().needs[1]] }, cx)
+  assert.ok(!textOf(pinbar({ session: 's' }, know)).includes('to-do'))
+  app.props = {
+    view: 'all',
+    session: 's',
+    list: [pin('T1', { kind: 'do' }), pin('K1', { kind: 'know' })],
+    width: 470,
+    height: 300,
+    overlay: 'o1',
+  }
+  const rows = pinsView(new Set(), {})
+  assert.ok(textOf(findId(rows, 'pin-open-T1')).includes('to-do'))
+  assert.ok(!textOf(findId(rows, 'pin-open-K1')).includes('to-do'))
+})
+
+test('a to-do pin uses the do icon, a note the pin icon', () => {
+  const ctl = new PinCtl()
+  const icons = ui => {
+    const seen = []
+    const walk = el => {
+      if (!el || typeof el !== 'object') return
+      seen.push(...el.node.init)
+      el.node.kids.forEach(walk)
+    }
+    walk(pinbar(todoBoard(), ui))
+    return seen
+  }
+  assert.ok(icons(ctl.ui(todoBoard(), cx)).some(p => String(p).endsWith('do.svg')))
+  const note = { session: 's', needs: [todoBoard().needs[1]] }
+  assert.ok(!icons(ctl.ui(note, cx)).some(p => String(p).endsWith('do.svg')))
 })
 
 // ---- #205: marking a pin read takes `mark read` away; `done` slides under the cursor, so it is held too ----
