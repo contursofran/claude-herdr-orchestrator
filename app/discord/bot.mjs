@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { Gateway } from './gateway.mjs'
-import { CHANNELS, allowed, diffBoard, metricsDue, metricsText, parseTap, planTap, pruneSeen } from './model.mjs'
+import { CHANNELS, allowed, pickImages, diffBoard, metricsDue, metricsText, parseTap, planTap, pruneSeen } from './model.mjs'
 
 const API = 'https://discord.com/api/v10'
 const CATEGORY = 'Herdr'
@@ -28,10 +28,10 @@ export function makeApi(token, doFetch = fetch, wait = sleep) {
         method,
         headers: {
           Authorization: `Bot ${token}`,
-          'Content-Type': 'application/json',
+          ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
           'User-Agent': 'herdr-agents (github.com/contursofran/claude-herdr-orchestrator)',
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined || body instanceof FormData ? body : JSON.stringify(body),
       })
       if (res.status === 429) {
         const { retry_after: after } = await res.json().catch(() => ({}))
@@ -65,6 +65,25 @@ function readJson(path, fallback) {
   } catch {
     return fallback
   }
+}
+
+const sizeOf = path => {
+  try {
+    return statSync(path).size
+  } catch {
+    return null
+  }
+}
+
+/** A message's body: plain, or as a form with its files when there are any. */
+export function withFiles(payload, images) {
+  const { files, note } = pickImages(images, sizeOf)
+  const content = `${payload.content}${note}`
+  if (!files.length) return { ...payload, content }
+  const form = new FormData()
+  form.set('payload_json', JSON.stringify({ ...payload, content, attachments: files.map((f, id) => ({ id, filename: f.name })) }))
+  files.forEach((f, i) => form.set(`files[${i}]`, new Blob([readFileSync(f.path)]), f.name))
+  return form
 }
 
 export class Bot {
@@ -114,11 +133,18 @@ export class Bot {
       seen[action.id] = { at: action.at }
     } else if (action.type === 'post') {
       const channel = this.channels[action.channel]
-      const message = await this.api('POST', `/channels/${channel}/messages`, {
-        content: action.content,
-        components: action.components ?? [],
-        allowed_mentions: { parse: [], users: action.mention && this.config.ownerId ? [this.config.ownerId] : [] },
-      })
+      const message = await this.api(
+        'POST',
+        `/channels/${channel}/messages`,
+        withFiles(
+          {
+            content: action.content,
+            components: action.components ?? [],
+            allowed_mentions: { parse: [], users: action.mention && this.config.ownerId ? [this.config.ownerId] : [] },
+          },
+          action.images,
+        ),
+      )
       seen[action.id] = { at: action.at, message: message.id, channel, open: Boolean(action.open) }
     } else if (action.type === 'edit') {
       await this.api('PATCH', `/channels/${action.channel}/messages/${action.message}`, {

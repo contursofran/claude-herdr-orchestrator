@@ -101,6 +101,12 @@ export async function registerTools($: EngineInterface) {
         },
         recommended: { type: 'number', description: 'Index in options of your recommendation.' },
         from: { type: 'string', description: 'The worker, issue or PR it is about.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "Absolute paths of screenshots or recordings (png, jpg, gif, webp, mp4, mov, webm), at most 10. They show with it on the owner's phone. Add them whenever seeing the work helps.",
+        },
       },
       required: ['question'],
     },
@@ -145,6 +151,12 @@ export async function registerTools($: EngineInterface) {
         },
         kind: { type: 'string', enum: ['do', 'know'], description: '"do" (the default) for an action, "know" for news.' },
         from: { type: 'string', description: 'The worker, issue or PR it is about.' },
+        images: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            "Absolute paths of screenshots or recordings (png, jpg, gif, webp, mp4, mov, webm), at most 10. They show with it on the owner's phone. Add them whenever seeing the work helps.",
+        },
       },
       required: ['text'],
     },

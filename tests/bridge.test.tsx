@@ -103,3 +103,21 @@ test("action files of the app mod's own shape (answerAction, doneAction, actionF
   expect(Object.keys(files).filter(f => f.startsWith(`${INBOX}/`))).toEqual([])
   await stopAll($, clock, [])
 })
+
+test('images on a question or to-do reach the board; only absolute paths of pictures and videos count', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await $.tool.call({
+    tool: 'mcp__herdr-agents__ask_owner',
+    question: 'Which look?',
+    options: ['A', 'B'],
+    images: ['/shots/a.png', 'relative.png', '/secrets/.env', 7],
+  })
+  await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Check the build', images: ['/shots/b.MP4'] })
+  await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Nothing to see' })
+  await clock.advance(3000)
+  const board = JSON.parse(files[FILE]!)
+  const images = (key: string) => board.needs.find((n: { key: string }) => n.key === key).images
+  expect(images('D1')).toEqual(['/shots/a.png'])
+  expect(images('T1')).toEqual(['/shots/b.MP4'])
+  expect(images('T2')).toEqual([])
+})

@@ -684,6 +684,7 @@ export async function boardSnapshot($: EngineInterface) {
         options: d?.options ?? [],
         recommended: d?.recommended ?? null,
         url: t?.text.match(/\bhttps?:\/\/\S+|\blocalhost:\d+\S*/)?.[0]?.replace(/[).,;]+$/, '') ?? null,
+        images: d?.images ?? t?.images ?? [],
       }
     }),
     status: v.status ?? '',

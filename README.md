@@ -14,6 +14,8 @@ Install it from the plugin marketplace, at a Claude Code prompt (details under [
 
 A bot can post the work to a private Discord server: questions in `#decisions` and to-dos in `#to-do`, both mentioning you; merges, stopped workers and things to read in `#updates`; a daily summary in `#metrics`. An item you close in Herdr is struck through in Discord.
 
+An item with screenshots or recordings (the `images` field of `ask_owner` and `pin_for_owner`) goes to `#review` with its files attached; news with images stays in `#updates`. Files must be pictures or videos, up to 10 MB in all on one message.
+
 Questions have a button per option and to-dos a Done button. A tap does what answering in Herdr does, and only the server's owner, named in `ownerId`, can answer. Questions that mention a deploy, release, promotion or production have no buttons and say to answer in Herdr, as do questions with no options.
 
 1. Create a bot in the [Discord developer portal](https://discord.com/developers/applications) and invite it to your server, with View Channels, Send Messages, Embed Links, Attach Files and Manage Channels.

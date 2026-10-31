@@ -1,6 +1,6 @@
 // What the Discord bot posts and what a tap on its buttons does, with no network or files here. Issue #251.
 
-export const CHANNELS = ['decisions', 'to-do', 'updates', 'metrics']
+export const CHANNELS = ['decisions', 'to-do', 'review', 'updates', 'metrics']
 
 const MAX = 1900
 const DAY = 24 * 3600 * 1000
@@ -145,10 +145,17 @@ export function diffBoard(board, seen, { now, owner, first = false }) {
     if (need.isOpen) {
       consider(id, need.at, () =>
         need.kind === 'know'
-          ? { type: 'post', channel: 'updates', content: clip(`**${need.title}** (${folderName(board)})\n${need.text ?? ''}`) }
+          ? {
+              type: 'post',
+              channel: 'updates',
+              content: clip(`**${need.title}** (${folderName(board)})
+${need.text ?? ''}`),
+              images: need.images,
+            }
           : {
               type: 'post',
-              channel: need.kind === 'ask' ? 'decisions' : 'to-do',
+              channel: need.images?.length ? 'review' : need.kind === 'ask' ? 'decisions' : 'to-do',
+              images: need.images,
               content: needText(need, board, owner),
               components: buttons(need, board),
               open: true,
@@ -207,6 +214,32 @@ export function diffBoard(board, seen, { now, owner, first = false }) {
 /** Drops what is closed and a month old, so the state file doesn't grow for ever. */
 export function pruneSeen(seen, now) {
   return Object.fromEntries(Object.entries(seen).filter(([, t]) => t.open || now - (t.at ?? 0) < MONTH))
+}
+
+const MEDIA = /\.(png|jpe?g|gif|webp|mp4|mov|webm)$/i
+const MAX_FILES = 10
+// The most one message can carry on a server with no boosts.
+const MAX_BYTES = 10 * 1024 * 1024
+
+/**
+ * Which files go on a message. `sizeOf` gives a file's size, or null if it can't be read. What is left out comes back with why,
+ * so the message says so instead of quietly showing less.
+ */
+export function pickImages(paths, sizeOf) {
+  const files = []
+  const left = []
+  let total = 0
+  for (const path of (paths ?? []).slice(0, 25)) {
+    const name = path.split('/').at(-1)
+    const size = MEDIA.test(path) ? sizeOf(path) : null
+    if (size === null) left.push(`${name} (not found)`)
+    else if (files.length >= MAX_FILES || total + size > MAX_BYTES) left.push(`${name} (too big)`)
+    else {
+      files.push({ path, name })
+      total += size
+    }
+  }
+  return { files, note: left.length ? `\n*Not attached: ${left.join(', ')}*` : '' }
 }
 
 const money = n => `$${Number(n ?? 0).toFixed(2)}`

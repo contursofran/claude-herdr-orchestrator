@@ -71,6 +71,8 @@ export type Decision = {
   quiet?: boolean
   // the report's token, for a worker's DECISION line (a rewrite of that report does not pin it again)
   token?: string
+  // screenshots or recordings to show with it, as absolute paths
+  images?: string[]
 }
 
 // A decision closed with `decided`, shown on the band for a while with its answer.
@@ -87,7 +89,7 @@ export type Settled = {
 
 // Something the person has to do (`do`: test a build, merge a PR) or should know (`know`),
 // pinned at the top of the band until the coordinator unpins it or the person ticks it off.
-export type Todo = { id: number; kind: 'do' | 'know'; text: string; from: string; at: number }
+export type Todo = { id: number; kind: 'do' | 'know'; text: string; from: string; at: number; images?: string[] }
 
 // A prompt for the coordinator held until its batch goes out (see outbox.ts). `report` marks a
 // worker's report: a batch with one ends with the worker count.
