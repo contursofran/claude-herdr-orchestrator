@@ -57,8 +57,13 @@ test('a new question goes to decisions and mentions the owner; a to-do goes to t
   assert.match(b.content, /http:\/\/localhost:5173$/)
 })
 
-test('something to read goes to updates with no mention', () => {
-  const [a] = diff(board({ needs: [{ ...todo, kind: 'know' }] }))
+test('news goes to updates only with something to show, and never mentions anyone', () => {
+  const news = { ...todo, kind: 'know' }
+  assert.deepEqual(
+    diff(board({ needs: [news] })).map(a => a.type),
+    ['mark'],
+  )
+  const [a] = diff(board({ needs: [{ ...news, images: ['/x/a.png'] }] }))
   assert.equal(a.channel, 'updates')
   assert.equal(a.mention, undefined)
   assert.doesNotMatch(a.content, /<@/)
@@ -89,7 +94,7 @@ test('the first look only remembers', () => {
     workers: [{ name: 'w', state: 'blocked', since: NOW }],
   })
   const actions = diff(b, {}, { first: true })
-  assert.equal(actions.length, 3)
+  assert.equal(actions.length, 2)
   assert.ok(actions.every(a => a.type === 'mark'))
 })
 
@@ -105,27 +110,48 @@ test('anything older than a day is remembered, not posted', () => {
   assert.ok(diff(b).every(a => a.type === 'mark'))
 })
 
-test('a merge and a worker that stopped go to updates, once per kind of stop', () => {
+test('updates: a merge and a PR ready to review, once each; workers stopping post nothing', () => {
+  const ready = {
+    key: 'r',
+    label: '#8',
+    pr: 80,
+    title: 'Add',
+    url: 'https://x/80',
+    isMerged: false,
+    stages: ['none', 'done', 'none', 'done', 'none'],
+  }
   const b = board({
+    at: NOW,
     tasks: [
-      { key: 'x', label: '#7', title: 'Fix', url: 'https://x/7', isMerged: true, mergedAt: NOW },
-      { key: 'y', label: '#8', isMerged: false },
+      { key: 'x', label: '#7', pr: 70, title: 'Fix', url: 'https://x/70', isMerged: true, mergedAt: NOW },
+      ready,
+      { key: 'y', label: '#9', pr: 90, isMerged: false, stages: ['none', 'run', 'none', 'none', 'none'] },
+      { key: 'z', label: '#10', pr: 100, isMerged: false, stages: ['none', 'done', 'none', 'run', 'none'] },
+      { key: 'w', label: '#11', isMerged: false, stages: ['none', 'done', 'none', 'done', 'none'] },
     ],
     workers: [
-      { name: 'w1', state: 'blocked', since: NOW, note: 'a prompt' },
-      { name: 'w2', state: 'working', since: NOW },
+      { name: 'w1', state: 'blocked', since: NOW },
       { name: 'w3', state: 'reported', endedAt: NOW },
-      { name: 'w4', state: 'done', endedAt: NOW },
     ],
   })
-  const [merged, blocked, reported, done] = diff(b)
-  assert.match(merged.content, /Merged in shop: \*\*#7\*\* Fix\n<https:\/\/x\/7>/)
-  assert.match(blocked.content, /\*\*w1\*\* is blocked in shop: a prompt/)
-  assert.match(reported.content, /\*\*w3\*\* finished/)
-  assert.match(done.content, /\*\*w4\*\* finished/)
-  assert.equal(diff(b).length, 4)
-  const same = diff(board({ workers: [{ name: 'w3', state: 'done', endedAt: NOW }] }), { 's:worker:w3:finished': { at: NOW } })
-  assert.deepEqual(same, [])
+  const posts = diff(b)
+  assert.equal(posts.length, 2)
+  assert.match(posts[0].content, /Merged in shop: \*\*PR #70\*\* Fix\n<https:\/\/x\/70>/)
+  assert.match(posts[1].content, /Ready to review in shop: \*\*PR #80\*\* Add\n<https:\/\/x\/80>/)
+  assert.ok(posts.every(p => p.channel === 'updates' && !p.mention))
+  // A fix round doesn't post it again, and merging it later still does.
+  const seen = { 's:ready:r': { at: NOW } }
+  assert.deepEqual(diff(board({ at: NOW, tasks: [ready] }), seen), [])
+  const merged = diff(board({ tasks: [{ ...ready, isMerged: true, mergedAt: NOW }] }), seen)
+  assert.match(merged[0].content, /Merged in shop/)
+})
+
+test('a PR that was ready before the bot first looked is only remembered', () => {
+  const ready = { key: 'r', label: '#8', pr: 80, isMerged: false, stages: ['none', 'done', 'none', 'done', 'none'] }
+  assert.deepEqual(
+    diff(board({ at: NOW, tasks: [ready] }), {}, { first: true }).map(a => a.type),
+    ['mark'],
+  )
 })
 
 test('a long question stays under Discord limit with its options intact', () => {

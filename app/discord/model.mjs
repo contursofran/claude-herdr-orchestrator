@@ -114,13 +114,17 @@ export function closedText(need, board) {
   return clip(`✓ ~~${need?.key ?? ''} · ${need?.title ?? ''}~~ (${folderName(board)})${end}`)
 }
 
-const taskText = (task, board) =>
-  clip(`Merged in ${folderName(board)}: **${task.label}** ${task.title ?? ''}${task.url ? `\n<${task.url}>` : ''}`)
+const STAGE_BUILD = 1
+const STAGE_CI = 3
 
-const WORKER_WORDS = { blocked: 'is blocked', reported: 'finished', done: 'finished' }
+const prName = task => (task.pr ? `PR #${task.pr}` : task.label)
 
-const workerText = (worker, board) =>
-  clip(`Worker **${worker.name}** ${WORKER_WORDS[worker.state]} in ${folderName(board)}${worker.note ? `: ${worker.note}` : ''}`)
+const taskText = (task, board, word) =>
+  clip(`${word} in ${folderName(board)}: **${prName(task)}** ${clip(task.title ?? '', 300)}${task.url ? `\n<${task.url}>` : ''}`)
+
+/** An open PR whose build finished and whose CI passed. */
+export const readyToReview = task =>
+  Boolean(task.pr) && !task.isMerged && task.stages?.[STAGE_BUILD] === 'done' && task.stages?.[STAGE_CI] === 'done'
 
 const recent = (at, now) => typeof at === 'number' && now - at < DAY
 
@@ -143,6 +147,11 @@ export function diffBoard(board, seen, { now, owner, first = false }) {
     const id = `${prefix}${need.key}`
     const track = seen[id]
     if (need.isOpen) {
+      // News only posts when it has something to show: #updates is for merges and PRs to review.
+      if (need.kind === 'know' && !need.images?.length) {
+        if (!track) actions.push({ type: 'mark', id, at: now })
+        continue
+      }
       consider(id, need.at, () =>
         need.kind === 'know'
           ? {
@@ -196,17 +205,19 @@ ${need.text ?? ''}`),
     }
   }
   for (const task of Array.isArray(board.tasks) ? board.tasks : []) {
-    if (!task.isMerged) continue
-    consider(`${prefix}task:${task.key}`, task.mergedAt, () => ({ type: 'post', channel: 'updates', content: taskText(task, board) }))
-  }
-  for (const worker of Array.isArray(board.workers) ? board.workers : []) {
-    if (!WORKER_WORDS[worker.state]) continue
-    const word = WORKER_WORDS[worker.state]
-    consider(`${prefix}worker:${worker.name}:${word}`, worker.since ?? worker.endedAt ?? worker.startedAt, () => ({
-      type: 'post',
-      channel: 'updates',
-      content: workerText(worker, board),
-    }))
+    if (task.isMerged) {
+      consider(`${prefix}task:${task.key}`, task.mergedAt, () => ({
+        type: 'post',
+        channel: 'updates',
+        content: taskText(task, board, 'Merged'),
+      }))
+    } else if (readyToReview(task)) {
+      consider(`${prefix}ready:${task.key}`, board.at, () => ({
+        type: 'post',
+        channel: 'updates',
+        content: taskText(task, board, 'Ready to review'),
+      }))
+    }
   }
   return actions
 }
