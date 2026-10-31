@@ -28,6 +28,8 @@ install_mod() {
 }
 install_mod "$here" "$mods/herdr-agents"
 install_mod "$here/view" "$mods/herdr-agents-view"
+# The Discord bot runs from this clone: a running one gets the new code. Only if it was installed.
+if [[ -f $HOME/Library/LaunchAgents/dev.herdr-agents.discord.plist ]]; then "$here/app/discord/service.sh" restart || true; fi
 # The clone this ran from, at the top of the installed mod (not in a folder rsync clears): /hrd-update pulls it.
 printf '%s\n' "$here" > "$mods/herdr-agents/clone"
 
