@@ -18,7 +18,10 @@ const LINUX = (cpu = 'cpu  4705 150 3120 80000 200 0 45 0 0 0') =>
 const MAC = [
   'Darwin',
   '--cpu',
-  'CPU usage: 32.62% user, 25.15% sys, 42.21% idle ',
+  '      cpu    load average',
+  ' us sy id   1m   5m   15m',
+  ' 19  9 72  62.09 43.04 29.40',
+  ' 33 25 42  62.09 43.04 29.40',
   '--mem',
   'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
   'Pages free:                                    12249.',
@@ -48,7 +51,7 @@ test('Linux: /proc/stat gives a CPU figure only from the second read, as a delta
   assert.equal(m.cpuBetween(first.counters, first.counters), null, 'no time went by')
 })
 
-test('macOS: top, vm_stat and the data volume', () => {
+test('macOS: the second iostat sample, vm_stat and the data volume', () => {
   const f = m.readFigures(MAC, null)
   assert.equal(f.cpu, 58)
   assert.equal(f.ram, 70)
@@ -173,8 +176,10 @@ let open = both
 fake.spaces = () => open
 fake.panes = () => []
 fake.machines = () => [{ name: 'box', layout: 'ready' }]
-fake.window = () => ({ active: false })
-fake.layout = () => ({ id: 'sidebar', size: { px: 268 } })
+let active = true
+fake.window = () => ({ active })
+let railPx = 268
+fake.layout = () => ({ id: 'sidebar', size: { px: railPx } })
 let known = [{ name: 'box', state: 'connected' }]
 fake.hc = async () => ({ code: 0, stdout: JSON.stringify({ machines: known }), stderr: '' })
 fake.watchFolder = () => new Promise(() => {})
@@ -191,6 +196,7 @@ function started() {
       cx.notified++
     },
     timer: { every() {}, after: (ms, fn) => timers.push({ ms, fn }) },
+    ticks: () => timers.filter(t => t.ms === m.POLL_MS),
     spawn: fn => jobs.push(fn(cx)),
   }
   const list = new SpacesList()
@@ -221,8 +227,7 @@ test('a machine that is not connected has no stats row, and the polling timer is
   const { list, timers, jobs } = started()
   await Promise.all(jobs.splice(0))
   await Promise.all(jobs.splice(0))
-  assert.equal(timers.length, 1, 'one timer waiting')
-  assert.equal(timers[0].ms, m.POLL_MS)
+  assert.equal(timers.filter(t => t.ms === m.POLL_MS).length, 1, 'one timer waiting')
   list.machines = [{ name: 'box', state: 'asleep' }]
   assert.deepEqual(list.statsTargets(), [null])
   await list.stats.readAll(list.statsTargets())
@@ -237,11 +242,16 @@ test('polling with the same numbers redraws nothing', async () => {
   await Promise.all(jobs.splice(0))
   const before = cx.notified
   for (let i = 0; i < 5; i++) {
-    timers.pop().fn(cx)
+    timers
+      .splice(
+        timers.findIndex(t => t.ms === m.POLL_MS),
+        1,
+      )[0]
+      .fn(cx)
     await Promise.all(jobs.splice(0))
   }
   assert.equal(cx.notified, before)
-  assert.equal(timers.length, 1)
+  assert.equal(timers.filter(t => t.ms === m.POLL_MS).length, 1)
   assert.ok(list.stats.line('box'))
 })
 
@@ -258,4 +268,71 @@ test('with no other machine there is no header and nothing is read', async () =>
     open = both
     known = [{ name: 'box', state: 'connected' }]
   }
+})
+
+// Blocker 1: a read that never answers.
+test('a read that never answers is given up on after the limit, and a late answer is ignored', async () => {
+  const late = []
+  let hang = true
+  const exec = (cmd, args, o) =>
+    o.on === 'box' && hang
+      ? new Promise(res => late.push(res))
+      : Promise.resolve({ code: 0, stdout: o.on === 'box' ? LINUX() : MAC, stderr: '' })
+  const s = new m.MachineStats(exec)
+  const timers = []
+  const after = (ms, fn) => timers.push({ ms, fn })
+  let changes = 0
+  const done = s.poll([null, 'box'], () => changes++, after)
+  await new Promise(r => setImmediate(r))
+  assert.equal(s.line(null), 'CPU 58%  RAM 70%  Disk 86%', 'the other machine is not held')
+  assert.ok(s.busy.has('box'))
+  assert.equal(timers.filter(t => t.ms === m.READ_LIMIT_MS).length, 2, 'each read has a time limit')
+  for (const t of timers) t.fn()
+  await done
+  assert.equal(s.busy.has('box'), false, 'free to be read again')
+  hang = false
+  await s.read('box', after)
+  assert.equal(s.line('box'), 'RAM 30%  Disk 47%')
+  late[0]({ code: 0, stdout: 'Linux\n--cpu\n--mem\n--disk\n', stderr: '' })
+  await new Promise(r => setImmediate(r))
+  assert.equal(s.line('box'), 'RAM 30%  Disk 47%', 'the late answer changed nothing')
+})
+
+// Blocker 2: the compact rail and a window in the background.
+async function ticked(setup) {
+  const calls = []
+  try {
+    const { list, cx, timers, jobs } = started()
+    const orig = list.stats.exec
+    list.stats.exec = async (...a) => (calls.push(a), orig(...a))
+    await Promise.all(jobs.splice(0))
+    await Promise.all(jobs.splice(0))
+    calls.length = 0
+    const before = cx.notified
+    setup(list)
+    list.stats.lines = {}
+    timers
+      .splice(
+        timers.findIndex(t => t.ms === m.POLL_MS),
+        1,
+      )[0]
+      .fn(cx)
+    await Promise.all(jobs.splice(0))
+    return { calls: calls.length, redraws: cx.notified - before, timers: timers.filter(t => t.ms === m.POLL_MS).length }
+  } finally {
+    railPx = 268
+    active = true
+  }
+}
+
+test('a compact rail reads nothing and redraws nothing, and the timer keeps going', async () => {
+  const r = await ticked(() => (railPx = 60))
+  assert.deepEqual(r, { calls: 0, redraws: 0, timers: 1 })
+  const ok = await ticked(() => {})
+  assert.ok(ok.calls > 0 && ok.redraws > 0, 'the same tick with the full rail does read')
+})
+
+test('a window in the background reads nothing and redraws nothing, and the timer keeps going', async () => {
+  const r = await ticked(() => (active = false))
+  assert.deepEqual(r, { calls: 0, redraws: 0, timers: 1 })
 })

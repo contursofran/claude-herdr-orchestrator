@@ -3,13 +3,13 @@
 
 /** One `sh` script for a computer of either kind, printing `uname -s`, then the three readings under `--cpu`, `--mem`
  *  and `--disk` marks. Linux: the first line of /proc/stat (a delta between two reads, so no sleep), MemAvailable and
- *  `df /`. macOS: no /proc, so `top` for the CPU, `vm_stat` for RAM and `df` of the data volume (the system volume is a
+ *  `df /`. macOS: no /proc, so `iostat` (its second sample, one second after the first, costs no CPU; `top` cost over a CPU-second) for the CPU, `vm_stat` for RAM and `df` of the data volume (the system volume is a
  *  read-only snapshot that is always nearly full). */
 export const READ_SCRIPT = [
   'os=$(uname -s)',
   'echo "$os"',
   'echo --cpu',
-  'if [ "$os" = Darwin ]; then top -l 1 -n 0 -s 0 | grep "^CPU usage"; else head -n 1 /proc/stat; fi',
+  'if [ "$os" = Darwin ]; then iostat -c 2 -w 1 -n 0; else head -n 1 /proc/stat; fi',
   'echo --mem',
   'if [ "$os" = Darwin ]; then vm_stat; sysctl -n hw.memsize; else grep -E "^(MemTotal|MemAvailable):" /proc/meminfo; fi',
   'echo --disk',
@@ -17,6 +17,8 @@ export const READ_SCRIPT = [
 ].join('\n')
 
 export const POLL_MS = 10000
+/** A read that has not answered by then is given up on, so one machine that hangs never holds the others. */
+export const READ_LIMIT_MS = 8000
 
 const pct = n => (Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : null)
 
@@ -52,10 +54,14 @@ export function cpuBetween(prev, cur) {
   return pct(((cur.busy - prev.busy) / (cur.total - prev.total)) * 100)
 }
 
-/** macOS: percent busy from `top`'s "CPU usage: 5.2% user, 3.1% sys, 91.6% idle" line. */
-export function parseTopCpu(text) {
-  const m = /([\d.]+)%\s+idle/.exec(text ?? '')
-  return m ? pct(100 - Number(m[1])) : null
+/** macOS: percent busy from the last `us sy id` row of `iostat -c 2 -w 1 -n 0` (the second sample; the first is the average since boot). */
+export function parseIostatCpu(text) {
+  const rows = String(text ?? '')
+    .split('\n')
+    .map(l => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+[\d.]+\s/.exec(l))
+    .filter(Boolean)
+  const last = rows[rows.length - 1]
+  return last ? pct(100 - Number(last[3])) : null
 }
 
 /** Linux: percent of RAM in use from MemTotal and MemAvailable (kB). */
@@ -78,7 +84,7 @@ export function parseVmStat(text) {
   return pct(((bytes - free) / bytes) * 100)
 }
 
-/** Percent of the disk in use from `df -Pk <path>`: used over used + available, which is the Capacity column's figure. */
+/** Percent of the disk in use from `df -Pk <path>`: used over used + available, which is the Capacity column's figure without its rounding up. */
 export function parseDf(text) {
   const row = String(text ?? '')
     .split('\n')
@@ -95,7 +101,7 @@ export function parseDf(text) {
 export function readFigures(text, prev) {
   const s = splitReading(text)
   if (!s) return null
-  if (s.os === 'Darwin') return { cpu: parseTopCpu(s.cpu), ram: parseVmStat(s.mem), disk: parseDf(s.disk), counters: null }
+  if (s.os === 'Darwin') return { cpu: parseIostatCpu(s.cpu), ram: parseVmStat(s.mem), disk: parseDf(s.disk), counters: null }
   const counters = parseProcStat(s.cpu)
   return { cpu: cpuBetween(prev, counters), ram: parseMeminfo(s.mem), disk: parseDf(s.disk), counters }
 }
@@ -112,8 +118,9 @@ export function statsLine(f) {
     .join('  ')
 }
 
-/** Reads each connected machine on a timer, one read at a time per machine, and keeps the line to show. `exec` is
- *  herdr's `exec`; `local` is the key for this computer. */
+/** Reads each connected machine, one read at a time per machine, and keeps the line to show. `exec` is herdr's `exec`.
+ *  A read is given up on after READ_LIMIT_MS when `after(ms, fn)` (cx.timer.after; a mod has no setTimeout) is passed; a
+ *  late answer from it is ignored and the machine is read again on the next poll. */
 export class MachineStats {
   constructor(exec) {
     this.exec = exec
@@ -140,13 +147,25 @@ export class MachineStats {
   }
 
   /** One read of `machine` (null: this computer), unless one is running. true when the line it shows changed. */
-  async read(machine) {
+  async read(machine, after) {
     const key = machine ?? ''
     if (this.busy.has(key)) return false
     this.busy.add(key)
     let line = ''
     try {
-      const r = await this.exec('sh', ['-c', READ_SCRIPT], { on: machine ?? null })
+      const r = await new Promise((resolve, reject) => {
+        let over = false
+        const end = f => v => {
+          if (over) return
+          over = true
+          f(v)
+        }
+        after?.(
+          READ_LIMIT_MS,
+          end(() => reject(new Error('timed out'))),
+        )
+        Promise.resolve(this.exec('sh', ['-c', READ_SCRIPT], { on: machine ?? null })).then(end(resolve), end(reject))
+      })
       const f = readFigures(r?.stdout, this.counters[key])
       if (f) {
         line = statsLine(f)
@@ -154,7 +173,7 @@ export class MachineStats {
         else delete this.counters[key]
       }
     } catch {
-      // away or failed: no line, and no CPU figure until two reads in a row
+      // away, failed or timed out: no line, and no CPU figure until two reads in a row
       delete this.counters[key]
     } finally {
       this.busy.delete(key)
@@ -165,10 +184,24 @@ export class MachineStats {
     return changed
   }
 
-  /** Reads all of `live` (machine names, null for this computer) at once; true when any shown line changed. */
-  async readAll(live) {
+  /** Starts a read of each of `live` (machine names, null for this computer) on its own, so a slow one holds no other;
+   *  `changed()` is called for each shown line that changed. Settles when every read has (one gives up after READ_LIMIT_MS). */
+  poll(live, changed, after) {
+    if (this.keepOnly(live)) changed()
+    return Promise.all(
+      live.map(m =>
+        this.read(m, after).then(
+          c => c && changed(),
+          () => {},
+        ),
+      ),
+    )
+  }
+
+  /** Reads all of `live` and waits for all; true when any shown line changed. */
+  async readAll(live, after) {
     const gone = this.keepOnly(live)
-    const changes = await Promise.all(live.map(m => this.read(m)))
+    const changes = await Promise.all(live.map(m => this.read(m, after)))
     return gone || changes.some(Boolean)
   }
 }

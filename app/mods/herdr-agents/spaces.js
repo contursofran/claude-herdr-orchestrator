@@ -145,12 +145,16 @@ export class SpacesList {
     return [null, ...remote.filter((m) => this.machines.find((k) => k.name === m)?.state === "connected")];
   }
 
-  // S231: one read of every machine, then one timer for the next, so reads never overlap. A redraw only when a shown line changed.
+  // S231: one timer for the next tick. Each machine is read on its own (a hung one holds no other, and gives up after
+  // READ_LIMIT_MS); a redraw only when a shown line changed. Nothing is read or redrawn while the rail is compact (no line
+  // is drawn there) or the window is in the background; the lines resume on the next tick.
   pollStats(cx) {
-    cx.spawn(async (cx) => {
-      try { if (await this.stats.readAll(this.statsTargets())) cx.notify(); } catch {}
-      cx.timer.after(POLL_MS, (cx) => this.pollStats(cx));
-    });
+    if (!narrow() && window().active) {
+      cx.spawn(async (cx) => { // lives until every read has answered or timed out
+        try { await this.stats.poll(this.statsTargets(), () => cx.notify(), (ms, fn) => cx.timer.after(ms, fn)); } catch {}
+      });
+    }
+    cx.timer.after(POLL_MS, (cx) => this.pollStats(cx));
   }
 
   // One look at a time, each place once however often it was asked for meanwhile.
