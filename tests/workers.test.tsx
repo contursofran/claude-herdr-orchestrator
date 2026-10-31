@@ -960,6 +960,54 @@ test('a config lock that never clears fails the spawn with git error', async ($,
   expect(submitted.at(-1)).toMatch(/status="failed">[\s\S]*could not lock config file/)
 })
 
+const RACED =
+  "error: cannot lock ref 'refs/remotes/origin/main': is at fee121e but expected cd118a9\n ! cd118a9..fee121e  main -> origin/main  (unable to update local ref)"
+
+test('two spawns at once, one losing the fetch ref race, both start', async ($, on) => {
+  const { runs, shell, calls, clock, submitted } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main\n'),
+    git('-C /repo worktree add -b fix-x /repo-wt/fix-x origin/main'),
+    git('-C /repo worktree add -b feat/a /repo-wt/feat-a origin/main'),
+  )
+  // The first fetch to finish wins; the other cannot lock the ref and must run again.
+  runs.set('git -C /repo fetch origin main', [
+    { exitCode: 0, stdout: '', stderr: '' },
+    { exitCode: 1, stdout: '', stderr: RACED },
+    { exitCode: 0, stdout: '', stderr: '' },
+  ])
+  const both = await Promise.all([spawnBranch($), spawnBranch($, { branch: 'feat/a' }, 'w-tree2')])
+  expect(both.every((r: any) => !r.deny)).toBe(true)
+  await settled()
+  await clock.advance(3000)
+  await settled()
+  expect(shell.filter(c => c === 'git -C /repo fetch origin main').length).toBe(3)
+  expect(calls.some(c => c.join(' ').includes('--name w-tree --cwd /repo-wt/fix-x'))).toBe(true)
+  expect(calls.some(c => c.join(' ').includes('--name w-tree2 --cwd /repo-wt/feat-a'))).toBe(true)
+  await clock.advance(BATCH_MS)
+  expect(submitted.join('\n')).not.toMatch(/status="failed"/)
+})
+
+test('a fetch that keeps losing the ref race fails the spawn with git error', async ($, on) => {
+  const { runs, shell, clock, submitted } = await start($, on)
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo symbolic-ref --short refs/remotes/origin/HEAD', 'origin/main\n'),
+    git('-C /repo fetch origin main', '', 1, RACED),
+  )
+  await spawnBranch($)
+  await settled()
+  await clock.advance(3000)
+  await settled()
+  expect(shell.filter(c => c === 'git -C /repo fetch origin main').length).toBe(5)
+  expect(shell.some(c => c.includes('worktree add'))).toBe(false)
+  await clock.advance(BATCH_MS)
+  expect(submitted.at(-1)).toMatch(/status="failed">[\s\S]*cannot lock ref/)
+})
+
 test('a worktree add that fails for another reason is not retried', async ($, on) => {
   const { runs, shell, clock } = await start($, on)
   answerGit(
