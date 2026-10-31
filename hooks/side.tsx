@@ -262,8 +262,6 @@ const LABEL = 8
 // dock's edge is the engine's, half a cell; one column here keeps the content off the line.
 const MARGIN_LEFT = 1
 const MARGIN = 2
-// The rule over the box: darker than the theme's subtle grey, as in the mockup.
-const RULE = '#2A2A2A'
 // The rows of the table, top margin to status line, in a dock tall enough for all of them.
 const FIXED_ROWS = 2 + 2 + 2 + SIDE_WORK_ROWS + 2 + SIDE_NEED_ROWS + 1 + SIDE_BOX_ROWS + 1
 
@@ -468,7 +466,7 @@ export async function drawSide($: EngineInterface, e: SideRender): Promise<Rende
         {needHead}
         {slots(items, SIDE_NEED_ROWS, needRow, 'n', 'Nothing waits for you.')}
       </Box>
-      <Text color={RULE}>{'─'.repeat(cols)}</Text>
+      <Text color="subtle">{'─'.repeat(cols)}</Text>
       <Box flexDirection="column" marginTop={1} height={SIDE_BOX_ROWS} overflow="hidden">
         {pick ? itemBox(items.find(it => it.key === pick.key)!) : null}
       </Box>

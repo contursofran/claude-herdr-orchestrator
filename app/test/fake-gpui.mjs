@@ -63,6 +63,7 @@ export const app = {
   execs: [],
   settings: { zoom: 1 },
   notes: [],
+  theme: null, // fields merged over the fake theme, e.g. { appearance: 'light' }; none means dark
 }
 
 globalThis.__fakeGpui = {
@@ -107,7 +108,7 @@ globalThis.__fakeGpui = {
     if (text instanceof Error) throw text
     return text ?? null
   },
-  theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
+  theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030', ...app.theme }),
   run: (name, args) => app.ran.push([name, args]),
   settings: () => app.settings ?? {},
   setShared: (k, v) => {
