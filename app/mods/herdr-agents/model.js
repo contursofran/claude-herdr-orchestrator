@@ -749,8 +749,8 @@ export const FAIL_LINE_MS = 60000
 
 /**
  * The quiet line for an action on ANOTHER item than `key` of `board`, shown on the card or sheet the owner moved on to:
- * a failed send first ({kind: 'failed', key, verb, detail}, to retry by opening that item), else the latest action still
- * waiting out its undo time ({kind: 'waiting', key, verb, detail, undoId}). null when there is none. `failed` entries are
+ * the latest action still waiting out its undo time first ({kind: 'waiting', key, verb, detail, undoId}), else a failed send
+ * ({kind: 'failed', key, verb, detail}, to retry by opening that item). null when there is none. `failed` entries are
  * {session, key, action, at}; `queue` as for cardView.
  */
 export function quietLine(board, key, state = {}) {

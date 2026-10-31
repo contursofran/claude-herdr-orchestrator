@@ -247,7 +247,7 @@ export function sheetView(board, key, { queue = [], sent = [], now = 0, fileText
  * page, `1`-`3` press that option when there is one (`options`); anything else is left alone, so the sheet takes
  * nothing it has no use for. A held key is ignored. Returns {type: 'close' | 'prev' | 'next' | 'option', index?} or {type: 'ignore'}.
  */
-export function sheetKeyAction(keystroke, { options = 0, held = false, copy = null } = {}) {
+export function sheetKeyAction(keystroke, { options = 0, held = false, copy = null, settling = false } = {}) {
   if (held) return { type: 'ignore' }
   const k = String(keystroke ?? '').toLowerCase()
   if (k === 'escape') return { type: 'close' }
@@ -255,6 +255,7 @@ export function sheetKeyAction(keystroke, { options = 0, held = false, copy = nu
   if (k === 'right') return { type: 'next' }
   if (copy) return { type: 'copy', chord: copy }
   const n = /^[1-3]$/.test(k) ? Number(k) : 0
+  if (n && settling) return { type: 'ignore' } // just after a move: aimed at the old item
   if (n && n <= options) return { type: 'option', index: n - 1 }
   return { type: 'ignore' }
 }

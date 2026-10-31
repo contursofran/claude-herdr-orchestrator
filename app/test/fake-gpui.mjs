@@ -54,10 +54,12 @@ export const app = {
   ran: [],
   execs: [],
   settings: { zoom: 1 },
+  notes: [],
 }
 
 globalThis.__fakeGpui = {
   appHome: () => '/app-home',
+  notify: n => app.notes.push(n),
   div: makeElement,
   svg: makeElement,
   View: class {},

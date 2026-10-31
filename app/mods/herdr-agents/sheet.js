@@ -9,7 +9,7 @@ import { button, faceIcon, ghost, keyButton, quietRow } from './card.js'
 import { sheetDoneLine, sheetHint, sheetKeyAction, sheetMore, sheetNext, sheetSize, sheetView, whyLines } from './sheetmodel.js'
 import { closeSheet, closeSheetHeld, pageSheet } from './sheetctl.js'
 import { noteDismissed } from './outside.js'
-import { pastFrame, quietLines } from './model.js'
+import { pastFrame, quietLines, rowsSteady } from './model.js'
 import { color, font, icon, card as look, sheet as sheetLook } from './tokens.js'
 
 /** The sheet's state for this copy (main.js, role `sheet`): the card's (the Outbox of the undo window, the focus handle),
@@ -343,6 +343,7 @@ export function sheetBlock(boards, ctl, cx) {
           const act = sheetKeyAction(keystroke, {
             options: resolved ? 0 : view.options.length,
             held: e.is_held,
+            settling: !rowsSteady(ctl, Date.now()),
             copy: view.pinText ? copyKey(keystroke) : null,
           })
           if (act.type === 'ignore') return

@@ -77,6 +77,7 @@ const shows = (el, prefix) => ({
 
 beforeEach(() => {
   app.store = {}
+  app.notes = []
   app.settings = { zoom: 1 }
   app.focused = { terminal: 't1', space: 's1' }
   app.ran = []
@@ -547,4 +548,60 @@ test('both views read the same lists: a sent answer is the resolved face on eith
   const now = c.outbox.now()
   assert.equal(cardFor([b], { session: b.session, key: 'D7' }, { sent: s.outbox.sent, now }).face, 'resolved')
   assert.equal(sheetView(b, 'D7', { sent: c.outbox.sent, now }).face, 'resolved')
+})
+
+test('a reload moves the copy\'s waiting answer to "not sent" with retry and a notice; it is never sent by itself', async () => {
+  const b = only('D7', 'D8')
+  const { cx, c, t, make, flush } = copies()
+  c.schedule(cx, b.session, answerAction('D7', 'Cursor'))
+  const fresh = make(makeCardState)
+  assert.equal(fresh.outbox.queue.length, 0)
+  assert.deepEqual(
+    fresh.outbox.failed.map(f => f.key),
+    ['D7'],
+  )
+  assert.equal(app.notes.length, 1)
+  assert.equal(fresh.outbox.hidden().has(`${b.session}:D7`), false)
+  const line = quietLines(b, 'D8', { failed: fresh.outbox.failed, now: t.now })[0]
+  assert.equal(line.kind, 'failed')
+  assert.equal(line.action.key, 'D7')
+  await flush(c)
+  assert.equal(t.sends.length, 0)
+})
+
+test('an overdue answer (its timer died) is moved to "not sent", not left hiding its item', () => {
+  const b = only('D7', 'D8')
+  const { cx, c, t } = copies()
+  c.schedule(cx, b.session, answerAction('D7', 'Cursor'))
+  t.now += UNDO_MS + 60 * 60 * 1000
+  assert.equal(c.outbox.hidden().size, 1, 'until something looks at it')
+  c.onBoards([b])
+  assert.equal(c.outbox.queue.length, 0)
+  assert.deepEqual(
+    c.outbox.failed.map(f => f.key),
+    ['D7'],
+  )
+  assert.equal(c.outbox.hidden().size, 0)
+  assert.equal(t.notes.length, 1)
+})
+
+test('entries a reload left unsent in the middle of a flush are "not sent"; one that started sending stays', () => {
+  const b = only('D7', 'D8')
+  const { cx, c, t, make } = copies()
+  c.schedule(cx, b.session, answerAction('D7', 'Cursor'))
+  c.schedule(cx, b.session, answerAction('D8', 'Dark'))
+  t.now += UNDO_MS + 50
+  cx.spawn = () => {} // the flush task dies with the reload before it starts sending
+  c.outbox.flush(cx)
+  assert.equal(c.outbox.sent.length, 2)
+  c.outbox.update({ sent: c.outbox.sent.map((s, i) => (i === 0 ? { ...s, waiting: false } : s)) })
+  const fresh = make(makeCardState)
+  assert.deepEqual(
+    fresh.outbox.sent.map(s => s.key),
+    ['D7'],
+  )
+  assert.deepEqual(
+    fresh.outbox.failed.map(f => f.key),
+    ['D8'],
+  )
 })
