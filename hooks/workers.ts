@@ -611,35 +611,56 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       )
     return false
   }
+  // The file is read on every call: a worker that rewrites it while parked (a new check, a new "for") changes the wait.
   let wait = current.wait
-  if (!wait) {
-    try {
-      const w = JSON.parse(await $.fs.read(path))
-      if (typeof w.check !== 'string' || !w.check.trim()) throw new Error('"check" must be a shell command')
-      const minutes = (v: unknown, d: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, typeof v === 'number' ? v : d))
-      wait = {
-        for: String(w.for ?? 'a check').slice(0, 80),
-        check: w.check,
-        every: minutes(w.every, 3, 1, 30),
-        max: minutes(w.max, 120, 5, 720),
-        since: now,
-      }
-    } catch (err) {
-      // It may still be writing the file; read it again once it stops.
-      if (status === 'working') return false
-      await $.process.run(['mv', path, `${job.dir}/WAIT.bad.json`])
-      await prompt($, current, `Your ${path} could not be read (${err}); it was moved to WAIT.bad.json. Write it again or carry on.`)
-      return true
+  let reread: typeof wait
+  let failure: unknown
+  try {
+    const w = JSON.parse(await $.fs.read(path))
+    if (typeof w.check !== 'string' || !w.check.trim()) throw new Error('"check" must be a shell command')
+    const minutes = (v: unknown, d: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, typeof v === 'number' ? v : d))
+    reread = {
+      for: String(w.for ?? 'a check').slice(0, 80),
+      check: w.check,
+      every: minutes(w.every, 3, 1, 30),
+      max: minutes(w.max, 120, 5, 720),
+      since: now,
     }
-    const set = wait
+  } catch (err) {
+    failure = err
+  }
+  if (!reread && !wait) {
+    // It may still be writing the file; read it again once it stops.
+    if (status === 'working') return false
+    await $.process.run(['mv', path, `${job.dir}/WAIT.bad.json`])
+    await prompt($, current, `Your ${path} could not be read (${failure}); it was moved to WAIT.bad.json. Write it again or carry on.`)
+    return true
+  }
+  // An unreadable rewrite (half written) leaves the wait as it was until the next check.
+  if (reread && wait && reread.for === wait.for && reread.check === wait.check) {
+    // Same wait: only a new every or max applies, the count goes on.
+    if (reread.every !== wait.every || reread.max !== wait.max) {
+      const changed = { ...wait, every: reread.every, max: reread.max }
+      wait = changed
+      await updateJob(
+        $,
+        job.name,
+        live(job, j => ({ ...j, wait: changed })),
+      )
+    }
+  } else if (reread) {
+    // A new "for" or check starts a new wait: the count and the last check restart.
+    const set = reread
     const { after } = await updateJob(
       $,
       job.name,
       live(job, j => ({ ...j, wait: set })),
     )
+    wait = set
     // The wait takes effect once: the coordinator is told (never the worker, which a message would wake). Not a report.
     // Not once the report has gone out: "its report comes when the wait ends" is false then.
-    if (after && after.status !== 'reported') {
+    // A rewrite of a wait already parked is not announced again.
+    if (after && after.status !== 'reported' && !current.wait) {
       // A PR the wait names as "PR #N", else the job's own PR; never a bare "#N", which may be an issue.
       const named = `${set.for} ${set.check}`.match(/\bPR\s*#(\d{1,6})\b/i)?.[1]
       const pr = named ?? [...(after.prs ?? [])].pop()
@@ -651,6 +672,7 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       )
     }
   }
+  if (!wait) return false
   // Half a sweep's slack: a sweep landing a moment short of `every` still checks, or every 1 minute would become 2.
   if (wait.lastAt !== undefined && now - wait.lastAt < wait.every * 60_000 - SWEEP_MS / 2) return true
   const ran = await $.process.run(['/bin/bash', '-c', wait.check], { cwd: job.cwd, timeoutMs: 120_000 }).catch((err: unknown) => ({

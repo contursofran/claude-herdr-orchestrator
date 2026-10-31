@@ -297,3 +297,36 @@ test('a worker that first parks after its report is not announced as unfinished'
   await s.clock.advance(BATCH_MS)
   expect(parked(s.submitted)).toHaveLength(0)
 })
+
+test('a WAIT.json rewritten while parked is read again: the new check runs, the wait text follows, the count restarts', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  s.files[`${W}/WAIT.json`] = '{"for":"first","check":"old","every":1,"max":60}'
+  s.runs.set('/bin/bash -c old', [{ exitCode: 1 }, { exitCode: 1 }, { exitCode: 1 }])
+  await s.clock.advance(60_000)
+  expect(jobOf(s.store, 'w-busy').wait).toMatchObject({ for: 'first', check: 'old' })
+  const before = s.typed.length
+  s.files[`${W}/WAIT.json`] = '{"for":"second","check":"new","every":1,"max":60}'
+  s.runs.set('/bin/bash -c new', [{ exitCode: 0 }])
+  await s.finish('w-busy')
+  await s.clock.advance(2 * 60_000)
+  expect(s.typed.length).toBe(before + 1)
+  expect(s.typed.at(-1)).toContain('Your wait is over: second')
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a rewrite that changes only every or max keeps the count; one that cannot be read keeps the wait', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
+  s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }, { exitCode: 1 }, { exitCode: 1 }])
+  await s.clock.advance(60_000)
+  const since = jobOf(s.store, 'w-busy').wait!.since
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":2,"max":90}'
+  await s.clock.advance(2 * 60_000)
+  expect(jobOf(s.store, 'w-busy').wait).toMatchObject({ for: 'ci', every: 2, max: 90, since })
+  s.files[`${W}/WAIT.json`] = '{"for":"ci","che'
+  await s.clock.advance(2 * 60_000)
+  expect(jobOf(s.store, 'w-busy').wait).toMatchObject({ for: 'ci', every: 2, max: 90, since })
+  await stopAll($, s.clock, ['w-busy'])
+})
