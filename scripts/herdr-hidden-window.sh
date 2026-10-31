@@ -9,6 +9,7 @@
 #   scripts/herdr-hidden-window.sh stop           close it and remove every trace
 #
 # HERDR_HIDDEN_NAME picks the window (default hw), so several workers can have one each.
+# HERDR_HIDDEN_APP picks the herdr-app that start copies (default /Applications/Herdr.app).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,7 +21,10 @@ if [[ ! $name =~ ^[a-z0-9-]{1,13}$ ]]; then
   exit 2
 fi
 
-real=/Applications/Herdr.app
+real=${HERDR_HIDDEN_APP:-/Applications/Herdr.app}
+# The app the hooks and the mod are for. Homebrew's herdr-gpui cask is a different app
+# that installs at the same path, with no --version, shot, do or mods.
+herdr_app_id=dev.herdr.app
 # Short and in /tmp: the app's and the core's sockets must fit the Unix path limit.
 dir=/private/tmp/hw-$name
 lock=$dir.lock
@@ -116,7 +120,11 @@ own_processes() {
 build() {
   [[ $(uname) == Darwin ]] || die "macOS only."
   [[ -d $real ]] || die "$real not found."
-  local core
+  local id core
+  id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$real/Contents/Info.plist" 2>/dev/null) || id=unknown
+  if [[ $id != "$herdr_app_id" ]]; then
+    die "$real is $id, not herdr-app ($herdr_app_id): no window can draw there. Install herdr-app from https://herdr.dev or set HERDR_HIDDEN_APP to a copy of it. See docs/hidden-window.md."
+  fi
   core=$(command -v herdr-core || echo "$HOME/.local/bin/herdr-core")
   [[ -x $core ]] || die "herdr-core not found on PATH or in ~/.local/bin."
   rm -rf "$dir"
@@ -146,12 +154,18 @@ EOF
   # Herdr and mods play sounds with afplay and open links with open, found on PATH.
   printf '#!/bin/sh\nexit 0\n' >"$dir/bin/afplay"
   cp "$dir/bin/afplay" "$dir/bin/open"
-  chmod +x "$dir/bin/herdr-app" "$dir/bin/afplay" "$dir/bin/open"
+  # The updater downloads with curl, in a child the network hook doesn't reach. A copy older
+  # than the latest release would stage the update and show its toast over the strip.
+  printf '#!/bin/sh\nexit 1\n' >"$dir/bin/curl"
+  chmod +x "$dir/bin/herdr-app" "$dir/bin/afplay" "$dir/bin/open" "$dir/bin/curl"
   # Prove the hooks load before anything can open a window: --version opens none.
   "${window_env[@]}" "${hooks[@]}" "$binary" --version >/dev/null
   grep -q ' loaded$' "$dir/hooks.log" || die "The hooks did not load; no window started."
   printf '{ "frame.welcomed": "finished" }\n' >"$dir/app/shared.json"
   printf '{ "sounds": { "enabled": false }, "clipboard_write": false, "telemetry": false }\n' >"$dir/app/settings.json"
+  # Not a first run of this version: the "Updated to" pill would cover the end of the strip.
+  printf '{ "last_run": "%s", "presented": [] }\n' \
+    "$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$copy/Contents/Info.plist")" >"$dir/app/update-notes.json"
 }
 
 sync_mod() {
@@ -179,7 +193,7 @@ warn_on_other_version() {
   local version
   version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$real/Contents/Info.plist")
   if [[ $version != "$tested_version" ]]; then
-    echo "Warning: Herdr is $version, but the hooks were tested on $tested_version. See docs/hidden-window.md." >&2
+    echo "Warning: herdr-app is $version, but the hooks were tested on $tested_version. See docs/hidden-window.md." >&2
   fi
 }
 
@@ -189,8 +203,8 @@ start() {
   closing_on_failure=1
   # A window that died leaves its core running: close that before the folder goes.
   if [[ -d $dir ]]; then close_window; fi
-  warn_on_other_version
   build
+  warn_on_other_version
   "${window_env[@]}" "${hooks[@]}" "$binary" </dev/null >"$dir/app.log" 2>&1 &
   echo $! >"$dir/pid"
   local i
@@ -300,7 +314,7 @@ run)
   exec "${window_env[@]}" "$@"
   ;;
 *)
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
   ;;
 esac
