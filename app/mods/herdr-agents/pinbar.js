@@ -48,10 +48,6 @@ const ghostBase = (id, label) =>
 
 const ghost = (id, label, onClick) => ghostBase(id, label).on_click(onClick)
 
-/** The small `to-do` tag a `do` pin wears, in the bar and in the all-pins list (a `know` pin has none). Outlined and quiet. */
-const todoTag = () =>
-  div().flex_none().px(5).rounded(3).border(1).border_color(pinsLook.buttonBorder).text_size(11).text_color(color.soft).child('to-do')
-
 /** The segments: one hit area per pin; the bar inside shows current, unread or read. */
 function segmentsRow(segments, ui) {
   const width = { current: 18, unread: 8, read: 8 }
@@ -91,12 +87,7 @@ export function pinbar(board, ui) {
   if (ui.waiting.length) {
     const w = ui.waiting[ui.waiting.length - 1]
     return base()
-      .child(
-        svg(icon(w.kind === 'do' ? 'do' : 'pin'))
-          .size(14)
-          .text_color(color.dim)
-          .flex_none(),
-      )
+      .child(svg(icon('pin')).size(14).text_color(color.dim).flex_none())
       .child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(`Done: ${w.title}`))
       .child(ghost('pin-undo', 'undo', (_e, cx) => ui.onUndo(w.id, cx)))
   }
@@ -127,13 +118,7 @@ export function pinbar(board, ui) {
       .when(ui.flash, el =>
         el.child(div().absolute().top(0).left(0).size_full().bg(color.flash).loop('opacity', { from: 0, to: 1, period: 1100 })),
       )
-      .child(
-        svg(icon(pin.kind === 'do' ? 'do' : 'pin'))
-          .size(14)
-          .text_color(color.text)
-          .flex_none(),
-      )
-      .when(pin.kind === 'do', el => el.child(todoTag()))
+      .child(svg(icon('pin')).size(14).text_color(color.text).flex_none())
       .when(pin.tag, el =>
         el.child(div().flex_none().px(6).rounded(3).bg(color.text).text_color(color.chipText).font_bold().child(pin.tag)),
       )
@@ -162,7 +147,7 @@ export function pinbar(board, ui) {
           .when(pin.summary, el => el.child(div().flex_1().min_w_0().truncate().text_color(color.soft).child(pin.summary))),
       )
       .child(div().flex_none().text_color(color.dim).child(ui.meta))
-      .child(ghost('pin-caret', '▾', (_e, cx) => ui.onRead(pin.id, cx)).tooltip(pin.kind === 'do' ? 'Open this to-do' : 'Open this pin'))
+      .child(ghost('pin-caret', '▾', (_e, cx) => ui.onRead(pin.id, cx)).tooltip('Open this pin'))
       .when(ui.many, el => el.child(ghost('pin-prev', '‹', (_e, cx) => ui.onStep(-1, cx)).tooltip('Previous pin')))
       .child(segmentsRow(ui.segments, ui))
       .when(ui.many, el => el.child(ghost('pin-next', '›', (_e, cx) => ui.onStep(1, cx)).tooltip('Next pin')))
@@ -399,7 +384,6 @@ export function pinsView(gone, ctl, board = null) {
                       .rounded_full()
                       .when(pin.unread, el => el.bg(pinsLook.dot)),
                   )
-                  .when(pin.kind === 'do', el => el.child(todoTag()))
                   .child(
                     div()
                       .flex_1()
