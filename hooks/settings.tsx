@@ -7,7 +7,6 @@ import { allProfiles, BUILT_IN, customized, OPTIONAL, readJson, userConfigPath }
 import { CLOSE_IDLE_MINUTES, PREFIX, PRUNE_MINUTES, RESET_AT, TARGET } from './defaults'
 import { tilde } from './format'
 import { session } from './session'
-import { sideOpen, toggleSide } from './side'
 import { refreshSpawnTool } from './tools'
 
 // /hrd-config: the settings, listed on the band above the prompt as /config lists
@@ -175,15 +174,6 @@ export function settingRows(pane: SettingsView): SettingRow[] {
       isDefault: mine.wrapUp !== true,
       hint: 'On: no new workers start, the running ones finish. In the all-folders file it holds every coordinator.',
     },
-    {
-      key: 'cfg-view',
-      label: 'Show workers in',
-      kind: 'choice',
-      value: (mine.view ?? merged.view) === 'side' ? 'the sidebar' : 'the band',
-      raw: '',
-      isDefault: mine.view === undefined,
-      hint: 'The band above the prompt or the sidebar beside the chat; only one shows. /hrd-side switches for this session.',
-    },
     builtIn('planner'),
     builtIn('builder'),
     builtIn('reviewer'),
@@ -216,8 +206,6 @@ export async function pressRow($: EngineInterface, key: string) {
     }))
   } else if (key === 'cfg-wrapUp') {
     await saveSetting($, 'wrapUp', row.value === 'on' ? '' : 'true')
-  } else if (key === 'cfg-view') {
-    await saveView($, row.value === 'the sidebar' ? 'band' : 'side')
   } else if (key === 'cfg-smallTasks') {
     // Steps through nobody and each profile that is on.
     const merged = { ...pane.user, ...pane.folder }
@@ -293,16 +281,6 @@ export async function saveSmallTasks($: EngineInterface, value: string) {
 
 // Saves where the workers show and shows them there now. The band is the default for all
 // folders; a folder writes it to override theirs.
-export async function saveView($: EngineInterface, view: 'band' | 'side') {
-  const { scope } = await read($, settingsView)
-  await editConfig($, c => {
-    if (view === 'band' && scope === 'user') delete c.view
-    else c.view = view
-    return `Saved view = ${view}`
-  })
-  if ((view === 'side') !== (await sideOpen($))) await toggleSide($)
-}
-
 // Turns a built-in profile off or on in the file the pane edits. A folder file without
 // `disable` starts from the one for all folders, since its own replaces that one.
 export async function toggleOff($: EngineInterface, name: string) {

@@ -30,9 +30,9 @@ class TestFile(unittest.TestCase):
             return subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True)
 
     def test_the_runner_gets_only_the_named_tests_and_the_mod(self):
-        ran = self.run_script("tests/side.test.tsx", "tests/ci.test.ts")
+        ran = self.run_script("tests/bridge.test.tsx", "tests/ci.test.ts")
         lines = ran.stdout.split()
-        self.assertEqual([l for l in lines if ".test." in l], ["./tests/ci.test.ts", "./tests/side.test.tsx"])
+        self.assertEqual([l for l in lines if ".test." in l], ["./tests/bridge.test.tsx", "./tests/ci.test.ts"])
         self.assertIn("hooks/hooks.json", lines)
         self.assertIn("tests/harness.tsx", lines)
         self.assertIn(".claude-plugin/plugin.json", lines)

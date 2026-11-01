@@ -2,7 +2,7 @@ import type { EngineInterface, RenderElement } from 'claude-code'
 import type { Row } from '../types'
 import { repoLinks } from './board'
 
-// A #123 on the band or the sidebar links to that issue or PR. owner/repo#1, repo#1 and
+// A #123 on the band links to that issue or PR. owner/repo#1, repo#1 and
 // `repo #1` (a repo's name or short name, acme-client or client) name the repo; a bare #1
 // takes the last repo named before it in the text, else `fallback` (a worker's repo), else
 // the only repo known.

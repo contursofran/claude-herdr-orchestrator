@@ -3,11 +3,9 @@ import { appModDraws } from '../hooks/appmod'
 import { BAND, command, settled, start, stopAll, test } from './harness'
 
 // The Herdr app mod's heartbeat (~/.herdr-agents/app-mod.json): the band steps aside while it is fresh and lists this
-// session's terminal (HC_TERMINAL_ID, t1 here), and PR polling goes on without the sidebar.
+// session's terminal (HC_TERMINAL_ID, t1 here), and PR polling goes on.
 
 const FILE = '/home/t/.herdr-agents/app-mod.json'
-const PANE = { plugin: 'herdr-agents', component: 'Pane', requestId: 'hrd-side', props: { bodyColumns: 80, bodyRows: 30 } } as const
-
 const BOARD = '/home/t/.herdr-agents/board/session-1234.json'
 
 const beat = (at: number, terminals: unknown = ['t1'], core?: string) => JSON.stringify({ at, terminals, ...(core ? { core } : {}) })
@@ -118,7 +116,7 @@ test('a heartbeat of another hc core does not hide the band; one with no core, o
   await band.unmount()
 })
 
-test('a fresh heartbeat leaves /hrd-config and /hrd-side as they are', async ($, on) => {
+test('a fresh heartbeat leaves /hrd-config as it is', async ($, on) => {
   const { clock, files } = await start($, on)
   await $.tool.call({ tool: 'mcp__herdr-agents__pin_for_owner', text: 'Merge server #77' })
   await clock.advance(3000)
@@ -130,15 +128,6 @@ test('a fresh heartbeat leaves /hrd-config and /hrd-side as they are', async ($,
   expect(await band.find({ key: 'cfg-target' })).toBeDefined()
   await band.unmount()
   await command($, 'hrd-config')
-
-  // The sidebar still draws its rows.
-  expect((await command($, 'hrd-side')).text).toMatch(/Sidebar open/)
-  await clock.advance(3000)
-  files[FILE] = beat(clock.now())
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect((await ui.find({ key: 'item-T1' }))?.text).toMatch(/☐ T1/)
-  await ui.unmount()
-  await command($, 'hrd-side')
 })
 
 test('a session outside an hc terminal keeps its band whatever the file says', async ($, on) => {
@@ -159,7 +148,7 @@ test('appModDraws: fresh and listed only, and not from a clock far ahead', () =>
   expect(appModDraws('', 't1', 1000)).toBe(false)
 })
 
-test('PR checks are polled while the app mod draws the boards, with no sidebar', async ($, on) => {
+test('PR checks are polled while the app mod draws the boards', async ($, on) => {
   const { clock, typed, files, prs } = await start($, on)
   await $.tool.call({
     tool: 'mcp__herdr-agents__spawn',
@@ -181,10 +170,8 @@ test('PR checks are polled while the app mod draws the boards, with no sidebar',
     await clock.advance(30_000)
     files[FILE] = beat(clock.now())
   }
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  const row = (await ui.find({ key: 'task-acme/app-client#12' }))?.text ?? ''
-  expect(row).toMatch(/#12 +hotbar keys +· +✓ +· +◐/)
-  await ui.unmount()
+  const row = (JSON.parse(files[BOARD]!).tasks as { key: string; stages: string[] }[]).find(t => t.key === 'acme/app-client#12')
+  expect(row?.stages.slice(0, 4)).toEqual(['none', 'done', 'none', 'run'])
   await stopAll($, clock, ['w-done'])
 })
 
@@ -234,7 +221,7 @@ test('a merged PR already stored with no merge time is asked once to fill it, th
   on('state.get', async (_, e, next) => {
     const read = await next(e)
     const value = read.value?.value as { prs?: Record<string, { mergedAt?: unknown }> } | undefined
-    if (!old || e.key !== 'side' || !value?.prs) return read
+    if (!old || e.key !== 'boardState' || !value?.prs) return read
     const prs = Object.fromEntries(Object.entries(value.prs).map(([k, { mergedAt: _, ...rest }]) => [k, rest]))
     return { value: { value: { ...value, prs }, version: read.value!.version } }
   })

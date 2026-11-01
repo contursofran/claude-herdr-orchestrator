@@ -104,8 +104,6 @@ test('waitingOn: names the tasks whose item is this key, or says nothing waits',
   assert.equal(waitingOn(b, 'K3'), 'Nothing waits on this')
   b.tasks[1].item = 'D7'
   assert.equal(waitingOn(b, 'D7'), 'Waiting on this: #601 Task 1 · #602 Task 2')
-  b.tasks[1].joined = 'k1'
-  assert.equal(waitingOn(b, 'D7'), 'Waiting on this: #601 Task 1', 'a slot that joined another row does not count')
   assert.equal(waitingOn({}, 'D7'), 'Nothing waits on this')
 })
 

@@ -756,7 +756,7 @@ export async function deliver(
 
   const resultPath = `${job.dir}/RESULT.md`
   let body: string
-  // The PRs a report names, for the sidebar's task rows: its header's, else the PR link in the report.
+  // The PRs a report names, for the board's task rows: its header's, else the PR link in the report.
   let prs: number[] = []
   // A report's header (see report.ts): its status and PRs go on the prompt's tag.
   let header: Header | undefined

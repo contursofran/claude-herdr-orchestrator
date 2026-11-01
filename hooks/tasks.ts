@@ -2,7 +2,7 @@ import type { Job, Pr, Row } from '../types'
 import { ago } from './format'
 import { active } from './state'
 
-// The sidebar's work table: one row per issue or PR, the workers on it grouped by the
+// The board's work rows: one row per issue or PR, the workers on it grouped by the
 // numbers their briefs and reports name (the planner, the builders and fix rounds, the
 // reviewer of the PR a builder linked), with a mark per stage.
 

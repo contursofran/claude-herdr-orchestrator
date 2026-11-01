@@ -13,7 +13,6 @@ import { askOwner, noteReports, openQuestions, pinForOwner, pingAfterReports, se
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { drawSettings, trackFocus } from './settings'
-import { drawSide, SIDE, sideClosed, sideOpen, sideShown, syncSide, toggleSide } from './side'
 import { active, dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
 import { refreshSpawnTool, registerTools } from './tools'
@@ -69,10 +68,7 @@ export const register: Register = on => {
     }
     void sweep($, closeMinutes).catch(() => {})
     void learnCore($)
-    // view "side": the sidebar instead of the band, opened once there is room for it.
-    // A reload finds it open already.
-    if (settings.view === 'side' && !(await sideOpen($))) void toggleSide($).catch(() => {})
-    // The band, the sidebar and the bridge's inbox, every TICK_MS with no hc calls: refresh
+    // The band and the bridge's inbox, every TICK_MS with no hc calls: refresh
     // reads the states the waits and the sweep last saw. The report check comes first, so a
     // RESULT.md that landed is delivered at this tick, and the state file's block follows it.
     $.clock.every(
@@ -83,7 +79,6 @@ export const register: Register = on => {
           .then(() => writeBlock($))
           .catch(() => {})
           .then(() => refresh($))
-          .then(() => syncSide($))
           .then(() => publishBoard($))
           .then(() => watchAppMod($))
           .catch(() => {}),
@@ -172,18 +167,12 @@ export const register: Register = on => {
   })
 
   // The band above the prompt: the settings while /hrd-config has them open, else
-  // what waits for the person and the workers, unless the sidebar shows them.
+  // what waits for the person and the workers, unless the app mod shows them.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     session.bandId = e.requestId
-    return (await drawSettings($, e)) ?? ((await sideShown($)) || (await appModShown($)) ? next(e) : drawBand($, e, next))
+    return (await drawSettings($, e)) ?? ((await appModShown($)) ? next(e) : drawBand($, e, next))
   })
 
-  // The sidebar (/hrd-side).
-  on('ui.render', { component: 'Pane', requestId: SIDE }, ($, e) => drawSide($, e))
-  on('ui.close', async ($, e, next) => {
-    if (e.id === SIDE) await sideClosed($)
-    return next(e)
-  })
   on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
     await trackFocus($, e.element)
     return next(e)

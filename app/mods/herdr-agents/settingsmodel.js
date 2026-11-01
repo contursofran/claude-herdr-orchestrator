@@ -84,13 +84,6 @@ export function settingRows(pane) {
       value: file.wrapUp === true,
       hint: 'On: no new workers start, the running ones finish. In the all-folders file it holds every coordinator.',
     },
-    {
-      key: 'view',
-      label: 'Show workers in',
-      kind: 'choice',
-      value: (file.view ?? all.view) === 'side' ? 'the sidebar' : 'the band',
-      hint: 'The band above the prompt or the sidebar beside the chat. New sessions; /hrd-side switches a running one.',
-    },
     ...BUILT_IN.map(name =>
       OPTIONAL[name]
         ? { key: `off:${name}`, label: title(name), kind: 'switch', value: !disabled(all).includes(name), hint: OPTIONAL[name] }
@@ -137,11 +130,6 @@ export function applyPress(c, key, pane) {
   if (key === 'wrapUp') {
     if (c.wrapUp === true) delete c.wrapUp
     else c.wrapUp = true
-  } else if (key === 'view') {
-    const next = (c.view ?? merged(pane).view) === 'side' ? 'band' : 'side'
-    // The band is the default for all folders; a folder writes it to override theirs.
-    if (next === 'band' && scope === 'user') delete c.view
-    else c.view = next
   } else if (key === 'smallTasks') {
     const choices = smallTaskChoices(pane)
     const now = (c.smallTasks !== undefined ? c.smallTasks : merged(pane).smallTasks) || NOBODY

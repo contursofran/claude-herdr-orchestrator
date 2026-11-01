@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/contursofran/claude-herdr-orchestrator/docs/board-schema.json",
   "title": "herdr-agents board, version 1",
-  "description": "~/.herdr-agents/board/<session id>.json: what the sidebar (/hrd-side) shows for one coordinator session, rewritten when it changes and at least once a minute, and removed when the session ends. An app presses the sidebar's buttons by writing one action file (see $defs/action) into ~/.herdr-agents/board/<session id>.actions/; the mod does it within about 3 seconds, removes the file and reports the outcome in `actions`. Files there are taken in name order.",
+  "description": "~/.herdr-agents/board/<session id>.json: what the Herdr app draws for one coordinator session, rewritten when it changes and at least once a minute, and removed when the session ends. An app acts on it by writing one action file (see $defs/action) into ~/.herdr-agents/board/<session id>.actions/; the mod does it within about 3 seconds, removes the file and reports the outcome in `actions`. Files there are taken in name order.",
   "type": "object",
   "required": ["version", "session", "cwd", "at", "stageNames", "summary", "workers", "tasks", "needs", "status", "actions"],
   "properties": {
@@ -66,13 +66,12 @@
     },
     "tasks": {
       "type": "array",
-      "description": "The work rows in their slots, top to bottom. A slot whose task joined another row has only key, label and joined.",
+      "description": "The work rows, top to bottom.",
       "items": {
         "type": "object",
         "properties": {
           "key": { "type": "string" },
           "label": { "type": "string", "description": "#640" },
-          "joined": { "type": "string", "description": "The key of the row it joined; such a slot has no other fields." },
           "title": { "type": "string" },
           "repo": { "type": ["string", "null"] },
           "pr": { "type": ["integer", "null"] },
@@ -123,7 +122,7 @@
         }
       }
     },
-    "status": { "type": "string", "description": "The sidebar's status line." },
+    "status": { "type": "string", "description": "The last action's result, or that the PR checks failed." },
     "actions": {
       "type": "array",
       "description": "The outcome of the last 10 action files, oldest first.",

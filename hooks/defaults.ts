@@ -55,7 +55,7 @@ export const LOST_REPORT_MS = 10_000
 // Prompts for the coordinator (reports, owner answers) wait this long after the last one,
 // and after its turn ends, so the ones that arrive together go out as one prompt (see outbox.ts).
 export const BATCH_MS = 3000
-// The coordinator's tick: report check, band, sidebar and inbox.
+// The coordinator's tick: report check, band and inbox.
 export const TICK_MS = 3000
 // How long a reported worker stays on the band.
 export const LINGER_MS = 60_000
@@ -75,14 +75,10 @@ export const TODO_ROWS = 6
 export const WORKER_LINES = 2
 export const WORKER_CELL = 56
 
-// The sidebar (/hrd-side): the width it asks for when docked, its fixed rows (work
-// table, needs-you list, the answer box), how long a finished task still shows when it
-// first appears, and how often it reads the GitHub state of the PRs it lists.
-export const SIDE_COLUMNS = 64
-export const SIDE_WORK_ROWS = 8
-export const SIDE_NEED_ROWS = 6
-export const SIDE_BOX_ROWS = 8
-export const SIDE_RECENT_MS = 3 * 60 * 60_000
+// How long a finished task still shows when it first appears on the board, and how often
+// and how many of the PRs it lists have their GitHub state read.
+export const TASK_RECENT_MS = 3 * 60 * 60_000
+export const PR_POLL_MAX = 8
 export const PR_POLL_MS = 2 * 60_000
 
 // Keys in $.store, which every session on the machine shares.
