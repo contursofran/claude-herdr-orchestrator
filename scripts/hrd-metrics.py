@@ -30,14 +30,14 @@ Reads of RESULT files (Read calls, and Bash cat/head/tail/sed/less on them) are 
 read% is the share of reports followed by one. COORDINATOR-STATE.md edits (Edit/Write calls, and Bash commands that write it: sed -i, > or >>, tee,
 python open(..., 'w')) are counted per session and divided by its reports. A prompt with several
 <herdr-agent> blocks gives one report per block; the reaction goes to the last.
-Prompt kinds: each coordinator prompt is a report (<herdr-agent), pipeline (<herdr-pipeline), bgtask (<task-notification),
+Prompt kinds: each coordinator prompt is a report (<herdr-agent), bgtask (<task-notification),
 panel (<herdr-decision, <herdr-owner-done), compact (<herdr-context, or Claude Code's own continuation summary) or owner
 (other text; shell echoes and slash-command records are not prompts). prompt_kinds counts the prompts of each kind and
 the unique assistant message ids (model turns) after them, up to the next prompt.
 merged_prs counts worker-built PRs merged in the window: Bash `gh pr merge N` calls whose result is not an error, leaving
-out those with a --subject that starts with Version, plus <herdr-pipeline event="merged" pr="N"> prompts; unique per
+out those with a --subject that starts with Version; unique per
 repo (-R/--repo, else none) and number.
-mech_turns_per_pr is the turns after report, pipeline and bgtask prompts per merged PR; wakeups_per_pr counts those
+mech_turns_per_pr is the turns after report and bgtask prompts per merged PR; wakeups_per_pr counts those
 prompts (None when nothing merged). Text columns: mrg, t/PR, w/PR.
 Spawn lead is the coordinator's assistant turns before each successful spawn: from the last user or plugin
 prompt, or the previous spawn/message/stop result, up to the spawn call (that turn included).
@@ -132,13 +132,12 @@ GITHUB_REMOTE = re.compile(r"(?:^|@|//)github\.com[:/]+([\w.-]+)/([\w.-]+?)(?:\.
 PR_LIMIT = 40  # newest merged PRs per repo: GitHub caps the commits query size
 RUNS_CAP = 1000  # GitHub returns no more runs than this for a filtered query
 MALFORMED = (ValueError, KeyError, TypeError, AttributeError)  # what a gh reply of the wrong shape raises
-# What woke the coordinator. `report`, `pipeline` and `bgtask` prompts are mechanical: no human asked for them.
-KINDS = ("report", "pipeline", "bgtask", "panel", "compact", "owner")
-MECH = ("report", "pipeline", "bgtask")
+# What woke the coordinator. `report` and `bgtask` prompts are mechanical: no human asked for them.
+KINDS = ("report", "bgtask", "panel", "compact", "owner")
+MECH = ("report", "bgtask")
 PLUGIN_PREAMBLE = re.compile(r"\s*(?:The herdr-agents plugin sent a message:\s*)?")
 KIND_TAGS = (
     ("<herdr-agent", "report"),
-    ("<herdr-pipeline", "pipeline"),
     ("<task-notification", "bgtask"),
     ("<herdr-decision", "panel"),
     ("<herdr-owner-done", "panel"),
@@ -150,7 +149,6 @@ NOT_PROMPTS = ("<bash-input>", "<bash-stdout>", "<bash-stderr>", "<local-command
 MERGE_CMD = re.compile(r"\bgh\s+pr\s+merge\s+(?:\S*/pull/)?(\d+)")
 MERGE_REPO = re.compile(r"(?:--repo|-R)[ =]\s*[\"']?([\w.-]+/[\w.-]+)")
 MERGE_VERSION = re.compile(r"(?:--subject|-t)[ =]\s*[\"']?Version\b")
-MERGED_EVENT = re.compile(r'<herdr-pipeline\b([^>]*\bevent="merged"[^>]*)>')
 
 
 def prompt_kind(text):
@@ -172,16 +170,6 @@ def merges(cmd):
         rest = cmd[m.end() : found[i + 1].start() if i + 1 < len(found) else len(cmd)]
         repo = MERGE_REPO.search(rest)
         out.append((repo.group(1) if repo else "", int(m.group(1)), bool(MERGE_VERSION.search(rest))))
-    return out
-
-
-def merged_events(text):
-    """[(repo, number)] for each <herdr-pipeline event="merged" pr="N"> tag in a prompt."""
-    out = []
-    for m in MERGED_EVENT.finditer(text):
-        attrs = dict(ATTR.findall(m.group(1)))
-        if attrs.get("pr", "").isdigit():
-            out.append((attrs.get("repo", ""), int(attrs["pr"])))
     return out
 
 
@@ -454,7 +442,6 @@ def scan(path, since):
                 continue
             kind = new
             s.kinds[kind]["prompts"] += 1
-            s.merged.update(merged_events(text))
             lead = set()
             tag = PROMPT_TAG.match(text)
             if tag:
@@ -825,8 +812,8 @@ def print_text(label, rows, tot, workers, by_model, unpriced, root):
               " (Read or Bash); ptr%: reports whose prompt pointed at the file")
         print("   det s: the worker's earliest RESULT.md write to RESULT-<token>.md; queue s: RESULT-<token>.md to the prompt;"
               " act s: prompt to its spawn/message/stop call; spawn: the tool call; lead: coordinator turns before a spawn; wt/sp: git worktree add/fetch calls per spawn; br%: spawns that passed branch; sfail: workers that did not start; quiet: SCREEN files (stopped without a report)")
-        print("   mrg: worker-built PRs merged (gh pr merge that worked, not Version; plus pipeline merged events); "
-              "t/PR, w/PR: model turns and wake-ups from report, pipeline and background-task prompts, per merged PR")
+        print("   mrg: worker-built PRs merged (gh pr merge that worked, not Version); "
+              "t/PR, w/PR: model turns and wake-ups from report and background-task prompts, per merged PR")
         print("   prompt kinds (turns/prompts): " + ", ".join(
             f"{k} {tot['prompt_kinds'][k]['turns']}/{tot['prompt_kinds'][k]['prompts']}" for k in KINDS))
         print("\n== tokens and cost (session = every turn in the window; $/rpt = cost inside each report's reaction)")

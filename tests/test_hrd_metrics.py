@@ -927,7 +927,6 @@ class PerMergedPr(unittest.TestCase):
         self.assertEqual(s.kinds["report"], {"prompts": 1, "turns": 3})
         self.assertEqual(s.kinds["bgtask"], {"prompts": 1, "turns": 2})
         self.assertEqual(s.kinds["owner"], {"prompts": 1, "turns": 4})  # the shell echo and slash command are not prompts
-        self.assertEqual(s.kinds["pipeline"], {"prompts": 0, "turns": 0})
 
     def test_a_merge_counts_unless_it_is_a_version_pr(self):
         s = self.run_session(self.timeline)
@@ -937,20 +936,6 @@ class PerMergedPr(unittest.TestCase):
         self.assertEqual(row["mech_turns_per_pr"], 5.0)  # (3 report + 2 bgtask) / 1
         self.assertEqual(row["wakeups_per_pr"], 2.0)
         self.assertEqual(row["prompt_kinds"]["owner"], {"prompts": 1, "turns": 4})
-
-    def test_a_pipeline_merged_prompt_adds_one_and_its_turns_are_mechanical(self):
-        def more(c):
-            self.timeline(c)
-            c._rec(30, "user", {"role": "user", "content": PREAMBLE + '<herdr-pipeline event="merged" pr="9" repo="o/r" head="abc12345">\ndone\n</herdr-pipeline>'})
-            c.assistant(31, "p0", OPUS, usage(inp=1), [text("x")])
-            c._rec(32, "user", {"role": "user", "content": PREAMBLE + '<herdr-pipeline event="ready" pr="10" repo="o/r" head="abc12345">\nok\n</herdr-pipeline>'})
-            c.assistant(33, "p1", OPUS, usage(inp=1), [text("x")])
-        s = self.run_session(more)
-        self.assertEqual(s.merged, {("", 7), ("o/r", 9)})  # a ready event is not a merge
-        row = hm.coordinator_row(s)
-        self.assertEqual(row["prompt_kinds"]["pipeline"], {"prompts": 2, "turns": 2})
-        self.assertEqual(row["mech_turns_per_pr"], 3.5)  # (3 + 2 + 2) / 2
-        self.assertEqual(row["wakeups_per_pr"], 2.0)  # (1 + 1 + 2) / 2
 
     def test_a_failed_merge_and_a_repeated_merge_count_no_more_than_once(self):
         def build(c):
@@ -985,7 +970,6 @@ class PerMergedPr(unittest.TestCase):
     def test_prompt_kind_by_tag(self):
         cases = {
             PREAMBLE + '<herdr-agent name="b" status="done">': "report",
-            "<herdr-pipeline event=\"ready\">": "pipeline",
             "<task-notification>": "bgtask",
             "<herdr-decision id=\"1\">": "panel",
             "<herdr-owner-done id=\"1\">": "panel",
