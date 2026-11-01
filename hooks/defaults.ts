@@ -114,14 +114,3 @@ export const AUTO_END = '<!-- /hrd:auto -->'
 
 // Where each delivered report is also copied, under HOME, so the metrics outlive a pruned worktree.
 export const REPORTS_DIR = '.herdr-agents/reports'
-
-// The PR pipeline's defaults (`pipeline` in herdr-agents.json, see pipelineSettings in config.ts).
-export const PIPE_ROUNDS = 3
-export const PIPE_RESCUE_AFTER = 2
-export const PIPE_CI_EVERY_MINUTES = 2
-export const PIPE_CI_MAX_MINUTES = 60
-export const PIPE_NO_CI_MINUTES = 10
-export const PIPE_PAUSE_MINUTES = 30
-export const PIPE_MAX_SPAWNS = 8
-// Lines kept in a pipe's log.
-export const PIPE_LOG_KEPT = 40
