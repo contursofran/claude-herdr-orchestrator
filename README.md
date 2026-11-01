@@ -198,7 +198,7 @@ npm run check                   # formatting, type check, both manifests, tests
 
 `npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. CI runs the same on every pull request except `typecheck`, which needs the API types a local Claude Code writes. `main` takes changes only through pull requests, and only once CI passes. After a change, run `./install.sh` again and bump `version` in `.claude-plugin/plugin.json` so running sessions reload the mod and marketplace users get the update. For a version worth announcing, tag it and publish a GitHub release saying what changed (`gh release create v<version>`).
 
-While you work, run only the test files you touched, with `npm run test:file -- tests/side.test.tsx`: the whole suite takes about a minute.
+While you work, run only the test files you touched, with `npm run test:file -- tests/bridge.test.tsx`: the whole suite takes about a minute.
 
 ### Layout
 
