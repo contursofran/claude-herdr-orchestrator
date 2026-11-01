@@ -1,8 +1,6 @@
 # claude-herdr-orchestrator
 
-Run a team of coding agents from one Claude Code session. The coordinator plans the work, starts workers (Claude, opencode, codex) in [herdr](https://herdr.dev) tabs, and their reports come back to it as prompts. You answer the questions only you can answer from a panel above the prompt.
-
-![The panel above the prompt: a to-do for you, a decision with its options, and the workers](docs/images/panel.png)
+Run a team of coding agents from one Claude Code session. The coordinator plans the work, starts workers (Claude, opencode, codex) in [herdr](https://herdr.dev) tabs, and their reports come back to it as prompts. What needs you shows in the Herdr app: a pin bar, a strip under the terminal, and a card to answer from.
 
 Install it from the plugin marketplace, at a Claude Code prompt (details under [Install](#install)):
 
@@ -34,29 +32,23 @@ When a worker finishes, its `RESULT.md` comes back to the coordinator as a promp
 
 ### To-dos pinned for you
 
-What only you can do (test a build, merge a PR, restart something) is pinned at the top of the panel, so it doesn't scroll away in a report. Tick Done and the coordinator carries on from it; it unpins what is no longer needed.
-
-![A to-do pinned for the owner, with a link to the issue and a Done button](docs/images/panel-todo.png)
+What only you can do (test a build, merge a PR, restart something) is pinned in the app's strip and board, so it doesn't scroll away in a report. Tick Done and the coordinator carries on from it; it unpins what is no longer needed.
 
 ### Decisions, with options and a recommendation
 
-Questions that are yours (a product rule, a design choice, an approval) wait on the panel with their options and the recommended one starred, and the panel toasts you; Herdr's own sound and toast cover a worker that blocks or finishes. Answer with `1`–`4` from an empty prompt, with alt+d and the arrows, or with a click; `o` gives your own answer. A `#12` links to that issue or PR.
-
-![A decision with three options, the recommended one starred](docs/images/panel-decision.png)
+Questions that are yours (a product rule, a design choice, an approval) wait in the app with their options and the recommended one marked, with a toast; Herdr's own sound and toast cover a worker that blocks or finishes. Answer on the card, or on Discord if you set it up.
 
 ### Only your questions reach you
 
-Workers ask with `DECISION:` lines. The coordinator settles the ones that aren't yours, and the panel shows each answer with a ✓ for ten minutes, so you can overrule it.
+Workers ask with `DECISION:` lines. The coordinator settles the ones that aren't yours and says what it chose in its reply, so you can overrule it.
 
 ### Every worker at a glance
 
-Role, time and state for each worker: working, waiting on you, done. Four fit in the compact view; Details shows them all. A worker waiting on CI or a deploy leaves a `WAIT.json` with a check to run; the mod runs it and wakes the worker when it passes, with no model running meanwhile (⏸ and what it waits for).
-
-![The workers: two builders and a reviewer waiting on a deploy, with the coordinator's context use](docs/images/panel-workers.png)
+The board pop-up shows each row of work with its stages, its worker and what it waits on. A worker waiting on CI or a deploy leaves a `WAIT.json` with a check to run; the mod runs it and wakes the worker when it passes, with no model running meanwhile.
 
 ### Auto-compact at 250k
 
-The panel shows the coordinator's context (`ctx 75k / 250k`). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
+The strip shows the coordinator's context (`ctx 145k / 250k`). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
 
 ### A playbook that keeps workers busy
 
@@ -68,7 +60,7 @@ Off by default. When agents do the building, you see a lot of new ideas go by wi
 
 ### Wrap-up and cleanup
 
-`/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches; each report is also kept in `~/.herdr-agents/reports/`, so the metrics outlive the worktree. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
+`/hrd-wrap-up`, or Wrap up in the board pop-up, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches; each report is also kept in `~/.herdr-agents/reports/`, so the metrics outlive the worktree. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
 
 ### Settings in a dialog
 
@@ -78,15 +70,23 @@ In the Herdr app: the sliders button in the strip, or ctrl+cmd+, in the `coordin
 
 The work and what needs you are kept in `~/.herdr-agents/board/<session id>.json`, rewritten when it changes and removed when the session ends, so an app outside Claude Code (such as [contr](https://github.com/contursofran/contr), a native herdr client) can draw it. The app acts on it by dropping a JSON file in `<session id>.actions/` beside it: answer a decision, tick or dismiss a to-do, clear done, wrap up or keep going. The format is in [docs/board-schema.json](docs/board-schema.json).
 
-### A Herdr app mod (work in progress)
+### The Herdr app mod
 
-`app/` holds a mod for the [Herdr app](https://herdr.dev) that will draw the board inside the window: a pin bar under the tabs and a needs-you strip under the terminal, for the coordinator of the space you are in (tracking issue [#93](https://github.com/contursofran/claude-herdr-orchestrator/issues/93)). Today it finds the right board as focus moves and draws one line in each row (the folder and how many items are open); the rest comes slice by slice. The mod follows Herdr's light or dark theme.
+`app/` holds the mod that draws the board inside the Herdr window, for the coordinator of the space you are in: a pin bar under the tabs for things to read, a needs-you strip under the terminal, a floating card to answer from, a board pop-up with the work, a sheet that lists everything, and the settings dialog. It follows Herdr's light or dark theme.
 
-`./install.sh` installs it only when the app's folder exists (`$HERDR_APP_HOME`, default `~/.config/herdr-app`). It copies the mod, adds a layout called `coordinator` next to `main` (a copy of `main` with the two rows) and adds the mod's keys without replacing any key you use. It never switches your layout. To try it, switch yourself: your layout-switch key (`ctrl-shift-l` by default, `cmd-shift-l` in a Mac keys file) or `herdr-app do layout.switch --name coordinator`; to go back, `herdr-app do layout.switch --name main`. The board's `coordinator.terminal` field (the hc terminal the coordinator runs in) tells the mod which board is which, so sessions started before it was added draw empty rows until they reload. In the `coordinator` layout the agents list is a copy of Herdr's own (taken from herdr-app 0.1.9) with an **Orchestrators** section on top: the agents that are a live board's coordinator stay there whatever their state. Herdr's later changes to its list do not reach the copy, and pins and "time in state" start empty. Each install points the `coordinator` layout's agents list at the copy again, even if you put Herdr's own back there: that layout is ours, and Herdr's own list is what `main` is for. While the pin bar copy runs it writes `~/.herdr-agents/app-mod.json` every 30 s (and removes it when it closes), and the plugin's band steps aside for a session whose hc terminal the file lists; PR checks keep being polled. A switch to `main` removes the file at once; after a crash or hang it goes stale and the band returns within 90 s, by itself (the coordinator's timer redraws it), even on an idle session. If the pin bar, strip or card throws while drawing, the file lists no terminals until a later good draw, so the band comes back at the next tick. The file also names the hc core, so a second core on the same machine keeps its band. With no file, an old one, or a session on another machine, another core or outside hc, the band stays as before. The strip shows the coordinator's context against its limit (`ctx 145k / 250k`), with the band's warning and error levels. At the right of the status bar the layout shows the installed version and commit, from a `version.json` that `install.sh` writes into the installed mod. Tests: `npm run test:app`.
+`./install.sh` installs it when the app's folder exists (`$HERDR_APP_HOME`, default `~/.config/herdr-app`). It copies the mod, adds a layout called `coordinator` next to `main` (a copy of `main` with the two rows) and adds the mod's keys without replacing any key you use. It never switches your layout. To switch, use your layout-switch key (`ctrl-shift-l` by default, `cmd-shift-l` in a Mac keys file) or `herdr-app do layout.switch --name coordinator`; to go back, `herdr-app do layout.switch --name main`.
+
+In the `coordinator` layout the agents list is a copy of Herdr's own (taken from herdr-app 0.1.9) with an **Orchestrators** section on top: the agents that are a live board's coordinator stay there whatever their state. Herdr's later changes to its list do not reach the copy, and pins and "time in state" start empty. Each install points the `coordinator` layout's agents list at the copy again, even if you put Herdr's own back there: `main` keeps Herdr's own list. The Spaces list is also a copy, with CPU, RAM and disk under each machine. At the right of the status bar the layout shows the installed version and commit.
+
+### One line when the app isn't showing
+
+While the pin bar runs it writes `~/.herdr-agents/app-mod.json` every 30 s, naming the hc terminals it draws and the hc core. PR checks are polled only while that file is fresh. For any session the file doesn't list (the `main` layout, an app crash, another machine or hc core, a session outside hc), one line above the prompt says what waits, such as `2 waiting (reply in chat): Sort bags by type?`, and you reply in chat. After a crash the file goes stale and the line returns within 90 s; a switch to `main` removes the file at once.
+
+Tests: `npm run test:app`.
 
 ## What's in the repo
 
-- **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for the panel, and everything above.
+- **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for what needs you, and everything above.
 - **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
 - **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus high), `builder` (Sonnet medium) and `reviewer` (Opus high); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 
@@ -116,7 +116,7 @@ Each release bumps the version in `plugin.json`. Run `claude plugin update herdr
 1. **Rules.** Add the section in [`templates/AGENTS.md`](templates/AGENTS.md) to the repo's `AGENTS.md` (or `CLAUDE.md`) and fill it in: base branch, checks, how to update a branch, commit identity, who merges, what needs you. Every worker reads it, so this is where repo-specific rules go, not the subagents.
 2. **Settings (optional).** A `.claude/herdr-agents.json` in the folder you coordinate from overrides `~/.claude/herdr-agents.json` for that folder, e.g. `{"target": 2}`.
 3. **Start.** Inside herdr, open the repo folder and run `claude --model opus --effort medium`, then `/hrd-orchestrate <goal>`, e.g. `/hrd-orchestrate the issues labelled ready`. The session gets the coordinator playbook (state file, worktree per worker, builder → reviewer with a planner for big work, when to ask you) and starts workers.
-4. **Stop.** `/hrd-wrap-up` (or the panel's Wrap up button) starts no new workers and lets the running ones finish; you get a toast when the last one is done. `/hrd-wrap-up off` (Keep going) resumes.
+4. **Stop.** `/hrd-wrap-up` (or Wrap up in the board pop-up) starts no new workers and lets the running ones finish; you get a toast when the last one is done. `/hrd-wrap-up off` (Keep going) resumes.
 
 One coordinator per folder: its notes live in `COORDINATOR-STATE.md` there (the mod keeps its Workers block current itself), and wrap-up applies to the coordinators of that folder.
 
@@ -131,7 +131,7 @@ All start with `hrd-` (`commandPrefix` changes it).
 | `/hrd-notes` | Leave learning notes now for the concepts this session worked with (needs `learningNotes`). |
 | `/hrd-update` | Pull the clone this mod was installed from (`git pull --ff-only`), then run its `install.sh` again. It answers with the commits and version; running sessions reload the new version by themselves. |
 | `/hrd-config` | Says where the settings are. |
-| `/hrd-help`, `/hrd-h` | A short guide: the commands, the panel's keys, and the profiles and settings in effect for this folder. |
+| `/hrd-help`, `/hrd-h` | A short guide: the commands, and the profiles and settings in effect for this folder. |
 
 ## Settings
 
@@ -184,7 +184,7 @@ cd claude-herdr-orchestrator && npm install
 npm run check                   # formatting, type check, both manifests, tests
 ```
 
-`install.sh` copies both mods to `~/.claude/mods/`, creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` and `keybindings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`), allows their tools and binds alt+d. After the first install, start new Claude Code sessions: `/reload-plugins` does not pick up new plugin folders. From then on, running sessions reload each update by themselves, and `/hrd-update` pulls and installs from inside a session.
+`install.sh` copies both mods to `~/.claude/mods/`, creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`) and allows their tools. After the first install, start new Claude Code sessions: `/reload-plugins` does not pick up new plugin folders. From then on, running sessions reload each update by themselves, and `/hrd-update` pulls and installs from inside a session.
 
 `npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. CI runs the same on every pull request except `typecheck`, which needs the API types a local Claude Code writes. `main` takes changes only through pull requests, and only once CI passes. After a change, run `./install.sh` again and bump `version` in `.claude-plugin/plugin.json` so running sessions reload the mod and marketplace users get the update. For a version worth announcing, tag it and publish a GitHub release saying what changed (`gh release create v<version>`).
 
@@ -206,9 +206,10 @@ While you work, run only the test files you touched, with `npm run test:file -- 
 | `outbox.ts` | Holds the coordinator's prompts and sends the ones that arrive together as one. |
 | `coordinator.ts` | The playbook, the worker target, wrap-up, and compacting the coordinator's context. |
 | `target.ts` | The line after a report or a stop: how many workers are still to start, or that wrap-up holds new ones. |
-| `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |
+| `board.ts` | The workers' states and the context size, for the board. |
+| `band.tsx` | The one line above the prompt, and how tool rows are drawn in the transcript. |
 | `boarddata.ts`, `tasks.ts` | What the Herdr app draws: grouping workers into one row per issue or PR, the PR checks, and the actions it sends back. |
-| `links.ts` | `#123` links to the right repo, for the panel. |
+| `links.ts` | Which repo a `#123` belongs to. |
 | `commands.ts`, `tools.ts` | The slash commands and the coordinator's tools. |
 | `worktrees.ts`, `hc.ts` | Pruning merged worktrees; the hc CLI. |
 

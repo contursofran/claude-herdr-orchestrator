@@ -6,7 +6,7 @@ import { notify } from './hc'
 import { post } from './outbox'
 
 // What waits on the person: questions (ask_owner, workers' DECISION: lines) and
-// to-dos (pin_for_owner), pinned on the band until answered or ticked off.
+// to-dos (pin_for_owner), pinned until answered or ticked off.
 
 const decisions = atom({ plugin: 'herdr-agents', key: 'decisions' } as const, [] as Decision[])
 const settled = atom({ plugin: 'herdr-agents', key: 'settled' } as const, [] as Settled[])
@@ -38,7 +38,7 @@ export function pinnedItems($: EngineInterface) {
   return read($, todos)
 }
 
-// Pins a question for the person on the band and notifies them. A `quiet` one
+// Pins a question for the person and notifies them. A `quiet` one
 // (a worker's DECISION: line) waits for the coordinator to read it first: see
 // pingQuiet. Ids never repeat within a session, so a stale id cannot close a
 // newer question.
@@ -86,7 +86,7 @@ export async function pingQuiet($: EngineInterface, pick: (d: Decision) => boole
   else if (due.length > 1) notify($, `${due.length} decisions need you`, due.map(d => `D${d.id} ${d.title ?? d.question}`).join(' · '))
 }
 
-// The person picked an answer on the band: unpin it and hand it to the model.
+// The person picked an answer: unpin it and hand it to the model.
 export async function choose($: EngineInterface, d: Decision, answer: string) {
   await update($, decisions, list => list.filter(x => x.id !== d.id))
   $.ui.toast(`D${d.id}: ${answer}`)
@@ -102,7 +102,7 @@ export async function choose($: EngineInterface, d: Decision, answer: string) {
   )
 }
 
-// Pins one line for the person at the top of the band. The same text already
+// Pins one line for the person. The same text already
 // pinned keeps its id. Ids never repeat within a session.
 export async function pin($: EngineInterface, text: string, kind: Todo['kind'], from: string, images?: string[]) {
   const same = (await read($, todos)).find(t => t.text === text)
@@ -116,7 +116,7 @@ export async function pin($: EngineInterface, text: string, kind: Todo['kind'], 
   return { id, isNew: true }
 }
 
-// The person ticked an item off on the band: unpin it and, for a `do` item,
+// The person ticked an item off: unpin it and, for a `do` item,
 // tell the model, which may be waiting on it (a merge, a test).
 export async function tick($: EngineInterface, t: Todo) {
   await update($, todos, list => list.filter(x => x.id !== t.id))
@@ -203,7 +203,7 @@ export async function settle($: EngineInterface, e: DecidedArgs) {
     ])
     const names = gone.map(d => `D${d.id}${d.title ? ` ${d.title}` : ''}`).join(', ')
     // A question the person was already pinged for gets a toast;
-    // a quiet one they never heard of only shows on the band.
+    // a quiet one they never heard of only shows in the app.
     if (by === 'coordinator' && gone.some(d => !d.quiet)) notify($, `${names} settled by coordinator`, answer)
     else $.ui.toast(`${names} settled by ${by}: ${answer}`)
   }

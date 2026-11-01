@@ -57,10 +57,10 @@ export const LOST_REPORT_MS = 10_000
 export const BATCH_MS = 3000
 // The coordinator's tick: report check, band and inbox.
 export const TICK_MS = 3000
-// How long a reported worker stays on the band.
+// How long a reported worker stays on the board.
 export const LINGER_MS = 60_000
 
-// How long a settled decision stays on the band.
+// How long a settled decision stays in the list of answers.
 export const SETTLED_MS = 10 * 60_000
 // How long a worker's question waits for the coordinator before the person is pinged anyway.
 export const QUIET_MAX_MS = 3 * 60_000
