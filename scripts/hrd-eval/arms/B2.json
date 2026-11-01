@@ -1,6 +1,0 @@
-{
-  "disable": ["planner"],
-  "profiles": {
-    "builder": { "kind": "claude", "args": ["--agent", "builder", "--model", "opus", "--effort", "medium", "--permission-mode", "auto"] }
-  }
-}

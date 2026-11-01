@@ -32,7 +32,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Python script tests (hrd-metrics, hrd-eval)
+      - name: Python script tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
   # The status main's ruleset requires. A skipped required check counts as passed, so this always runs and looks at both.
   check:
