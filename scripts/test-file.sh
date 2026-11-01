@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs only the named test files, e.g. npm run test:file -- tests/side.test.tsx. `claude plugin test` takes a folder and
+# Runs only the named test files, e.g. npm run test:file -- tests/bridge.test.tsx. `claude plugin test` takes a folder and
 # runs every test under it (and a folder of links won't load), so this runs it on a temporary copy of the checkout, your
 # uncommitted changes included, that holds just these tests.
 set -euo pipefail
