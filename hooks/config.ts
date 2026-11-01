@@ -41,7 +41,7 @@ export const BUILT_IN = Object.keys(PROFILES)
 
 export const OPTIONAL = ['planner', 'reviewer', 'debugger']
 
-export async function readJson($: EngineInterface, path: string): Promise<Settings> {
+async function readJson($: EngineInterface, path: string): Promise<Settings> {
   if (!(await $.fs.exists(path))) return {}
   try {
     return JSON.parse(await $.fs.read(path))

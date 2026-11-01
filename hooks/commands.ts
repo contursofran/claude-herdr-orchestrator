@@ -2,14 +2,13 @@ import type { EngineInterface } from 'claude-code'
 import { allProfiles, BUILT_IN, config, customized, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
 import { orchestrate, toggleWrapUp } from './coordinator'
 import { cmd, session } from './session'
-import { closeSettings, openSettings, settingsOpen } from './settings'
 import { notesFolder, notesInstructions } from './notes'
 import { post } from './outbox'
 
 // The slash commands, all named <prefix><name> (see session.prefix).
 export async function registerCommands($: EngineInterface) {
   const prefix = session.prefix
-  await $.command.register({ name: `${prefix}config`, description: 'Change the settings: target, built-in profiles, prefix and the rest.' })
+  await $.command.register({ name: `${prefix}config`, description: 'Where to change the settings.' })
   for (const name of ['help', 'h'])
     await $.command.register({
       name: `${prefix}${name}`,
@@ -49,12 +48,9 @@ export async function runCommand($: EngineInterface, command: string, args: stri
     case 'update':
       return update($)
     case 'config':
-      if (await settingsOpen($)) {
-        await closeSettings($)
-        return { text: 'Settings closed.' }
+      return {
+        text: `The settings are in the Herdr app: the sliders button in the strip, or ctrl+cmd+, in the coordinator layout. By hand: ${await userConfigPath($)}, with ${session.cwd}/.claude/herdr-agents.json over it.`,
       }
-      await openSettings($)
-      return { text: `Settings are above the prompt: alt+d to move into them, Done or ${cmd('config')} again to close.` }
     case 'help':
     case 'h':
       return help($)
@@ -143,7 +139,7 @@ async function help($: EngineInterface) {
         [`${cmd('wrap-up')} [off]`, 'start no new workers and let the running ones finish; off resumes'],
         [cmd('notes'), 'learning notes for the concepts this session worked with (learningNotes setting)'],
         [cmd('update'), 'pull the clone this mod was installed from, and install it again'],
-        [cmd('config'), 'change these settings, in the panel above the prompt'],
+        [cmd('config'), 'where to change these settings'],
         [`${cmd('help')}, ${cmd('h')}`, 'this guide'],
       ]),
       '',
@@ -163,7 +159,7 @@ async function help($: EngineInterface) {
       'Settings',
       `  ${await userConfigPath($)}, with ${session.cwd}/.claude/herdr-agents.json over it`,
       `  target ${await target($)} workers · state file ${statePath} · compact past ${limit} tokens · prefix ${session.prefix}${c.wrapUp === true ? ' · wrapUp on everywhere' : ''}`,
-      `  ${cmd('config')} changes them. Keys: target, resetAt, statePath, trustRoots, commandPrefix, profiles, disable, smallTasks, playbook, pruneMinutes, closeIdleMinutes, repos, wrapUp, learningNotes, timeComments. See the README.`,
+      `  Keys: target, resetAt, statePath, trustRoots, commandPrefix, profiles, disable, smallTasks, playbook, pruneMinutes, closeIdleMinutes, repos, wrapUp, learningNotes, timeComments. See the README.`,
     ].join('\n'),
   }
 }

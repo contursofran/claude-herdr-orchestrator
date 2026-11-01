@@ -11,7 +11,7 @@ const pane = (user = {}, folder, scope = 'user') => ({ scope, user, folder })
 const row = (p, key) => settingRows(p).find(r => r.key === key)
 const press = (c, key, p) => (applyPress(c, key, p), c)
 
-test('the defaults and limits match the plugin', () => {
+test('the defaults match the plugin', () => {
   const defaults = readFileSync(new URL('../../hooks/defaults.ts', import.meta.url), 'utf8')
   const value = name => new RegExp(`export const ${name} = (.+)`).exec(defaults)[1].replace(/_/g, '').replace(/'/g, '').trim()
   const initial = Object.fromEntries(TEXT_SETTINGS.map(s => [s.key, String(s.initial)]))
@@ -20,11 +20,6 @@ test('the defaults and limits match the plugin', () => {
   assert.equal(initial.commandPrefix, value('PREFIX'))
   assert.equal(initial.pruneMinutes, value('PRUNE_MINUTES'))
   assert.equal(initial.closeIdleMinutes, value('CLOSE_IDLE_MINUTES'))
-  const tsx = readFileSync(new URL('../../hooks/settings.tsx', import.meta.url), 'utf8')
-  for (const s of TEXT_SETTINGS) {
-    assert.match(tsx, new RegExp(`\\['${s.key}', '${s.label}'|'${s.key}',\\s+'${s.label}'`), s.key)
-    if (s.min !== undefined) assert.match(tsx, new RegExp(`\\b${s.key}: ${s.min === 10000 ? '10_000' : s.min}\\b`), s.key)
-  }
 })
 
 test('text rows: the file value, or what is in effect and where from', () => {
@@ -52,7 +47,7 @@ test('typed values: numbers are checked, empty removes the key', () => {
   assert.deepEqual(refused, { target: 3 })
 })
 
-test('presses edit the file as /hrd-config does', () => {
+test('presses edit the file', () => {
   assert.deepEqual(press({}, 'wrapUp', pane()), { wrapUp: true })
   assert.deepEqual(press({ wrapUp: true }, 'wrapUp', pane()), {})
   assert.deepEqual(press({}, 'off:reviewer', pane()), { disable: ['reviewer'] })

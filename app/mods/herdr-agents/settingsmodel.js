@@ -1,5 +1,4 @@
-// What the settings dialog shows and how a change edits herdr-agents.json. No drawing and no files here. The rules match
-// /hrd-config (hooks/settings.tsx), which stays for people without the app, and both edit the same files.
+// What the settings dialog shows and how a change edits herdr-agents.json. No drawing and no files here.
 
 export const TEXT_SETTINGS = [
   { key: 'target', label: 'Workers to keep busy', initial: 4, unit: '', min: 1, hint: 'How many workers the coordinator keeps running.' },
