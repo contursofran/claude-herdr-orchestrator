@@ -1,6 +1,6 @@
 import type { EngineInterface } from 'claude-code'
 import { BRIDGE_ACTIONS_KEPT, BRIDGE_DIR, BRIDGE_REWRITE_MS } from './defaults'
-import { boardAct, boardInputs, boardSnapshot, type BoardAction } from './side'
+import { boardAct, boardInputs, boardSnapshot, type BoardAction } from './boarddata'
 
 // The board for apps outside Claude Code, such as contr (a native herdr client):
 // ~/.herdr-agents/board/<session id>.json holds what the sidebar shows, rewritten when it

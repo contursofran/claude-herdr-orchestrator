@@ -227,7 +227,8 @@ While you work, run only the test files you touched, with `npm run test:file -- 
 | `coordinator.ts` | The playbook, the worker target, wrap-up, and compacting the coordinator's context. |
 | `target.ts` | The line after a report or a stop: how many workers are still to start, or that wrap-up holds new ones. |
 | `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |
-| `side.tsx`, `tasks.ts` | `/hrd-side`: the sidebar, and grouping workers into one row per issue or PR. |
+| `side.tsx` | `/hrd-side`: the sidebar. |
+| `boarddata.ts`, `tasks.ts` | What the Herdr app draws: grouping workers into one row per issue or PR, the PR checks, and the actions it sends back. |
 | `links.ts` | `#123` links to the right repo, for the panel and the sidebar. |
 | `settings.tsx` | `/hrd-config`. |
 | `commands.ts`, `tools.ts` | The slash commands and the coordinator's tools. |
