@@ -2,6 +2,5 @@
   "target": 4,
   "resetAt": 250000,
   "commandPrefix": "hrd-",
-  "roles": {},
   "profiles": {}
 }

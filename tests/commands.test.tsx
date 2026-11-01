@@ -5,7 +5,6 @@ import { command, start, test } from './harness'
 
 test('commands share the hrd- prefix', async ($, on) => {
   const { clock } = await start($, on)
-  expect((await command($, 'hrd-workers')).text).toBe('No herdr workers in this session.')
   expect((await command($, 'hrd-wrap-up')).text).toMatch(/\/hrd-wrap-up off ends it/)
   await clock.advance(3000)
   // The guide answers to help and h, and lists the commands with the prefix and the built-in profiles.
@@ -17,7 +16,7 @@ test('commands share the hrd- prefix', async ($, on) => {
 
 test('a configured commandPrefix names the commands', async ($, on) => {
   await start($, on, { commandPrefix: 'crew-' })
-  expect((await command($, 'crew-decisions')).text).toBe('Nothing waiting for you.')
+  expect((await command($, 'crew-help')).text).toMatch(/\/crew-orchestrate <goal>/)
 })
 
 test('learning notes are off by default', async ($, on) => {
