@@ -8,7 +8,7 @@ import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
 import { active, jobs } from './state'
 
-// What the band shows of the workers, and the GitHub repo of each folder they used.
+// What the board shows of the workers, and the GitHub repo of each folder they used.
 const board = atom({ plugin: 'herdr-agents', key: 'board' } as const, { now: 0, rows: [] } as Board)
 const links = atom({ plugin: 'herdr-agents', key: 'links' } as const, { byCwd: {}, extra: {} } as Links)
 
@@ -19,7 +19,7 @@ export function repoLinks($: EngineInterface) {
   return read($, links)
 }
 
-// After each turn: the context fill, shown on the band.
+// After each turn: the context fill, shown in the app's strip.
 export async function showContext($: EngineInterface, tokens: number, limit: number) {
   await update($, board, b => ({ ...b, context: { tokens, limit } }))
 }
@@ -28,7 +28,7 @@ export async function showContext($: EngineInterface, tokens: number, limit: num
 const scanned = new Set<string>()
 
 // The GitHub repo (owner/name) of each folder not seen yet, from its git remotes, and the
-// config's `repos` (short name -> owner/name): what a #123 on the band links to.
+// config's `repos` (short name -> owner/name): which repo a #123 belongs to.
 async function learnRepos($: EngineInterface, cwds: string[], extra: Record<string, string>): Promise<Links> {
   const found: Record<string, string> = {}
   for (const cwd of new Set(cwds)) {
@@ -51,7 +51,7 @@ async function learnRepos($: EngineInterface, cwds: string[], extra: Record<stri
 // still waiting for someone: not finished, until it is answered (a prompt makes it running) or stopped.
 const waitsAfterReport = (j: Job) => j.status === 'reported' && !j.closed && (j.tail === 'blocked' || j.headerStatus === 'blocked')
 
-// Puts each shown worker's state into the band's atom. It makes no hc calls: a running
+// Puts each shown worker's state into the board's atom. It makes no hc calls: a running
 // worker shows the state its wait or the sweep last saw (lastStatus), and a failed sweep
 // leaves that as it was, so one error never shows a worker as gone.
 export async function refresh($: EngineInterface) {
@@ -77,7 +77,7 @@ export async function refresh($: EngineInterface) {
       state,
       startedAt: j.startedAt,
       endedAt: j.endedAt,
-      // The start time, not a clock: a ticking note would rewrite the board file on every tick (#151). The band works the clock out.
+      // The start time, not a clock: a ticking note would rewrite the board file on every tick (#151). The app works the clock out.
       ...(j.status === 'running' && j.wait ? { note: j.wait.for, since: j.wait.since } : {}),
       ...(byCwd[j.cwd] ? { repo: byCwd[j.cwd] } : {}),
     })

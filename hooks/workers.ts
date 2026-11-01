@@ -386,7 +386,7 @@ async function endTail($: EngineInterface, job: Job) {
 // of a reported worker with no wait for a quiet tick, as it does not tell whether the worker
 // still writes; the worker's later rewrite goes out as a further report.) It makes no hc call: one exists
 // check, and a read once the file is there. Not awaited, so a step queued behind a slow one
-// does not hold up the band's tick.
+// does not hold up the coordinator's tick.
 export async function checkReports($: EngineInterface) {
   for (const job of Object.values(await jobs($))) {
     const running = job.status === 'running'
@@ -836,7 +836,7 @@ export async function deliver(
       body = `${first}\n[Full report, ${lines.length} lines: ${full}. Read it before acting on it.]`
     }
     if (ids.length)
-      body += `\n\n[Pinned for the owner as ${ids.join(', ')}. The owner is pinged when this turn ends. Settle any that is not theirs (not a product rule, design choice or approval) now, with decided and your answer; the band shows them what you chose.]`
+      body += `\n\n[Pinned for the owner as ${ids.join(', ')}. The owner is pinged when this turn ends. Settle any that is not theirs (not a product rule, design choice or approval) now, with decided and your answer, and say what you chose in your reply.]`
   } else if (status === 'blocked' && !why) {
     tail = 'blocked'
     body =

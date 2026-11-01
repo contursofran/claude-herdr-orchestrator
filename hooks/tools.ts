@@ -84,16 +84,16 @@ export async function registerTools($: EngineInterface) {
   await $.tool.register({
     name: 'ask_owner',
     description: [
-      'Pin a question only the person can answer (a product rule, a design choice, an approval) above their prompt, with a toast.',
+      'Pin a question only the person can answer (a product rule, a design choice, an approval) where they will see it, with a toast.',
       'Use it for every such question instead of leaving it inside a status message, where it gets lost among reports.',
-      'Questions workers write as "DECISION:" lines are pinned already. Give short options: the person picks one on the band and it comes back as a <herdr-decision> prompt, already unpinned.',
+      'Questions workers write as "DECISION:" lines are pinned already. Give short options: the person picks one in the Herdr app and it comes back as a <herdr-decision> prompt, already unpinned.',
       'Returns its id (D1, D2…); call decided with their answer when they answer in chat instead.',
     ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'A 2-4 word name for the decision list, such as "Login flow".' },
-        question: { type: 'string', description: 'The question, with enough context to answer it from the band.' },
+        question: { type: 'string', description: 'The question, with enough context to answer it from there alone.' },
         options: {
           type: 'array',
           items: { type: 'string' },
@@ -116,7 +116,7 @@ export async function registerTools($: EngineInterface) {
     name: 'decided',
     description: [
       "Unpin questions from ask_owner or DECISION: lines: ones the person answered in chat, or a worker's question you settle yourself because it is not theirs (not a product rule, design choice or approval).",
-      'The band shows the person the answer for a while, so they can overrule it. Call it once per distinct answer.',
+      'Say what you chose in your reply, so the person can overrule it. Call it once per distinct answer.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -136,7 +136,7 @@ export async function registerTools($: EngineInterface) {
   await $.tool.register({
     name: 'pin_for_owner',
     description: [
-      'Pin one line at the top of the band above the person\'s prompt: something they have to do (kind "do": test a build at a URL, merge a PR that waits for them, restart something, answer a worker in its tab) or should know (kind "know": news, a blocker you cannot fix). In the Herdr app a "know" item shows in its pin bar and a "do" item in its needs-you strip and board.',
+      'Pin one line for the person: something they have to do (kind "do": test a build at a URL, merge a PR that waits for them, restart something, answer a worker in its tab) or should know (kind "know": news, a blocker you cannot fix). In the Herdr app a "know" item shows in its pin bar and a "do" item in its needs-you strip and board.',
       'Use it whenever a report or status message would otherwise carry such an item, so it does not scroll away. One item per call; questions go to ask_owner instead.',
       'It stays until you unpin it with unpin_for_owner or the person ticks it off; a ticked "do" item comes back as a <herdr-owner-done> prompt.',
       'Returns its id (T1, T2…).',
