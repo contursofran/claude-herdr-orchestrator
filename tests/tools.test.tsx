@@ -1,5 +1,5 @@
 import { expect } from 'claude-code/testing'
-import { BAND, command, start, test } from './harness'
+import { start, test } from './harness'
 
 // The spawn tool's description lists the profiles in the config; it is rebuilt when they change.
 
@@ -23,15 +23,4 @@ test('an unchanged config does not register spawn again', async ($, on) => {
   await $.turn.start({ text: 'Two.', turnId: 't2' })
   await clock.settle()
   expect(spawnCalls(toolCalls)).toBe(1)
-})
-
-test('a profile turned off in /hrd-config leaves the spawn description at once', async ($, on) => {
-  const { clock, tools, toolCalls } = await start($, on)
-  expect(tools.spawn?.description).toMatch(/reviewer = /)
-  await command($, 'hrd-config')
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await ui.press({ key: 'cfg-off-reviewer' })
-  await clock.settle()
-  expect(tools.spawn?.description).not.toMatch(/reviewer = /)
-  expect(spawnCalls(toolCalls)).toBe(2)
 })

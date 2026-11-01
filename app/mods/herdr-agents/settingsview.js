@@ -1,4 +1,4 @@
-// The settings dialog: every setting /hrd-config has, in the app. Its files are read when it opens and again after each
+// The settings dialog. Its files are read when it opens and again after each
 // save, and a write fails rather than replace a file that changed meanwhile (writeTextFile's `expected`).
 import { Input, InputState } from 'gpui-base'
 import { div, svg } from 'gpui-kit'

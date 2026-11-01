@@ -12,8 +12,3 @@ export function ago(ms: number) {
   const m = Math.max(0, Math.floor(ms / 60_000))
   return m === 0 ? 'now' : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`
 }
-
-// A path with the home folder shown as ~.
-export function tilde(path: string, home: string) {
-  return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path
-}

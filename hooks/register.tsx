@@ -12,7 +12,6 @@ import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, openQuestions, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
 import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
-import { drawSettings, trackFocus } from './settings'
 import { active, dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
 import { refreshSpawnTool, registerTools } from './tools'
@@ -166,16 +165,9 @@ export const register: Register = on => {
     return <Box />
   })
 
-  // The band above the prompt: the settings while /hrd-config has them open, else
-  // what waits for the person and the workers, unless the app mod shows them.
+  // The band above the prompt: what waits for the person and the workers, unless the app mod shows them.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    session.bandId = e.requestId
-    return (await drawSettings($, e)) ?? ((await appModShown($)) ? next(e) : drawBand($, e, next))
-  })
-
-  on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
-    await trackFocus($, e.element)
-    return next(e)
+    return (await appModShown($)) ? next(e) : drawBand($, e, next)
   })
 
   on('command.run', async ($, e, next) => (await runCommand($, e.command, e.args)) ?? next(e))

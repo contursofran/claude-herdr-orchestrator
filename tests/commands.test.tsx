@@ -14,6 +14,12 @@ test('commands share the hrd- prefix', async ($, on) => {
   expect(guide).toMatch(/  Built in\n    planner .*\n    builder .*\n    reviewer .*\n    debugger .*\n  Small tasks go to nobody/)
 })
 
+test('/hrd-config says where the settings are', async ($, on) => {
+  const { clock } = await start($, on)
+  expect((await command($, 'hrd-config')).text).toMatch(/in the Herdr app.*\/home\/t\/\.claude\/herdr-agents\.json/)
+  await clock.advance(3000)
+})
+
 test('a configured commandPrefix names the commands', async ($, on) => {
   await start($, on, { commandPrefix: 'crew-' })
   expect((await command($, 'crew-help')).text).toMatch(/\/crew-orchestrate <goal>/)

@@ -175,26 +175,6 @@ export type Settings = {
   timeComments?: { repos?: string[]; for?: string }
 }
 
-// The settings list (/hrd-config), drawn on the band above the prompt: the two files as
-// last read, which one changes go to (`user`: ~/.claude/herdr-agents.json, `folder`:
-// <cwd>/.claude/herdr-agents.json), the profiles in effect, and the last save's note or error.
-export type SettingsView = {
-  isOpen?: boolean
-  scope: 'user' | 'folder'
-  paths: { user: string; folder: string }
-  // $HOME, so the paths show as ~/...
-  home: string
-  user: Settings
-  folder: Settings
-  // `customized`: a built-in whose settings a file changes
-  profiles: { name: string; note: string; builtIn: boolean; customized: boolean }[]
-  // the row the focus ring is on, and the setting being typed into, if any
-  focused?: string
-  editing?: string
-  note?: string
-  error?: string
-}
-
 declare module 'claude-code' {
   interface PluginState {
     'herdr-agents': {
@@ -210,7 +190,6 @@ declare module 'claude-code' {
       outbox: OutboxItem[]
       links: Links
       orchestrating: boolean
-      settings: SettingsView
       boardState: BoardState
       // whether the Herdr app mod drew this session's board at the last check; changing it redraws the band
       appmod: { shown: boolean }

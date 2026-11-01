@@ -70,13 +70,9 @@ Off by default. When agents do the building, you see a lot of new ideas go by wi
 
 `/hrd-wrap-up`, or the panel's Wrap up button, starts no new workers and lets the running ones finish; herdr notifies you when the last one is done. Worktrees whose PR merged are removed every half hour, with their tabs and branches; each report is also kept in `~/.herdr-agents/reports/`, so the metrics outlive the worktree. A worker's tab closes once it has sat idle half an hour after its report, unless it has a question open; a follow-up after that goes to a fresh worker.
 
-### Settings in a list
+### Settings in a dialog
 
-`/hrd-config` lays the settings out above the prompt, like Claude Code's `/config`: for all folders or just this one.
-
-In the Herdr app, the same settings are in a dialog: the sliders button in the strip, or ctrl+cmd+, in the `coordinator` layout. Both edit the same files.
-
-![/hrd-config: the settings listed above the prompt](docs/images/config.png)
+In the Herdr app: the sliders button in the strip, or ctrl+cmd+, in the `coordinator` layout. It edits the settings for all folders or just this one.
 
 ### The board for other apps
 
@@ -140,12 +136,12 @@ All start with `hrd-` (`commandPrefix` changes it).
 | `/hrd-wrap-up`, `/hrd-wrap-up off` | Stop starting workers and let the running ones finish; resume. |
 | `/hrd-notes` | Leave learning notes now for the concepts this session worked with (needs `learningNotes`). |
 | `/hrd-update` | Pull the clone this mod was installed from (`git pull --ff-only`), then run its `install.sh` again. It answers with the commits and version; running sessions reload the new version by themselves. |
-| `/hrd-config` | The settings, laid out like `/config`, in the panel above the prompt: alt+d to move into them, ↑↓ to move, Enter to change (a switch flips, a choice steps on, a text opens a field), Done or `/hrd-config` again to close. The first row picks the file: all folders or this folder. Profiles are edited in the file. |
+| `/hrd-config` | Says where the settings are. |
 | `/hrd-help`, `/hrd-h` | A short guide: the commands, the panel's keys, and the profiles and settings in effect for this folder. |
 
 ## Settings
 
-Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in `$CLAUDE_CONFIG_DIR` when set), with `<folder>/.claude/herdr-agents.json` over it (`profiles` merge by name):
+Change them in the Herdr app's settings dialog, or by hand in `~/.claude/herdr-agents.json` (in `$CLAUDE_CONFIG_DIR` when set), with `<folder>/.claude/herdr-agents.json` over it (`profiles` merge by name):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -219,7 +215,6 @@ While you work, run only the test files you touched, with `npm run test:file -- 
 | `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |
 | `boarddata.ts`, `tasks.ts` | What the Herdr app draws: grouping workers into one row per issue or PR, the PR checks, and the actions it sends back. |
 | `links.ts` | `#123` links to the right repo, for the panel. |
-| `settings.tsx` | `/hrd-config`. |
 | `commands.ts`, `tools.ts` | The slash commands and the coordinator's tools. |
 | `worktrees.ts`, `hc.ts` | Pruning merged worktrees; the hc CLI. |
 
