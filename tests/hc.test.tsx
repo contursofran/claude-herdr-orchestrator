@@ -1,6 +1,6 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS, LOST_REPORT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
-import { command, registering, settled, spawn, start, stopAll, test, until } from './harness'
+import { registering, settled, spawn, start, stopAll, test, until } from './harness'
 
 // The hc side of the mod: the guard, how a worker is started, prompted, watched, messaged and
 // closed, and what happens when hc says no. The fake in harness.tsx answers like hc 0.1.14 did.
@@ -565,7 +565,7 @@ const pruneJob = {
   token: 'tok-done',
 }
 const prunable = async ($: Parameters<typeof start>[0], on: Parameters<typeof start>[1], job: object = pruneJob) => {
-  const h = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': job } } })
+  const h = await start($, on, { pruneMinutes: 1, closeIdleMinutes: 0 }, { 'jobs:session-1234': { at: 990_000, jobs: { 'w-done': job } } })
   h.files['/repo/wt/x'] = ''
   h.runs.set('git -C /repo/wt rev-parse --path-format=absolute --git-common-dir', [{ exitCode: 0, stdout: '/repo/.git\n' }])
   h.runs.set('git --git-dir=/repo/.git worktree list --porcelain', [
@@ -583,7 +583,8 @@ test('prune keeps a worktree while a terminal of someone else works in it', asyn
   addTerm('stranger', '/repo/wt', {})
   status.stranger = 'working'
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(shell.some(c => c.includes('worktree remove'))).toBe(false)
   expect(closed).toEqual([])
 })
@@ -596,9 +597,9 @@ test("prune closes the mod's own idle workers in a merged worktree", async ($, o
   addTerm('w-done', '/repo/wt', WORKER)
   status['w-done'] = 'idle'
   await clock.settle()
-  const out = await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(shell).toContain('git --git-dir=/repo/.git worktree remove /repo/wt')
-  expect(JSON.stringify(out)).toContain('app-client#12')
   expect(closed).toEqual(['w-done'])
   expect(removed).toEqual(['w-done'])
 })
@@ -613,7 +614,8 @@ test('prune keeps a worktree whose job is still running while its worker sits id
   addTerm('w-done', '/repo/wt', WORKER)
   status['w-done'] = 'idle'
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(removes(shell)).toBe(false)
   expect(closed).toEqual([])
 })
@@ -622,7 +624,8 @@ test('prune keeps a worktree whose job is parked on a WAIT.json', async ($, on) 
   const wait = { for: 'CI', check: 'true', every: 1, max: 30, since: 900_000 }
   const { clock, shell } = await prunable($, on, { ...pruneJob, endedAt: undefined, status: 'running', wait })
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(removes(shell)).toBe(false)
 })
 
@@ -631,7 +634,8 @@ test('prune keeps a worktree where an unlabelled terminal sits idle', async ($, 
   addTerm('stranger', '/repo/wt', {})
   status.stranger = 'idle'
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(removes(shell)).toBe(false)
   expect(closed).toEqual([])
 })
@@ -641,7 +645,8 @@ test('prune keeps a worktree where an unlabelled terminal reports no status', as
   addTerm('stranger', '/repo/wt', {})
   noStatus.add('stranger')
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(removes(shell)).toBe(false)
 })
 
@@ -650,7 +655,8 @@ test('prune keeps a worktree where a labelled worker reports no status', async (
   addTerm('w-done', '/repo/wt', WORKER)
   noStatus.add('w-done')
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(removes(shell)).toBe(false)
   expect(closed).toEqual([])
 })
@@ -661,7 +667,7 @@ test('prune does nothing when either terminal list fails', async ($, on) => {
   status['w-done'] = 'idle'
   runs.set('hc ls --json --label herdr-agents.role=worker', [{ exitCode: 1, stderr: 'no core' }])
   await clock.settle()
-  const out = await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(removes(shell)).toBe(false)
-  expect(JSON.stringify(out)).not.toContain('app-client#12')
 })

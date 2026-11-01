@@ -7,7 +7,6 @@ import { SETTLED_MS, TODO_ROWS, WORKER_CELL, WORKER_LINES } from './defaults'
 import { ago, elapsed } from './format'
 import { linker } from './links'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
-import { cmd } from './session'
 
 // Which decision the band shows, and whether Details lists every worker.
 const view = atom({ plugin: 'herdr-agents', key: 'view' } as const, { tab: 'workers', selected: null } as View)
@@ -152,7 +151,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
           </Button>
         </Box>
       ))}
-      {items.length > TODO_ROWS ? <Text dimColor>{`  +${items.length - TODO_ROWS} more · ${cmd('decisions')} lists them all`}</Text> : null}
+      {items.length > TODO_ROWS ? <Text dimColor>{`  +${items.length - TODO_ROWS} more`}</Text> : null}
     </Box>
   ) : null
 

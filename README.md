@@ -148,9 +148,6 @@ All start with `hrd-` (`commandPrefix` changes it).
 | `/hrd-wrap-up`, `/hrd-wrap-up off` | Stop starting workers and let the running ones finish; resume. |
 | `/hrd-notes` | Leave learning notes now for the concepts this session worked with (needs `learningNotes`). |
 | `/hrd-side` | Open or close the sidebar beside the chat. ctrl+x tab moves into it; there Tab walks its buttons and Enter presses one. It draws no hotkeys, so it stays grey and white. |
-| `/hrd-decisions` | List the questions and to-dos waiting for you. Answer on the panel: `1`–`4` from an empty prompt, or alt+d then arrows and Enter. |
-| `/hrd-workers` | List this session's workers. |
-| `/hrd-prune` | Remove worktrees whose PR is merged (also runs every `pruneMinutes`). |
 | `/hrd-update` | Pull the clone this mod was installed from (`git pull --ff-only`), then run its `install.sh` again. It answers with the commits and version; running sessions reload the new version by themselves. |
 | `/hrd-config` | The settings, laid out like `/config`, in the panel above the prompt: alt+d to move into them, ↑↓ to move, Enter to change (a switch flips, a choice steps on, a text opens a field), Done or `/hrd-config` again to close. The first row picks the file: all folders or this folder. Profiles are edited in the file. |
 | `/hrd-help`, `/hrd-h` | A short guide: the commands, the panel's keys, and the profiles and settings in effect for this folder. |
@@ -170,7 +167,7 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `disable` | none | Built-in profiles to turn off: any of `planner` (the builder plans first), `reviewer` (the coordinator reviews the PR itself), `debugger` (after two failed fix rounds the coordinator asks you). The builder always runs. |
 | `smallTasks` | none | A profile the coordinator may give small, well-defined tasks, e.g. `"deepseek"`. |
 | `playbook` | none | A line, or a list of lines, added to the coordinator playbook, e.g. `"Label every PR with the issue's area."` |
-| `pruneMinutes` | `30` | How often merged worktrees are pruned; `0` turns it off (`/hrd-prune` still works). |
+| `pruneMinutes` | `30` | How often merged worktrees are pruned; `0` turns it off. |
 | `closeIdleMinutes` | `30` | How long a worker's tab stays open, idle, after its report; `0` keeps it open. |
 | `repos` | from git remotes | Short names for `#123` links, e.g. `{"web": "owner/website"}`. The repos of the session's and workers' folders are known already, by name and by the part after the last dash (`acme-client`, `client`). |
 | `learningNotes` | off | `{"enabled": true, "vault": "~/Obsidian/Learning", "folder": "Concepts"}` leaves you an Obsidian note per concept a session worked with, at wrap-up and on `/hrd-notes`. See [Learning notes](#learning-notes). |

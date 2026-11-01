@@ -634,10 +634,16 @@ test('prune runs git rev-parse once per folder', async ($, on) => {
     token: `tok-${name}`,
   })
   const jobs = { 'w-a': job('w-a'), 'w-b': job('w-b'), 'w-c': job('w-c') }
-  const { clock, shell, files } = await start($, on, {}, { 'jobs:session-1234': { at: 990_000, jobs } })
+  const { clock, shell, files } = await start(
+    $,
+    on,
+    { pruneMinutes: 1, closeIdleMinutes: 0 },
+    { 'jobs:session-1234': { at: 990_000, jobs } },
+  )
   files['/repo/wt/x'] = ''
   await clock.settle()
-  await command($, 'hrd-prune')
+  await clock.advance(60_000)
+  await clock.settle()
   expect(shell.filter(c => c.includes('rev-parse') && c.includes('--git-common-dir'))).toHaveLength(1)
 })
 

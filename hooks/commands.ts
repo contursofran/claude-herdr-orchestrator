@@ -1,14 +1,11 @@
 import type { EngineInterface } from 'claude-code'
 import { allProfiles, BUILT_IN, config, customized, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
 import { orchestrate, toggleWrapUp } from './coordinator'
-import { openQuestions, pinnedItems } from './owner'
 import { cmd, session } from './session'
 import { closeSettings, openSettings, settingsOpen } from './settings'
 import { toggleSide } from './side'
 import { notesFolder, notesInstructions } from './notes'
 import { post } from './outbox'
-import { jobs } from './state'
-import { pruneMerged } from './worktrees'
 
 // The slash commands, all named <prefix><name> (see session.prefix).
 export async function registerCommands($: EngineInterface) {
@@ -25,9 +22,6 @@ export async function registerCommands($: EngineInterface) {
     description: 'Open or close the sidebar: the work by issue or PR, what needs you, and a box to answer it.',
     immediate: true,
   })
-  await $.command.register({ name: `${prefix}workers`, description: 'List the herdr workers of this session.' })
-  await $.command.register({ name: `${prefix}decisions`, description: 'List the questions and to-dos waiting for you.' })
-  await $.command.register({ name: `${prefix}prune`, description: 'Remove worktrees whose PR is merged.' })
   await $.command.register({ name: `${prefix}update`, description: 'Pull the clone this mod was installed from and install it again.' })
   await $.command.register({
     name: `${prefix}orchestrate`,
@@ -60,14 +54,8 @@ export async function runCommand($: EngineInterface, command: string, args: stri
       return { text: await toggleSide($) }
     case 'notes':
       return writeNotes($)
-    case 'prune':
-      return prune($)
     case 'update':
       return update($)
-    case 'decisions':
-      return listDecisions($)
-    case 'workers':
-      return listWorkers($)
     case 'config':
       if (await settingsOpen($)) {
         await closeSettings($)
@@ -90,11 +78,6 @@ async function writeNotes($: EngineInterface) {
     return { text: 'Learning notes are off. Set `learningNotes` in herdr-agents.json: {"enabled": true, "vault": "~/path/to/vault"}.' }
   await post($, `<herdr-context>${notesInstructions(folder)}</herdr-context>`)
   return { text: `Leaving learning notes in ${folder}.` }
-}
-
-async function prune($: EngineInterface) {
-  const done = await pruneMerged($)
-  return { text: done.length ? `Removed ${done.length} merged worktree(s):\n${done.join('\n')}` : 'No merged, clean worktrees to remove.' }
 }
 
 // `/hrd-update`: switches the clone install.sh ran from (recorded in the mod's `clone` file) to main,
@@ -139,24 +122,6 @@ function lastLines(stderr: string) {
   return stderr.trim().split('\n').slice(-3).join(' / ') || 'no output on stderr'
 }
 
-async function listDecisions($: EngineInterface) {
-  const open = await openQuestions($)
-  const items = await pinnedItems($)
-  if (open.length === 0 && items.length === 0) return { text: 'Nothing waiting for you.' }
-  return {
-    text: [
-      ...items.map(t => `T${t.id}  ${t.kind === 'do' ? 'to do' : 'to know'}  (${t.from})  ${t.text}`),
-      ...open.map(d => `D${d.id}  (${d.from})  ${d.question}`),
-    ].join('\n\n'),
-  }
-}
-
-async function listWorkers($: EngineInterface) {
-  const list = Object.values(await jobs($))
-  if (list.length === 0) return { text: 'No herdr workers in this session.' }
-  return { text: list.map(j => `${j.name}  ${j.profile}  ${j.status}  ${j.cwd}`).join('\n') }
-}
-
 function commandRows(rows: [string, string][]) {
   const width = Math.max(...rows.map(([name]) => name.length)) + 3
   return rows.map(([name, what]) => `  ${name.padEnd(width)}${what}`)
@@ -185,9 +150,6 @@ async function help($: EngineInterface) {
         [`${cmd('orchestrate')} <goal>`, `make this session the coordinator, e.g. ${cmd('orchestrate')} the issues labelled ready`],
         [`${cmd('wrap-up')} [off]`, 'start no new workers and let the running ones finish; off resumes'],
         [cmd('side'), 'the sidebar beside the chat: work by issue or PR, what needs you, an answer box'],
-        [cmd('decisions'), 'the questions and to-dos waiting for you'],
-        [cmd('workers'), "this session's workers"],
-        [cmd('prune'), 'remove worktrees whose PR is merged'],
         [cmd('notes'), 'learning notes for the concepts this session worked with (learningNotes setting)'],
         [cmd('update'), 'pull the clone this mod was installed from, and install it again'],
         [cmd('config'), 'change these settings, in the panel above the prompt'],
