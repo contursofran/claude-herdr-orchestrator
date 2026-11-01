@@ -97,10 +97,6 @@ export type Todo = { id: number; kind: 'do' | 'know'; text: string; from: string
 // token replaces one still held, and a stop drops what is held for the worker.
 export type OutboxItem = { text: string; report?: true; worker?: string; token?: string }
 
-// The band's open tab and, on the decisions tab, the decision shown.
-// `workers: 'list'` (Details) shows every worker; compact shows the first few.
-export type View = { tab: 'workers' | 'decisions'; selected: number | null; workers?: 'list' }
-
 // One line of the band above the prompt; `state` is the status its CLI reported to hc, or
 // 'reported' once the report reached the session, 'waiting' while it waits on WAIT.json.
 // `repo` is the GitHub repo (owner/name) of the worker's folder, for links.
@@ -182,7 +178,6 @@ declare module 'claude-code' {
       board: Board
       reset: Reset | null
       decisions: Decision[]
-      view: View
       settled: Settled[]
       lastId: number
       todos: Todo[]

@@ -68,13 +68,6 @@ export const QUIET_MAX_MS = 3 * 60_000
 // If the coordinator hasn't saved its state this long after being asked, compact anyway.
 export const SAVE_WAIT_MS = 10 * 60_000
 
-// The band: to-dos shown, worker lines in the
-// compact view (Details shows them all), and the narrowest worker column; a band at
-// least twice as wide shows two workers per line.
-export const TODO_ROWS = 6
-export const WORKER_LINES = 2
-export const WORKER_CELL = 56
-
 // How long a finished task still shows when it first appears on the board, and how often
 // and how many of the PRs it lists have their GitHub state read.
 export const TASK_RECENT_MS = 3 * 60 * 60_000

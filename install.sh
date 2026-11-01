@@ -35,7 +35,7 @@ printf '%s\n' "$here" > "$mods/herdr-agents/clone"
 
 [[ -f "$claude/herdr-agents.json" ]] || cp "$here/herdr-agents.example.json" "$claude/herdr-agents.json"
 
-# settings.json: load both mods and allow their tools. keybindings.json: alt+d focuses the band.
+# settings.json: load both mods and allow their tools.
 node - "$claude" "$mods" <<'EOF'
 const fs = require('fs')
 const [claude, mods] = process.argv.slice(2)
@@ -56,12 +56,6 @@ edit('settings.json', s => {
   s.permissions ??= {}
   s.permissions.allow ??= []
   if (!s.permissions.allow.includes('mcp__herdr-agents')) s.permissions.allow.push('mcp__herdr-agents')
-})
-edit('keybindings.json', k => {
-  k.bindings ??= []
-  let chat = k.bindings.find(b => b.context === 'Chat')
-  if (!chat) k.bindings.push((chat = { context: 'Chat', bindings: {} }))
-  chat.bindings['alt+d'] ??= 'abovePrompt:focus'
 })
 EOF
 

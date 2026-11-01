@@ -49,7 +49,7 @@ export async function gather($: EngineInterface) {
     return it.kind === 'ask' ? 'answered' : it.kind === 'do' ? 'done' : 'dismissed'
   }
 
-  const links = await linker($, board.rows, (_, text) => text)
+  const links = await linker($, board.rows)
   const refs: ItemRef[] = items.map(it => ({
     key: it.key,
     kind: it.kind,

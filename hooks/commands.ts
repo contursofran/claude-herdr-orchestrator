@@ -12,7 +12,7 @@ export async function registerCommands($: EngineInterface) {
   for (const name of ['help', 'h'])
     await $.command.register({
       name: `${prefix}${name}`,
-      description: 'How herdr-agents works: commands, panel, profiles and settings.',
+      description: 'How herdr-agents works: commands, profiles and settings.',
       immediate: true,
     })
   await $.command.register({ name: `${prefix}update`, description: 'Pull the clone this mod was installed from and install it again.' })
@@ -143,10 +143,8 @@ async function help($: EngineInterface) {
         [`${cmd('help')}, ${cmd('h')}`, 'this guide'],
       ]),
       '',
-      'Panel (above the prompt)',
-      '  To-dos the coordinator pinned for you, then its questions, then the workers.',
-      '  Answer a question with 1–4 from an empty prompt, or alt+d (ctrl+x tab), arrows and Enter; Esc goes back.',
-      '  Details shows every worker; Wrap up / Keep going toggles the wrap-up.',
+      'What needs you',
+      '  In the Herdr app: the pin bar, the strip and the board. Without it, one line above the prompt says what waits; reply in chat.',
       '',
       'Profiles (spawn takes one)',
       ...profileRows('Built in', BUILT_IN),

@@ -666,9 +666,6 @@ export async function start(
   }
 }
 
-// A row is one Text per column; its name is padded.
-export const row = (ui: Mounted<'terminal', 'AbovePrompt'>, name: string) => ui.find({ type: 'Text', text: new RegExp(`^${name} +$`) })
-
 // Spawn returns at once; `clock.settle()` then lets each worker's background start finish.
 export async function spawn($: Engine, names: string[], cwd?: string, clock: MockClock = latest!) {
   for (const worker of names) {

@@ -1,5 +1,5 @@
 import { expect } from 'claude-code/testing'
-import { BAND, spawn, start, stopAll, test } from './harness'
+import { spawn, start, stopAll, test } from './harness'
 
 // The board file (bridge.ts): every copy of the app mod redraws the whole window when it is written (#151).
 
@@ -38,23 +38,17 @@ test('a parked worker writes the board at most once a minute: its clock, the min
   await stopAll($, clock, ['w-busy'])
 })
 
-test('the band still shows the clock of a parked worker, and it runs on', async ($, on) => {
+test('the board gives a parked worker what it waits for and since when, for the app to count from', async ($, on) => {
   const { clock, files } = await start($, on)
   await spawn($, ['w-busy'])
   files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
   await clock.advance(60_000)
-  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  const clockShown = async () => {
-    await band.redraw()
-    return (await band.find({ type: 'Text', text: /⏸ \d\d:\d\d · CI/ }))?.text.match(/\d\d:\d\d/)?.[0]
-  }
-  const first = await clockShown()
-  expect(first).toBeDefined()
+  const parked = () => (JSON.parse(files[BOARD]!).workers as { name: string; state: string; note: string; since: number }[])[0]!
+  const first = parked()
+  expect(first).toMatchObject({ name: 'w-busy', state: 'waiting', note: 'CI' })
+  expect(typeof first.since).toBe('number')
   await clock.advance(120_000)
-  const later = await clockShown()
-  expect(later).toBeDefined()
-  expect(later).not.toBe(first)
-  await band.unmount()
+  expect(parked().since).toBe(first.since)
   await stopAll($, clock, ['w-busy'])
 })
 
