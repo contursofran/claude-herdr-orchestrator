@@ -3,14 +3,13 @@ import { actionFile, answerAction, doneAction } from '../app/mods/herdr-agents/m
 import { BATCH_MS } from '../hooks/defaults'
 import { spawn, start, stopAll, test } from './harness'
 
-// The board for apps outside Claude Code: a snapshot file per session, and action files
-// that press the sidebar's buttons.
+// The board for apps outside Claude Code: a snapshot file per session, and action files.
 
 const DIR = '/home/t/.herdr-agents/board'
 const FILE = `${DIR}/session-1234.json`
 const INBOX = `${DIR}/session-1234.actions`
 
-test('the board is written for outside apps, and their action files answer and tick as the sidebar does', async ($, on) => {
+test('the board is written for outside apps, and their action files answer and tick', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
   await spawn($, ['w-busy'])
   await $.tool.call({
@@ -40,7 +39,7 @@ test('the board is written for outside apps, and their action files answer and t
   files[`${INBOX}/3-stale.json`] = JSON.stringify({ action: 'answer', key: 'D9', answer: 'x' })
   await clock.advance(3000 + BATCH_MS)
 
-  // The coordinator gets the same prompts as from the sidebar.
+  // The coordinator gets the owner's answer and tick as prompts.
   expect(submitted.some(t => t.includes('<herdr-decision id="D1"') && t.includes('The owner chose: By type'))).toBe(true)
   expect(submitted.some(t => t.includes('<herdr-owner-done id="T1"'))).toBe(true)
   const after = JSON.parse(files[FILE] ?? '{}')
@@ -54,7 +53,7 @@ test('the board is written for outside apps, and their action files answer and t
   ])
   expect(Object.keys(files).filter(f => f.startsWith(`${INBOX}/`))).toEqual([])
 
-  // Clear done takes the closed items off, as the sidebar's button does.
+  // Clear done takes the closed items off.
   files[`${INBOX}/4-clear.json`] = JSON.stringify({ action: 'clearDone', what: 'items' })
   await clock.advance(3000)
   expect(JSON.parse(files[FILE] ?? '{}').needs).toEqual([])

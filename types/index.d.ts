@@ -123,24 +123,20 @@ export type Links = { byCwd: Record<string, string>; extra: Record<string, strin
 // `target` is how many workers the coordinator keeps running.
 export type Board = { now: number; rows: Row[]; context?: { tokens: number; limit: number }; target?: number; wrapUp?: boolean }
 
-// One line of the sidebar's needs-you list: a decision (D7) or a to-do (T12) as it was
-// when it arrived, kept after it closes so its row stays in place until Clear done.
+// One line of the board's needs-you list: a decision (D7) or a to-do (T12) as it was
+// when it arrived, kept after it closes until Clear done.
 // `title` is its short name, `text` the question or the to-do in full.
-export type SideItem = { key: string; kind: 'ask' | 'do' | 'know'; title: string; text: string; from: string; at: number }
+export type BoardItem = { key: string; kind: 'ask' | 'do' | 'know'; title: string; text: string; from: string; at: number }
 
-// A PR's GitHub state as the sidebar last read it: `ci` sums its checks.
+// A PR's GitHub state as last read: `ci` sums its checks.
 export type Pr = { state: 'OPEN' | 'MERGED' | 'CLOSED'; ci: 'pass' | 'fail' | 'pending' | 'none'; at: number; mergedAt?: number | null }
 
-// The sidebar (/hrd-side). Rows keep their slots: `items` and `tasks` (task keys) are in
-// arrival order and only Clear done removes them. `answers` holds what the person answered
-// in the sidebar; `cleared` the tasks Clear done removed, with their worker count then (a
-// new worker brings one back). `pick` is the row the box at the bottom shows; `status` the
-// one line under it; `prs` by owner/name#123.
-export type SideView = {
-  isOpen?: boolean
-  pick?: { kind: 'item' | 'task'; key: string }
-  items: SideItem[]
-  tasks: string[]
+// The board's own state (boarddata.ts). `items` are in arrival order and only Clear done removes
+// them. `answers` holds what the person answered; `cleared` the tasks Clear done removed, with
+// their worker count then (a new worker brings one back); `status` the last action's result;
+// `prs` by owner/name#123.
+export type BoardState = {
+  items: BoardItem[]
   answers: Record<string, string>
   cleared: Record<string, number>
   status?: string
@@ -174,8 +170,6 @@ export type Settings = {
   wrapUp?: boolean
   // Obsidian stubs for the concepts a session worked with (hooks/notes.ts); off by default
   learningNotes?: { enabled?: boolean; vault?: string; folder?: string }
-  // where the workers and what needs the person show: the band above the prompt or the sidebar
-  view?: 'band' | 'side'
   // the repos (owner/name) where a worker's time is posted on its PR or issue when it reports done, and the
   // GitHub login the comment says it is for (hooks/timecomment.ts); off by default
   timeComments?: { repos?: string[]; for?: string }
@@ -217,7 +211,7 @@ declare module 'claude-code' {
       links: Links
       orchestrating: boolean
       settings: SettingsView
-      side: SideView
+      boardState: BoardState
       // whether the Herdr app mod drew this session's board at the last check; changing it redraws the band
       appmod: { shown: boolean }
     }

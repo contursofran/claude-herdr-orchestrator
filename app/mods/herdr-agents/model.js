@@ -68,7 +68,7 @@ export function drawnKey(role, boards, session, open = null) {
       ).map(p => p.id),
     )
   if (role === 'sheet') return open ? JSON.stringify(list.map(({ at: _at, ...b }) => b)) : ''
-  return JSON.stringify(list.map(({ at: _at, tasks, ...b }) => ({ ...b, rows: (tasks ?? []).map(t => [t?.key, t?.joined]) })))
+  return JSON.stringify(list.map(({ at: _at, tasks, ...b }) => ({ ...b, rows: (tasks ?? []).map(t => t?.key) })))
 }
 
 /** The value of one label on a terminal; core terminals carry `labels` as an object (`labels["herdr.space"]`). */
@@ -919,12 +919,12 @@ const STAGE_ICONS = { done: 'done', run: 'working', wait: 'waiting', ask: 'decid
 export const stageIcon = stage => STAGE_ICONS[stage] ?? null
 
 /**
- * The work rows of the one board, in their slots, top to bottom. A slot whose task joined another row is left out.
+ * The work rows of the one board, top to bottom.
  * A row is {key, label, title, who: {text, kind}, stages: [5 icon names or null], item, tab}.
  */
 export function workRows(board) {
   return (board?.tasks ?? [])
-    .filter(t => t && typeof t === 'object' && !t.joined)
+    .filter(t => t && typeof t === 'object')
     .map(t => ({
       key: String(t.key),
       label: t.label ?? '',

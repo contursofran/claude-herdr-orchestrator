@@ -24,9 +24,8 @@ import {
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
 
-test('workRows: one row per slot of the one board, joined slots left out', () => {
+test('workRows: one row per task of the one board', () => {
   const b = board()
-  b.tasks.push({ key: 'k7', label: '#607', joined: 'k6' })
   assert.deepEqual(
     workRows(b).map(r => r.key),
     ['k1', 'k2', 'k3', 'k4', 'k5', 'k6'],

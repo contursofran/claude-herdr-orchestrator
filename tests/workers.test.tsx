@@ -163,11 +163,10 @@ test('a session whose $.state lost its jobs gets them back from the store; a rep
 })
 
 // The mod loads in a worker's own Claude session too, with HERDR_AGENTS_ROLE=worker from its tab.
-test("a worker's own session with no running job makes no hc call, opens no sidebar and writes no board", async ($, on) => {
-  const { clock, calls, panes, files } = await start($, on, { view: 'side' }, {}, { HERDR_AGENTS_ROLE: 'worker' })
+test("a worker's own session with no running job makes no hc call and writes no board", async ($, on) => {
+  const { clock, calls, files } = await start($, on, {}, {}, { HERDR_AGENTS_ROLE: 'worker' })
   await clock.advance(10 * 60_000)
   expect(calls).toEqual([])
-  expect(panes).toEqual([])
   expect(Object.keys(files).filter(f => f.startsWith('/home/t/.herdr-agents/board/'))).toEqual([])
 })
 

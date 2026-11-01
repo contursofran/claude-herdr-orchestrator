@@ -2,10 +2,10 @@ import type { EngineInterface } from 'claude-code'
 import { BRIDGE_ACTIONS_KEPT, BRIDGE_DIR, BRIDGE_REWRITE_MS } from './defaults'
 import { boardAct, boardInputs, boardSnapshot, type BoardAction } from './boarddata'
 
-// The board for apps outside Claude Code, such as contr (a native herdr client):
-// ~/.herdr-agents/board/<session id>.json holds what the sidebar shows, rewritten when it
+// The board for the Herdr app and other readers outside Claude Code:
+// ~/.herdr-agents/board/<session id>.json holds the work and what needs the person, rewritten when it
 // changes and once a minute (docs/board-schema.json), and each file the app drops in <session id>.actions/
-// is one press of a sidebar button, done on the next pass and removed. What came of the
+// is one action, done on the next pass and removed. What came of the
 // last few is in the snapshot's `actions`.
 
 // What the snapshot last written was built from, the snapshot itself without its time, when it was written, and what came of the last actions.

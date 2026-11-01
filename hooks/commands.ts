@@ -3,7 +3,6 @@ import { allProfiles, BUILT_IN, config, customized, resetSettings, smallTasks, t
 import { orchestrate, toggleWrapUp } from './coordinator'
 import { cmd, session } from './session'
 import { closeSettings, openSettings, settingsOpen } from './settings'
-import { toggleSide } from './side'
 import { notesFolder, notesInstructions } from './notes'
 import { post } from './outbox'
 
@@ -17,11 +16,6 @@ export async function registerCommands($: EngineInterface) {
       description: 'How herdr-agents works: commands, panel, profiles and settings.',
       immediate: true,
     })
-  await $.command.register({
-    name: `${prefix}side`,
-    description: 'Open or close the sidebar: the work by issue or PR, what needs you, and a box to answer it.',
-    immediate: true,
-  })
   await $.command.register({ name: `${prefix}update`, description: 'Pull the clone this mod was installed from and install it again.' })
   await $.command.register({
     name: `${prefix}orchestrate`,
@@ -50,8 +44,6 @@ export async function runCommand($: EngineInterface, command: string, args: stri
       return orchestrate($, args)
     case 'wrap-up':
       return { text: await toggleWrapUp($, !/^(off|resume)$/i.test(args.trim())) }
-    case 'side':
-      return { text: await toggleSide($) }
     case 'notes':
       return writeNotes($)
     case 'update':
@@ -149,7 +141,6 @@ async function help($: EngineInterface) {
       ...commandRows([
         [`${cmd('orchestrate')} <goal>`, `make this session the coordinator, e.g. ${cmd('orchestrate')} the issues labelled ready`],
         [`${cmd('wrap-up')} [off]`, 'start no new workers and let the running ones finish; off resumes'],
-        [cmd('side'), 'the sidebar beside the chat: work by issue or PR, what needs you, an answer box'],
         [cmd('notes'), 'learning notes for the concepts this session worked with (learningNotes setting)'],
         [cmd('update'), 'pull the clone this mod was installed from, and install it again'],
         [cmd('config'), 'change these settings, in the panel above the prompt'],
@@ -160,7 +151,6 @@ async function help($: EngineInterface) {
       '  To-dos the coordinator pinned for you, then its questions, then the workers.',
       '  Answer a question with 1–4 from an empty prompt, or alt+d (ctrl+x tab), arrows and Enter; Esc goes back.',
       '  Details shows every worker; Wrap up / Keep going toggles the wrap-up.',
-      `  While ${cmd('side')} is open beside the chat, it shows all of this and the band steps aside.`,
       '',
       'Profiles (spawn takes one)',
       ...profileRows('Built in', BUILT_IN),

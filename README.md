@@ -54,17 +54,9 @@ Role, time and state for each worker: working, waiting on you, done. Four fit in
 
 ![The workers: two builders and a reviewer waiting on a deploy, with the coordinator's context use](docs/images/panel-workers.png)
 
-### A sidebar beside the chat
-
-`/hrd-side` docks the same things beside the transcript, in grey and white. At the top are the issues, one row per issue or PR. The planner, the builders and fix rounds, and the reviewer of the PR a builder linked share that row; the same number in two repos is two rows. A row whose work joins another row (a review that started before the builder's report named its PR) says so in its slot until clear done. A row's number opens its issue or PR on GitHub. Each row has a mark for plan, build, review, CI and you: ✓ done, ◐ running, ⏸ waiting, · not started, ? or ☐ waiting on you, ■ blocked. CI comes from the PR's checks, read with `gh` every two minutes while the sidebar is open. What needs you sits at the bottom, level with the prompt, over a box of fixed height for the item you pick; with nothing waiting it stays empty. For a question the box shows the answers, the recommended one first. For a to-do it shows Done and any link in the text.
-
-The sidebar's background is Claude Code's `composerSidebarBackground` theme color. To match a terminal's background, add a custom theme in `~/.claude/themes/` (for example `{ "name": "Dark", "base": "dark", "overrides": { "composerSidebarBackground": "#101010" } }`) and pick it with `/theme`. The line between the chat and the sidebar is Claude Code's resize grip.
-
-Rows never move on their own. An answered or finished row stays in its slot, struck through, until you press clear done. A new one takes the next free slot. Answering swaps the box's contents in place, and the box stays on the answer until you press next. While the sidebar shows, the panel above the prompt steps aside. To start every session with the sidebar instead of the panel, set Show workers in to the sidebar in `/hrd-config` (`"view": "side"`).
-
 ### Auto-compact at 250k
 
-The panel shows the coordinator's context (`ctx 75k / 250k`); the sidebar shows it as a share of that limit (`ctx 75k 30%`). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
+The panel shows the coordinator's context (`ctx 75k / 250k`). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
 
 ### A playbook that keeps workers busy
 
@@ -88,7 +80,7 @@ In the Herdr app, the same settings are in a dialog: the sliders button in the s
 
 ### The board for other apps
 
-What the sidebar shows is also kept in `~/.herdr-agents/board/<session id>.json`, rewritten when it changes and removed when the session ends, so an app outside Claude Code (such as [contr](https://github.com/contursofran/contr), a native herdr client) can draw it. The app presses the sidebar's buttons by dropping a JSON file in `<session id>.actions/` beside it: answer a decision, tick or dismiss a to-do, clear done, wrap up or keep going. The coordinator gets the same prompts as from a click in the sidebar. The format is in [docs/board-schema.json](docs/board-schema.json).
+The work and what needs you are kept in `~/.herdr-agents/board/<session id>.json`, rewritten when it changes and removed when the session ends, so an app outside Claude Code (such as [contr](https://github.com/contursofran/contr), a native herdr client) can draw it. The app acts on it by dropping a JSON file in `<session id>.actions/` beside it: answer a decision, tick or dismiss a to-do, clear done, wrap up or keep going. The format is in [docs/board-schema.json](docs/board-schema.json).
 
 ### A Herdr app mod (work in progress)
 
@@ -147,7 +139,6 @@ All start with `hrd-` (`commandPrefix` changes it).
 | `/hrd-orchestrate <goal>` | Make this session the coordinator, with the playbook and a goal. |
 | `/hrd-wrap-up`, `/hrd-wrap-up off` | Stop starting workers and let the running ones finish; resume. |
 | `/hrd-notes` | Leave learning notes now for the concepts this session worked with (needs `learningNotes`). |
-| `/hrd-side` | Open or close the sidebar beside the chat. ctrl+x tab moves into it; there Tab walks its buttons and Enter presses one. It draws no hotkeys, so it stays grey and white. |
 | `/hrd-update` | Pull the clone this mod was installed from (`git pull --ff-only`), then run its `install.sh` again. It answers with the commits and version; running sessions reload the new version by themselves. |
 | `/hrd-config` | The settings, laid out like `/config`, in the panel above the prompt: alt+d to move into them, ↑↓ to move, Enter to change (a switch flips, a choice steps on, a text opens a field), Done or `/hrd-config` again to close. The first row picks the file: all folders or this folder. Profiles are edited in the file. |
 | `/hrd-help`, `/hrd-h` | A short guide: the commands, the panel's keys, and the profiles and settings in effect for this folder. |
@@ -173,7 +164,6 @@ Change them with `/hrd-config`, or by hand in `~/.claude/herdr-agents.json` (in 
 | `learningNotes` | off | `{"enabled": true, "vault": "~/Obsidian/Learning", "folder": "Concepts"}` leaves you an Obsidian note per concept a session worked with, at wrap-up and on `/hrd-notes`. See [Learning notes](#learning-notes). |
 | `timeComments` | off | `{"repos": ["owner/name"], "for": "login"}` makes the mod post one comment on a worker's PR (or its issue, when the report names no PR) when it reports done: `[agent for @login · Sonnet medium · mac] fix: 42 min working, 18 min parked (b-2290-s28).` Working and parked time (a WAIT.json) are counted apart. The kind is review, plan or debug for those profiles, and feature (spawned with `branch`) or fix (spawned with `cwd`) for the others. The model and effort come from the profile's args, or its `label`. Blocked and failed reports post nothing, and a failed post is only written to `TIME-COMMENT.log` in the worker's folder. |
 | `wrapUp` | off | `true` wraps up every coordinator on the machine; `/hrd-wrap-up off` clears it. |
-| `view` | `band` | Where the workers and what needs you show: `band` above the prompt or `side`, the sidebar, opened at the start of each session. Only one shows; `/hrd-side` switches for the session. |
 
 Built-in profiles, the playbook's steps: `planner`, `builder`, `reviewer` (the subagents above) and `debugger` (Opus medium, full tools, for root-cause hunts and fixes that failed twice). A profile of the same name under `profiles` changes its model or flags and keeps its place in the playbook; `/hrd-help` marks it customized. Any other name is a profile of your own. A profile is `{"kind": "claude" | "codex" | "opencode", "args": [...], "env": {...}, "note": "..."}`; `kind` is the CLI hc starts and `args` its flags. Workers start through your login shell (`$SHELL -ilc`), so the PATH your rc files set applies; codex always runs with `--no-daemon`, which hc needs. For opencode the mod writes a small plugin to `~/.config/opencode/plugins/hc-status.js` (or under `$XDG_CONFIG_HOME`) when it is missing or differs, so hc shows the worker working, idle or blocked; it only acts inside an hc terminal. opencode 2 needs `--standalone` in the profile's `args` for this: without it the worker attaches to opencode's shared background server, which isn't in the terminal, and reports nothing (opencode 1 has no such flag and exits on it). Other CLIs or models are a profile away:
 
@@ -227,9 +217,8 @@ While you work, run only the test files you touched, with `npm run test:file -- 
 | `coordinator.ts` | The playbook, the worker target, wrap-up, and compacting the coordinator's context. |
 | `target.ts` | The line after a report or a stop: how many workers are still to start, or that wrap-up holds new ones. |
 | `board.ts`, `band.tsx` | The panel above the prompt: what it shows, and drawing it. |
-| `side.tsx` | `/hrd-side`: the sidebar. |
 | `boarddata.ts`, `tasks.ts` | What the Herdr app draws: grouping workers into one row per issue or PR, the PR checks, and the actions it sends back. |
-| `links.ts` | `#123` links to the right repo, for the panel and the sidebar. |
+| `links.ts` | `#123` links to the right repo, for the panel. |
 | `settings.tsx` | `/hrd-config`. |
 | `commands.ts`, `tools.ts` | The slash commands and the coordinator's tools. |
 | `worktrees.ts`, `hc.ts` | Pruning merged worktrees; the hc CLI. |

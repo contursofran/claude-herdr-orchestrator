@@ -55,10 +55,6 @@ test('typed values: numbers are checked, empty removes the key', () => {
 test('presses edit the file as /hrd-config does', () => {
   assert.deepEqual(press({}, 'wrapUp', pane()), { wrapUp: true })
   assert.deepEqual(press({ wrapUp: true }, 'wrapUp', pane()), {})
-  assert.deepEqual(press({}, 'view', pane()), { view: 'side' })
-  assert.deepEqual(press({ view: 'side' }, 'view', pane({ view: 'side' })), {})
-  // A folder writes the default to override the file for all folders.
-  assert.deepEqual(press({}, 'view', pane({ view: 'side' }, {}, 'folder')), { view: 'band' })
   assert.deepEqual(press({}, 'off:reviewer', pane()), { disable: ['reviewer'] })
   assert.deepEqual(press({ disable: ['reviewer'] }, 'off:reviewer', pane({ disable: ['reviewer'] })), {})
   // A folder starts from the all-folders list, and an empty list overrides it.

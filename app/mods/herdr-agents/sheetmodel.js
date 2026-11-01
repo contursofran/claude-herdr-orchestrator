@@ -80,8 +80,8 @@ export function sheetTarget(board, cardKey = null) {
 
 const taskLine = t => [t.label, firstLine(t.title)].filter(Boolean).join(' ')
 
-/** The tasks (not slots that joined another row) whose `item` is `key`. */
-export const tasksWaiting = (board, key) => (board?.tasks ?? []).filter(t => t && !t.joined && t.item === key)
+/** The tasks whose `item` is `key`. */
+export const tasksWaiting = (board, key) => (board?.tasks ?? []).filter(t => t && t.item === key)
 
 /** The "waiting on" line: the tasks that wait on this item, or that none does. */
 export function waitingOn(board, key) {

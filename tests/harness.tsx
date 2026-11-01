@@ -332,19 +332,6 @@ export async function start(
     files[e.path] = e.text
     return { value: undefined }
   })
-  // The panes the mod opened, as the engine lists them.
-  const panes: string[] = []
-  on('ui.open', (_, e) => {
-    if (!panes.includes(e.id)) panes.push(e.id)
-    return { value: { isPlaced: true } }
-  })
-  on('ui.close', (_, e) => {
-    if (panes.includes(e.id)) panes.splice(panes.indexOf(e.id), 1)
-    return { value: undefined }
-  })
-  on('ui.panes', () => ({
-    value: panes.map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true, plugin: 'herdr-agents' })),
-  }))
   // The band's drawing when the mod passes: the engine's own.
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -641,7 +628,6 @@ export async function start(
     reads,
     unwritable,
     prs,
-    panes,
     stalls,
     holds,
     turns,
@@ -691,7 +677,7 @@ export async function spawn($: Engine, names: string[], cwd?: string, clock: Moc
   }
 }
 // Settles until `done` holds, for up to UNTIL_MS of real time. Work the mod leaves running unawaited (a refresh
-// learning a repo's remote, the sidebar's PR poll) runs in the hooks worker, which a busy machine can hold up past
+// learning a repo's remote, the board's PR poll) runs in the hooks worker, which a busy machine can hold up past
 // clock.settle(); the test's expect then checks it. This counts time, as settles can pass in microseconds.
 const UNTIL_MS = 30_000
 export async function until(clock: MockClock, done: () => boolean | Promise<boolean>) {
