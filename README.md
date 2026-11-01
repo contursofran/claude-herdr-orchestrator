@@ -107,12 +107,6 @@ The first time the coordinator uses one of the mod's tools (`spawn`, `ask_owner`
 { "permissions": { "allow": ["mcp__herdr-agents"] } }
 ```
 
-Optional: bind alt+d to move into the panel (ctrl+x tab works without it) in `~/.claude/keybindings.json`:
-
-```json
-{ "bindings": [{ "context": "Chat", "bindings": { "alt+d": "abovePrompt:focus" } }] }
-```
-
 ### Updates
 
 Each release bumps the version in `plugin.json`. Run `claude plugin update herdr-agents@claude-herdr-orchestrator` (and the same for `herdr-agents-view`), or update them from `/plugin`, then start a new session. Watch the repository's releases on GitHub to hear about new versions.
