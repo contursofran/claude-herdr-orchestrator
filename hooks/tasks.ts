@@ -28,9 +28,11 @@ export function withPr(job: Job, pr: number | undefined): Job {
   return { ...job, refs: [...new Set([...(job.refs ?? []), pr])], prs: [...(job.prs ?? []), pr] }
 }
 
-// A short title from a brief: what follows "#123 (" or "#123 ...:", else the whole line.
+// A short title from a brief: what follows "#123 (" or "#123 ...:", else the whole line. "#123 (owner/repo)" says where
+// the work is, not what it is.
 export function titleOf(brief: string) {
-  const paren = brief.match(/#\d+\s*\(([^)]+)\)?/)?.[1]
+  const inParens = brief.match(/#\d+\s*\(([^)]+)\)?/)?.[1]
+  const paren = inParens && /^[\w.-]+\/[\w.-]+$/.test(inParens.trim()) ? undefined : inParens
   const colon = brief.match(/#\d+[^:]{0,40}:\s*(.+)$/)?.[1]
   return (
     (paren ?? colon ?? brief)
