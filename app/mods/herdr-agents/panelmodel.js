@@ -1,12 +1,28 @@
 // What the right panel (#274) shows and when it moves. Pure, apart from the layout commands it hands back to run.
 import { workRows } from './model.js'
 
-/** The right panel's lists. `work` is everything that can still need a look, including a merged task with a test waiting on
- *  the owner; `merged` is history, newest first. */
+/** The right panel's lists. `look` is what is stuck until someone acts: a blocked worker's row, once however many workers share it,
+ *  and it leaves the other lists. `work` is everything else that can still need a look, including a merged task with a test
+ *  waiting on the owner; `merged` is history, newest first. */
 export function panelSections(board) {
-  const rows = workRows(board)
+  const look = new Map()
+  for (const worker of board?.workers ?? []) {
+    if (worker?.state !== 'blocked') continue
+    const r = workerRow(board, worker) ?? {
+      key: `worker-${worker.name}`,
+      label: '',
+      title: worker.name,
+      who: { text: worker.name, kind: 'dim' },
+      stages: [],
+      tab: worker.name,
+      link: null,
+    }
+    if (!look.has(r.key)) look.set(r.key, { ...r, blocked: worker.note || 'waiting' })
+  }
+  const rows = workRows(board).filter(r => !look.has(r.key))
   const settled = r => r.isMerged && r.who.text === 'merged'
   return {
+    look: [...look.values()],
     work: rows.filter(r => !r.isFinished && !settled(r)),
     merged: rows.filter(r => r.isMerged && (r.isFinished || settled(r))).sort((a, b) => (b.mergedAt ?? 0) - (a.mergedAt ?? 0)),
   }

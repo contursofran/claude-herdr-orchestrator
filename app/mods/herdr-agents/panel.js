@@ -66,6 +66,17 @@ function row(r, board, now, ui) {
         .when(Boolean(merged), el => el.child(div().flex_none().child(merged)))
         .when(Boolean(who), el => el.child(div().flex_1().min_w_0().truncate().child(who))),
     )
+    .when(Boolean(r.blocked), el =>
+      el.child(
+        div()
+          .flex()
+          .items_center()
+          .gap(8)
+          .text_size(11)
+          .child(div().flex_1().min_w_0().truncate().text_color(theme().blocked).child(`blocked · ${r.blocked}`))
+          .child(div().flex_none().text_color(color.dim).child('open tab')),
+      ),
+    )
 }
 
 const sectionHead = (text, extra = null) =>
@@ -327,7 +338,7 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
   const t = theme()
   const root = frame('hrd-panel')
   if (!board) return root.child(div().p(14).text_color(color.dim).child('No board for this tab.'))
-  const { work, merged } = panelSections(board)
+  const { look: stuck, work, merged } = panelSections(board)
   const chip = statusChip(board)
   const names = board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES
   return root
@@ -364,7 +375,10 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
         .px(6)
         .py(4)
         .overflow_y_scrollbar()
-        .child(sectionHead(`Work · ${counts(board).working} running`, stageHeads(names)))
+        .when(stuck.length > 0, el =>
+          el.child(sectionHead(`Needs a look · ${stuck.length}`, stageHeads(names))).children(stuck.map(r => row(r, board, now, ui))),
+        )
+        .child(sectionHead(`Work · ${counts(board).working} running`, stuck.length > 0 ? null : stageHeads(names)))
         .children(work.map(r => row(r, board, now, ui)))
         .when(work.length === 0, el => el.child(div().px(8).py(6).text_color(color.dim).child('Nothing running.')))
         .children(history('Merged', merged, board, now, ui)),
