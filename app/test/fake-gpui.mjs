@@ -102,6 +102,7 @@ globalThis.__fakeGpui = {
     },
   },
   svg: makeElement,
+  image: makeElement,
   View: class {},
   Popup: {
     new: (id, trigger) => {
@@ -154,7 +155,7 @@ globalThis.__fakeGpui = {
 
 const names = {
   'gpui-base': ['Input', 'InputState', 'Popup', 'TextView', 'h_flex', 'v_flex'],
-  'gpui-kit': ['div', 'svg', 'View'],
+  'gpui-kit': ['div', 'image', 'svg', 'View'],
   herdr: [
     'appHome',
     'closeOverlay',

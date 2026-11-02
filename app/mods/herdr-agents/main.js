@@ -1,5 +1,5 @@
 import { View, div } from 'gpui-kit'
-import { focused, props, setShared, shared, terminals } from 'herdr'
+import { exec, focused, props, setShared, shared, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { makeCardState } from './card.js'
@@ -13,6 +13,7 @@ import { SpacesList } from './spaces.js'
 import { SettingsState, settingsView } from './settingsview.js'
 import { makeSheetState, sheetBlock } from './sheet.js'
 import { StripState, strip } from './strip.js'
+import { POLL_MS as USAGE_POLL_MS, UsageTracker, usageView } from './usage.js'
 import { readVersion, versionView } from './version.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
@@ -32,6 +33,11 @@ export default class HerdrAgents extends View {
         this.version = await readVersion()
         if (this.version) cx.notify()
       })
+      return
+    }
+    if (props()?.role === 'usage') {
+      this.usage = new UsageTracker(exec)
+      this.pollUsage(cx)
       return
     }
     if (props()?.role === 'settings') {
@@ -106,6 +112,14 @@ export default class HerdrAgents extends View {
     this.part?.listen(cx)
     if (pinbarCopy) this.pin.listen(cx)
     this.watchAges(cx) // the strip's card shows an age
+  }
+
+  /** One timer for the next read; a redraw only when what is shown changed. */
+  pollUsage(cx) {
+    cx.spawn(async cx => {
+      await this.usage.poll(() => cx.notify())
+    })
+    cx.timer.after(USAGE_POLL_MS, cx => this.pollUsage(cx))
   }
 
   /** Ages on screen move with the clock, not with a board write. A look at the time: no process, no read, and a redraw only
@@ -188,6 +202,7 @@ export default class HerdrAgents extends View {
 
   render(cx) {
     if (props()?.role === 'version') return versionView(this.version)
+    if (this.usage) return usageView(this.usage)
     if (this.settings) return settingsView(this.settings, cx)
     if (this.spacesList) return this.spacesList.render()
     if (this.agentsList) return this.agentsList.render(cx, this.boards)

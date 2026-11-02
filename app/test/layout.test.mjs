@@ -3,7 +3,16 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { removeCard, addSheet, addVersion, coordinatorLayout, repointAgents, repointSpaces, writeCoordinatorLayout } from '../layout.mjs'
+import {
+  removeCard,
+  addSheet,
+  addUsage,
+  addVersion,
+  coordinatorLayout,
+  repointAgents,
+  repointSpaces,
+  writeCoordinatorLayout,
+} from '../layout.mjs'
 
 // The shape of Herdr's main layout where it matters: work is tabs / work-body / status.
 const main = () => ({
@@ -276,6 +285,13 @@ test("the status block shares a fixed row with the version block, in the status 
     children: [
       { id: 'status', type: 'block', size: { weight: 1 }, content: { mod: 'workspace-status' } },
       {
+        id: 'hrd-usage',
+        type: 'block',
+        size: { px: 290 },
+        resizable: false,
+        content: { mod: 'herdr-agents', props: { role: 'usage' } },
+      },
+      {
         id: 'hrd-version',
         type: 'block',
         size: { px: 190 },
@@ -284,6 +300,35 @@ test("the status block shares a fixed row with the version block, in the status 
       },
     ],
   })
+})
+
+test('the usage block sits just left of the version block, once, and only where that row exists', () => {
+  const layout = coordinatorLayout(main())
+  assert.deepEqual(
+    versionRow(layout).children.map(c => c.id),
+    ['status', 'hrd-usage', 'hrd-version'],
+  )
+  assert.deepEqual(versionRow(layout).children[1], {
+    id: 'hrd-usage',
+    type: 'block',
+    size: { px: 290 },
+    resizable: false,
+    content: { mod: 'herdr-agents', props: { role: 'usage' } },
+  })
+  assert.equal(addUsage(layout), false)
+  assert.equal(addUsage(main()), false)
+})
+
+test('an existing coordinator layout gains the usage block on the next install, then reports exists', t => {
+  const old = coordinatorLayout(main())
+  versionRow(old).children.splice(1, 1)
+  const { home, target } = layoutHome(t, old)
+  assert.equal(writeCoordinatorLayout(home), 'updated')
+  assert.deepEqual(
+    versionRow(JSON.parse(readFileSync(target, 'utf8'))).children.map(c => c.id),
+    ['status', 'hrd-usage', 'hrd-version'],
+  )
+  assert.equal(writeCoordinatorLayout(home), 'exists')
 })
 
 test('addVersion is repeatable and leaves alone a status block on another mod, or no status block', () => {
@@ -312,7 +357,7 @@ test('an existing coordinator layout gets the version block once and keeps its s
     const row = versionRow(JSON.parse(readFileSync(target, 'utf8')))
     assert.deepEqual(
       row.children.map(c => c.id),
-      ['status', 'hrd-version'],
+      ['status', 'hrd-usage', 'hrd-version'],
     )
     assert.equal(row.children[0].min, 20)
     assert.deepEqual(row.size, { px: 28 })
