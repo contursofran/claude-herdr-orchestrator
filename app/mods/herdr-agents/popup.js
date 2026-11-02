@@ -135,9 +135,9 @@ function row(r, board, ctl, now) {
 }
 
 /** The pop-up. Its root has a fixed size (props().height from the strip): a `size_full` root in a popup draws nothing. */
-export function popupView(board, ctl) {
-  const height = Number(props()?.height) || 0
-  const root = div()
+/** What every board pop-up has: a fixed size, the keyboard, and closing on Esc or a press outside. */
+export function popupShell(ctl, width, height) {
+  return div()
     .id('board-popup')
     .track_focus(ctl.h)
     .on_key_down(e => {
@@ -156,11 +156,16 @@ export function popupView(board, ctl) {
         closeOverlay(props()?.overlay)
       } catch {} // the app already closed it
     })
-    .w(POPUP_W)
+    .w(width)
     .h(height)
     .flex_none()
     .flex()
     .flex_col()
+}
+
+export function popupView(board, ctl) {
+  const height = Number(props()?.height) || 0
+  const root = popupShell(ctl, POPUP_W, height)
     .bg(look.bg)
     .border(1)
     .border_color(look.border)

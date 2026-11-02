@@ -22,7 +22,17 @@ import {
   workRows,
 } from './model.js'
 import { holdPanel, panelHeld } from './panelheld.js'
-import { PANEL_CHILD, PANEL_OPEN, bottomPill, onOrchestrator, panelMove, panelState } from './panelmodel.js'
+import {
+  PANEL_CHILD,
+  PANEL_FLOAT_W,
+  PANEL_OPEN,
+  bottomPill,
+  onOrchestrator,
+  panelFloatHeight,
+  panelFloats,
+  panelMove,
+  panelState,
+} from './panelmodel.js'
 import { Arrivals } from './arrivals.js'
 import { card } from './card.js'
 import { closeCard, openCard } from './cardctl.js'
@@ -128,7 +138,12 @@ export class StripState {
 
   /** What a command does, on the board shown now. */
   command(name, cx) {
-    if (isBoardCommand(name)) return openBoardPopup(this.board)
+    if (isBoardCommand(name)) {
+      // The key does what the bottom row offers.
+      if (bottomPill(panelState(layout()), this.width, onOrchestrator(this.board, focused())) === 'panel')
+        return openPanel(this, this.board)
+      return openBoardPopup(this.board)
+    }
     if (isSheetCommand(name)) {
       toggleSheet(this.board)
       return cx.notify()
@@ -190,12 +205,13 @@ export class StripState {
  *  time: an open card goes first. The popup's root has a fixed size, so its height is
  *  worked out here from the rows and handed over as a prop. `press` is the click's event: if it already closed the pop-up on
  *  its way here, the pop-up stays closed. */
-export function openBoardPopup(board, press = null) {
+export function openBoardPopup(board, press = null, float = false) {
   const gone = takeDismissed(press)
   if (gone?.surface === 'popup') return handBack(gone)
   if (!board) return
-  const height = popupHeight(workRows(board).length)
   const view = window.viewport_size()
+  const width = float ? PANEL_FLOAT_W : POPUP_W
+  const height = float ? panelFloatHeight(view.height) : popupHeight(workRows(board).length)
   const plan = overlayPlan('popup', {
     popup: Boolean(shared('hrd.popup')),
     card: Boolean(shared('hrd.open')),
@@ -215,10 +231,10 @@ export function openBoardPopup(board, press = null) {
     mod: 'herdr-agents',
     kind: 'popup',
     frame: 'none',
-    width: POPUP_W,
+    width,
     height,
-    at: popupSpot(view.width, view.height, height),
-    props: { role: 'board', session: board.session, height, board, back, space },
+    at: popupSpot(view.width, view.height, height, width),
+    props: { role: 'board', session: board.session, height, board, back, space, float },
   })
   setShared('hrd.popup', overlay)
 }
@@ -364,8 +380,15 @@ const settingsPill = board =>
     .child(svg(icon('settings')).size(14).text_color(look.muted))
 
 /** `board ▴`: opens the work table above it. */
-/** `panel ▴`: opens a closed panel in place, and lifts the hold of having closed it. */
-const panelPill = part =>
+/** Opens a closed panel in place, and lifts the hold of having closed it. With no room for it, it floats instead. */
+function openPanel(part, board, press = null) {
+  if (panelFloats(part?.width)) return openBoardPopup(board, press, true)
+  part?.allowPanel()
+  holdPanel(false)
+  for (const [name, args] of PANEL_OPEN) run(name, args)
+}
+
+const panelPill = (part, board) =>
   div()
     .id('strip-panel')
     .h(24)
@@ -376,10 +399,8 @@ const panelPill = part =>
     .text_color(look.muted)
     .cursor_pointer()
     .hover(el => el.bg(look.pillHover))
-    .on_mouse_down('left', (_e, cx) => {
-      part?.allowPanel()
-      holdPanel(false)
-      for (const [name, args] of PANEL_OPEN) run(name, args)
+    .on_mouse_down('left', (e, cx) => {
+      openPanel(part, board, e)
       cx.notify()
     })
     .child('panel ▴')
@@ -488,7 +509,7 @@ export function strip(board, ctx = {}) {
         .child(count('blocked', c.blocked)),
     )
     .when(pill === 'board', el => el.child(boardPill(board)))
-    .when(pill === 'panel', el => el.child(panelPill(ctx.part)))
+    .when(pill === 'panel', el => el.child(panelPill(ctx.part, board)))
     .child(settingsPill(board))
     .child(sheetPill(board))
   return root.child(tabs).child(right)

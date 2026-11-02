@@ -1019,8 +1019,8 @@ export function wrapUpButton(board) {
 export const popupHeight = n => POPUP_CHROME + POPUP_ROW * Math.min(Math.max(n, 1), POPUP_MAX_ROWS)
 
 /** Window coordinates of the pop-up's top left: right aligned, its bottom just above the strip. */
-export function popupSpot(viewW, viewH, height) {
-  return { x: Math.max(0, viewW - POPUP_W - 8), y: Math.max(0, viewH - STATUS_PX - STRIP_PX - height - 4) }
+export function popupSpot(viewW, viewH, height, width = POPUP_W) {
+  return { x: Math.max(0, viewW - width - 8), y: Math.max(0, viewH - STATUS_PX - STRIP_PX - height - 4) }
 }
 
 /** Whether a mod command name means "open the board pop-up" (`herdr-agents.board`). */

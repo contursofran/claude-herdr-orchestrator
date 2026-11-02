@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { app, findId, textOf } from './fake-gpui.mjs'
 
 const m = await import('../mods/herdr-agents/panelmodel.js')
-const { panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
+const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
 
 app.theme = { background: '#111111', selected: '#404040', muted: '#505050', foreground: '#606060', hover: '#707070', working: '#808080' }
@@ -109,7 +109,7 @@ test('the bottom row offers panel when it is closed with room, nothing over the 
   assert.equal(m.bottomPill('board', WIDE, true), null)
   assert.equal(m.bottomPill('board', WIDE, false), 'board')
   assert.equal(m.bottomPill('files', WIDE, true), 'board')
-  assert.equal(m.bottomPill('closed', m.PANEL_MIN_WORK_PX - 1, true), 'board')
+  assert.equal(m.bottomPill('closed', m.PANEL_MIN_WORK_PX - 1, true), 'panel')
   assert.equal(m.bottomPill('closed', null, true), 'board')
   assert.equal(m.bottomPill(null, WIDE, true), 'board')
 })
@@ -262,4 +262,41 @@ test('Stop takes a second press, and only then sends', async () => {
   assert.deepEqual(sent(), [JSON.stringify({ action: 'stop', worker: 'fix-1' })])
   assert.equal(ui.stopping, null)
   assert.ok(textOf(workerView(b, worker, ui)).includes('Stop'))
+})
+
+test('it floats only where there is no room for it, and unmeasured it does', () => {
+  assert.equal(m.panelFloats(m.PANEL_MIN_WORK_PX), false)
+  assert.equal(m.panelFloats(m.PANEL_MIN_WORK_PX - 1), true)
+  assert.equal(m.panelFloats(undefined), true)
+})
+
+test('floating leaves the rows above and below clear, down to a least height', () => {
+  assert.equal(m.panelFloatHeight(700), 700 - 158)
+  assert.equal(m.panelFloatHeight(300), 240)
+})
+
+const ctl = { h: {} }
+
+test('the floating panel follows the tab it hands back to, and its close and rows only close it', () => {
+  app.terminals = terms
+  app.props = { overlay: 'o1', height: 500, back: 't2' }
+  app.store['hrd.popup'] = 'o1'
+  app.closed.length = 0
+  app.ran.length = 0
+  const b = board({ workers: [worker], tasks: [task('a')] })
+  assert.ok(findId(floatView(b, ctl, 0, { open: new Set() }), 'hrd-panel-worker'))
+  app.props = { overlay: 'o1', height: 500, back: COORD }
+  const ui = { open: new Set() }
+  const view = floatView(b, ctl, 0, ui)
+  assert.ok(findId(view, 'hrd-panel'))
+  findId(view, 'panel-close').node.calls.on_click[0]()
+  assert.deepEqual(app.closed, ['o1'])
+  assert.equal(app.store['hrd.popup'], null)
+  assert.deepEqual(app.ran, [], 'the layout panel is left alone')
+  assert.equal(panelHeld(), false)
+  findId(floatView(b, ctl, 0, ui), 'panel-a').node.calls.on_mouse_down[1]()
+  assert.equal(app.closed.length, 2)
+  assert.equal(ctl.leaving, true, 'a row moved the keyboard, so closing leaves it there')
+  app.terminals = []
+  app.props = null
 })

@@ -1,13 +1,13 @@
 // Role `panel`: the right panel, which follows the tab (#274): an orchestrator's tab draws its board, a worker's tab that worker.
 // The strip's copy moves the panel here on arrival at the tab (`panelMove` in panelmodel.js); this copy only draws.
 import { div, svg } from 'gpui-kit'
-import { notify, run, terminals, theme } from 'herdr'
+import { closeOverlay, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
 import { boardSpace, counts, mergedText, projectName, rowAction, stripItems } from './model.js'
 import { holdPanel } from './panelheld.js'
-import { PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
-import { cell, link } from './popup.js'
+import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
+import { cell, link, popupShell } from './popup.js'
 import { color, font, popup as look } from './tokens.js'
 
 const CELL = 18
@@ -22,7 +22,7 @@ function open(r, board) {
   }
 }
 
-function row(r, board, now) {
+function row(r, board, now, ui) {
   const merged = mergedText(r, now)
   const who = merged && r.who.text === 'merged' ? '' : r.who.text
   return div()
@@ -36,7 +36,10 @@ function row(r, board, now) {
     .rounded(6)
     .cursor_pointer()
     .hover(el => el.bg(look.rowHover))
-    .on_mouse_down('left', () => open(r, board))
+    .on_mouse_down('left', () => {
+      open(r, board)
+      ui?.close?.(true) // the row has moved the keyboard: closing must not take it back
+    })
     .child(
       div()
         .flex()
@@ -89,8 +92,8 @@ const stageHeads = names =>
     .text_size(10)
     .children(names.map(n => div().w(CELL).flex_none().flex().justify_center().truncate().child(stageHead(n))))
 
-/** Closes the panel and holds it closed, until `panel ▴` opens it. */
-const closeButton = () =>
+/** Closes the panel and holds it closed, until `panel ▴` opens it. A floating panel (`ui.close`) only goes away. */
+const closeButton = ui =>
   div()
     .id('panel-close')
     .size(20)
@@ -103,6 +106,7 @@ const closeButton = () =>
     .cursor_pointer()
     .hover(el => el.bg(color.hover).text_color(color.text))
     .on_click(() => {
+      if (ui.close) return ui.close()
       holdPanel(true)
       run('layout.hide', { id: 'panel' })
     })
@@ -144,7 +148,7 @@ function history(name, rows, board, now, ui) {
             cx.notify()
           })
           .child(open ? 'fewer' : `all ${rows.length}`)
-  return [sectionHead(name, toggle), ...(open ? rows : rows.slice(0, PANEL_HISTORY)).map(r => row(r, board, now))]
+  return [sectionHead(name, toggle), ...(open ? rows : rows.slice(0, PANEL_HISTORY)).map(r => row(r, board, now, ui))]
 }
 
 /** The frame both views draw in: it fills its block, as the stack gives it the panel's whole size. Framed like Herdr's Changes. */
@@ -348,7 +352,7 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
             .child(div().text_size(11).text_color(color.dim).child('Board')),
         )
         .when(Boolean(chip), el => el.child(chip))
-        .child(closeButton()),
+        .child(closeButton(ui)),
     )
     .child(
       div()
@@ -361,8 +365,22 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
         .py(4)
         .overflow_y_scrollbar()
         .child(sectionHead(`Work · ${counts(board).working} running`, stageHeads(names)))
-        .children(work.map(r => row(r, board, now)))
+        .children(work.map(r => row(r, board, now, ui)))
         .when(work.length === 0, el => el.child(div().px(8).py(6).text_color(color.dim).child('Nothing running.')))
         .children(history('Merged', merged, board, now, ui)),
     )
+}
+
+/** `panel ▴` below the width limit: the same views in a pop-up over the terminal. The pop-up holds the keyboard, so the tab it
+ *  follows is the terminal it hands back to. */
+export function floatView(board, ctl, now, ui) {
+  const overlay = props()?.overlay
+  ui.close ??= moved => {
+    if (moved) ctl.leaving = true
+    if (shared('hrd.popup') === overlay) setShared('hrd.popup', null)
+    try {
+      closeOverlay(overlay)
+    } catch {} // the app already closed it
+  }
+  return popupShell(ctl, PANEL_FLOAT_W, Number(props()?.height) || 0).child(panelFor(board, { terminal: props()?.back }, now, ui))
 }
