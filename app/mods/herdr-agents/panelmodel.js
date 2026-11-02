@@ -12,6 +12,22 @@ export function panelSections(board) {
   }
 }
 
+/** The worker the focused terminal belongs to on this board, by its tab's name, else null. */
+export function focusedWorker(board, terminals, focus) {
+  const name = (terminals ?? []).find(t => t?.address === focus?.terminal)?.name
+  return (name && (board?.workers ?? []).find(w => w?.name === name)) || null
+}
+
+/** The row a worker is on: the one naming it, the running one over a finished one. Null when no task names it. */
+export function workerRow(board, worker) {
+  const name = worker?.name
+  const rows = workRows(board).filter(r => r.tab === name || r.workers.includes(name))
+  return rows.find(r => !r.isFinished) ?? rows[0] ?? null
+}
+
+/** The stage names a row goes through: plan only when it was planned, as the design has it. */
+export const rowStageNames = (row, names) => names.filter((_, i) => i > 0 || (row?.stages?.[0] ?? 'none') !== 'none')
+
 /** How many rows of the merged list show until the owner asks for all of them. */
 export const PANEL_HISTORY = 3
 
@@ -50,22 +66,23 @@ export const onOrchestrator = (board, focus) => Boolean(focus?.terminal) && boar
 /**
  * What the right panel does for the tab in focus. It moves once per arrival (`last.key`), so a terminal is resized at most once
  * for it. An orchestrator's tab opens a closed panel on the board, and a shell's goes back to Changes if the board was showing.
- * Files or Changes the owner picked stay: the board only comes back over a Changes this code moved to (`last.moved`). A worker's
- * tab leaves the panel alone until it has its own view.
+ * Files or Changes the owner picked stay: our view only comes back over a Changes this code moved to (`last.moved`), which a
+ * worker's tab does too. Otherwise a worker's tab leaves the panel as it is, and when open on our view it draws that worker.
  * `state` is `panelState`. `width` is the strip's: null until measured, when nothing is decided yet. `held`: the owner closed the
  * board, so arriving no longer opens it.
  */
 export function panelMove(focus, board, terminals, state, width, last = null, held = false) {
   if (!focus?.tab || !Number.isFinite(width)) return { key: last?.key ?? null, moved: last?.moved === true, commands: [] }
-  const name = (terminals ?? []).find(t => t?.address === focus.terminal)?.name
-  const worker = Boolean(name) && (board?.workers ?? []).some(w => w?.name === name)
+  const worker = focusedWorker(board, terminals, focus)
   const kind = onOrchestrator(board, focus) ? 'orchestrator' : worker ? 'worker' : 'shell'
   const key = `${focus.tab}|${kind}|${width >= PANEL_MIN_WORK_PX}`
-  const moved = state === 'changes' && last?.moved === true
+  // A draw can land before the move to Changes does, with the board still showing, and that doesn't end it.
+  const moved = last?.moved === true && (state === 'changes' || (state === 'board' && key === last.key))
   if (key === last?.key) return { key, moved, commands: [] }
   if (kind === 'orchestrator' && width >= PANEL_MIN_WORK_PX && !held && (state === 'closed' || moved)) {
     return { key, moved: false, commands: PANEL_OPEN }
   }
+  if (kind === 'worker' && moved) return { key, moved: false, commands: PANEL_OPEN }
   if (kind === 'shell' && state === 'board') {
     return { key, moved: true, commands: [['layout.select', { stack: 'panel-body', child: 'changes' }]] }
   }

@@ -60,6 +60,21 @@ test('the board is written for outside apps, and their action files answer and t
   await stopAll($, clock, ['w-busy'])
 })
 
+test('a stop action stops the worker, and an unknown worker comes back as a failure', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await spawn($, ['w-busy'])
+  files[`${INBOX}/1-stop.json`] = JSON.stringify({ action: 'stop', worker: 'w-busy' })
+  files[`${INBOX}/2-stop.json`] = JSON.stringify({ action: 'stop', worker: 'w-none' })
+  await clock.advance(3000)
+  await clock.advance(3000)
+  const board = JSON.parse(files[FILE] ?? '{}')
+  expect(board.actions).toEqual([
+    { id: '1-stop.json', ok: true, message: 'stopped w-busy' },
+    { id: '2-stop.json', ok: false, message: 'no worker w-none' },
+  ])
+  expect(board.workers.find((w: { name: string }) => w.name === 'w-busy').state).toBe('reported')
+})
+
 test('the board says null for the coordinator terminal outside hc, and keeps the fields an old reader uses', async ($, on) => {
   const { clock, files } = await start($, on, {}, {}, { HC_TERMINAL_ID: '' })
   await clock.advance(3000)

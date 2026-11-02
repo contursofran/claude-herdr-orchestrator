@@ -7,7 +7,7 @@ import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.j
 import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
 import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
 import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
-import { panelView } from './panel.js'
+import { panelFor } from './panel.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { SpacesList } from './spaces.js'
@@ -218,7 +218,7 @@ export default class HerdrAgents extends View {
     if (props()?.role === 'panel') {
       const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
       this.last = found.pick
-      return this.drewAges(panelView(found.board, Date.now(), this.panelUi))
+      return this.drewAges(panelFor(found.board, focused(), Date.now(), this.panelUi))
     }
     if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))
     if (props()?.role === 'board')
