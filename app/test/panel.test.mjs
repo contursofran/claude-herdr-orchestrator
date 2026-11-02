@@ -346,3 +346,25 @@ test('Needs a look draws only when it has rows, and takes the stage heads', () =
   for (const want of ['Needs a look · 1', 'blocked · permission prompt', 'open tab']) assert.ok(text.includes(want), want)
   assert.equal(heads(view), 1)
 })
+
+test("a worker's view goes back to its orchestrator, and has no way back without one", () => {
+  app.ran.length = 0
+  const view = workerView(board(), worker)
+  assert.ok(textOf(view).includes('‹ repo'))
+  findId(view, 'panel-back').node.calls.on_mouse_down[1]()
+  assert.deepEqual(app.ran, [['pane.focus', { terminal: COORD }]])
+  assert.equal(findId(workerView(board({ coordinator: { terminal: null } }), worker), 'panel-back'), null)
+})
+
+test('going back from a floating panel closes it and leaves the keyboard on the orchestrator', () => {
+  app.terminals = terms
+  app.props = { overlay: 'o2', height: 500, back: 't2' }
+  app.closed.length = 0
+  const leaving = { h: {} }
+  const b = board({ workers: [worker] })
+  findId(floatView(b, leaving, 0, { open: new Set() }), 'panel-back').node.calls.on_mouse_down[1]()
+  assert.deepEqual(app.closed, ['o2'])
+  assert.equal(leaving.leaving, true)
+  app.terminals = []
+  app.props = null
+})
