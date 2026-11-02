@@ -56,7 +56,8 @@ export function drawnKey(role, boards, session, open = null) {
     return JSON.stringify(
       list.map(b => [b.session, b.coordinator?.terminal, (b.workers ?? []).map(w => [w?.name, w?.state, w?.note, w?.since])]),
     )
-  if (role === 'panel') return JSON.stringify(list.map(b => [b.session, b.coordinator?.terminal, b.cwd, b.stageNames, b.tasks, b.workers, counts(b)]))
+  if (role === 'panel')
+    return JSON.stringify(list.map(b => [b.session, b.coordinator?.terminal, b.cwd, b.stageNames, b.tasks, b.workers, counts(b)]))
   if (role === 'board') {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
