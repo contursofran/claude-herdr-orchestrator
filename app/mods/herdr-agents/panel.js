@@ -209,12 +209,38 @@ function stopButton(board, worker, ui) {
     .child(armed ? `Stop ${worker.name}?` : 'Stop')
 }
 
+/** Back to the orchestrator this worker belongs to, which draws its board again. A floating panel closes on the way. */
+function backButton(board, ui) {
+  const terminal = board.coordinator?.terminal
+  if (!terminal) return null
+  return div()
+    .id('panel-back')
+    .h(20)
+    .px(6)
+    .ml(-6)
+    .flex()
+    .flex_none()
+    .self_start()
+    .items_center()
+    .rounded(5)
+    .text_size(11)
+    .text_color(color.dim)
+    .cursor_pointer()
+    .hover(el => el.bg(color.hover).text_color(color.text))
+    .on_mouse_down('left', () => {
+      run('pane.focus', { terminal })
+      ui?.close?.(true)
+    })
+    .child(`‹ ${projectName(board)}`)
+}
+
 /** A worker's tab: who it is, how far it got, what it is on and its PR, from what the board has. */
 export function workerView(board, worker, ui = { open: new Set() }) {
   const t = theme()
   const r = workerRow(board, worker)
   const names = rowStageNames(r, board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES)
   const about = [worker.repo?.split('/').pop(), worker.note].filter(Boolean).join(' · ')
+  const back = backButton(board, ui)
   return frame('hrd-panel-worker')
     .child(
       div()
@@ -226,6 +252,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
         .py(10)
         .border_b(1)
         .border_color(t.border)
+        .when(Boolean(back), el => el.child(back))
         .child(
           div()
             .flex()
