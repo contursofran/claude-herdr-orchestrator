@@ -350,7 +350,7 @@ test('Needs a look draws only when it has rows, and takes the stage heads', () =
 test("a worker's view goes back to its orchestrator, and has no way back without one", () => {
   app.ran.length = 0
   const view = workerView(board(), worker)
-  assert.ok(textOf(view).includes('‹ repo'))
+  assert.ok(textOf(view).includes('‹ repo board'))
   findId(view, 'panel-back').node.calls.on_mouse_down[1]()
   assert.deepEqual(app.ran, [['pane.focus', { terminal: COORD }]])
   assert.equal(findId(workerView(board({ coordinator: { terminal: null } }), worker), 'panel-back'), null)

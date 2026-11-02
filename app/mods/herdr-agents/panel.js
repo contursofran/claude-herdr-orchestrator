@@ -215,23 +215,24 @@ function backButton(board, ui) {
   if (!terminal) return null
   return div()
     .id('panel-back')
-    .h(20)
-    .px(6)
-    .ml(-6)
+    .h(24)
+    .px(10)
     .flex()
     .flex_none()
     .self_start()
     .items_center()
     .rounded(5)
+    .border_1()
+    .border_color(theme().border)
     .text_size(11)
-    .text_color(color.dim)
+    .text_color(color.text)
     .cursor_pointer()
-    .hover(el => el.bg(color.hover).text_color(color.text))
+    .hover(el => el.bg(color.hover))
     .on_mouse_down('left', () => {
       run('pane.focus', { terminal })
       ui?.close?.(true)
     })
-    .child(`‹ ${projectName(board)}`)
+    .child(`‹ ${projectName(board)} board`)
 }
 
 /** A worker's tab: who it is, how far it got, what it is on and its PR, from what the board has. */
