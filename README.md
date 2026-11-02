@@ -48,7 +48,7 @@ The board pop-up shows each row of work with its stages, its worker and what it 
 
 ### Auto-compact at 250k
 
-The strip shows the coordinator's context (`ctx 145k / 250k`). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
+The strip shows the coordinator's context (`ctx 145k / 250k · aerum`, with the folder of the session it belongs to). Past `resetAt` (250k tokens) the coordinator writes its state to `COORDINATOR-STATE.md` (the mod keeps its Workers block current itself) and is compacted, then reads it back before the next report, so a session can run all day.
 
 ### A playbook that keeps workers busy
 

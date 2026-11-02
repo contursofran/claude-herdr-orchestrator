@@ -57,3 +57,8 @@ test('the strip draws nothing for it without data, and no empty child', () => {
     assert.equal(el.node.kids.at(-1).node.kids.includes(null), false)
   }
 })
+
+test('the line names the folder of the session it belongs to (#272)', () => {
+  const b = { session: 's', cwd: '/Users/me/code/aerum', summary: { context: { tokens: 145_400, limit: 250_000 } } }
+  assert.deepEqual(contextLine(b), { text: 'ctx 145k / 250k · aerum', level: null })
+})
