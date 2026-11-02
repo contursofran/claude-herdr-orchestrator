@@ -32,6 +32,7 @@ globalThis.__startFake = {
   Input: {},
   InputState: {},
   closeOverlay: id => state.closed.push(id),
+  layout: () => null,
   focused: () => {
     if (state.focusThrows) throw new Error('boom')
     return state.focused ?? null

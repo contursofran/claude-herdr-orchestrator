@@ -43,8 +43,8 @@ export function releasePopup(ctl) {
 const whoColor = kind => (kind === 'you' ? color.text : kind === 'text' ? color.soft : color.dim)
 
 /** One stage cell: a 14 px icon in a 44 px column. A decision (`ask`) is the text-coloured disc with the chip-coloured glyph. */
-function cell(name) {
-  const box = div().w(look.cell).flex_none().flex().items_center().justify_center()
+export function cell(name, width = look.cell) {
+  const box = div().w(width).flex_none().flex().items_center().justify_center()
   if (!name) return box
   if (name === 'decide') {
     return box.child(
@@ -65,7 +65,7 @@ function cell(name) {
 }
 
 /** A PR number that opens the PR. Its press stops here: the row's own press would select it or close the pop-up. */
-function link(r, text, id) {
+export function link(r, text, id) {
   return div()
     .id(id)
     .cursor_pointer()

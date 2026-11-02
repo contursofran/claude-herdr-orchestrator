@@ -7,6 +7,7 @@ import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.j
 import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
 import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
 import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
+import { panelView } from './panel.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
 import { SpacesList } from './spaces.js'
@@ -59,6 +60,14 @@ export default class HerdrAgents extends View {
       return
     }
     this.boards = new Boards()
+    if (props()?.role === 'panel') {
+      // Which board follows focus when drawing. The strip's copy says when this block shows.
+      this.last = null
+      this.panelUi = { open: new Set() } // the history lists opened with `all N`
+      this.boards.start(cx, cx => this.drawnChanged() && cx.notify())
+      this.watchAges(cx) // the merge ages of its rows
+      return
+    }
     if (props()?.role === 'pins') {
       // The drop panel and the popover get their pins in props(), so the first draw has its content; their one board is
       // watched only so a pin resolved meanwhile leaves. `gone` are the pins Done here, hidden at once.
@@ -206,6 +215,11 @@ export default class HerdrAgents extends View {
     if (this.settings) return settingsView(this.settings, cx)
     if (this.spacesList) return this.spacesList.render()
     if (this.agentsList) return this.agentsList.render(cx, this.boards)
+    if (props()?.role === 'panel') {
+      const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
+      this.last = found.pick
+      return this.drewAges(panelView(found.board, Date.now(), this.panelUi))
+    }
     if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))
     if (props()?.role === 'board')
       return this.drewAges(
@@ -221,7 +235,10 @@ export default class HerdrAgents extends View {
       // Resolved while drawing, so it follows focus with no polling.
       const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
       this.last = found.pick
-      if (this.part) this.part.board = found.board
+      if (this.part) {
+        this.part.board = found.board
+        this.part.followPanel(cx, found.board)
+      }
       const fault = {} // the strip says here when only its card failed to draw
       const el = this.drewAges(
         draw(found.board, {

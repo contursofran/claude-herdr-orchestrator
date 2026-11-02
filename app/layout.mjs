@@ -111,6 +111,16 @@ export function addUsage(layout) {
   return true
 }
 
+/** Adds the right panel's board to the `panel-body` stack, after Herdr's Files and Changes, in place. It stays out of sight until
+ *  the strip's copy selects it, so the stack's saved choice and the panel's saved size stay. true if it changed anything. */
+export function addPanel(layout) {
+  if (findNode(layout, 'hrd-panel')) return false
+  const stack = findNode(layout, 'panel-body')
+  if (!Array.isArray(stack?.children)) return false
+  stack.children.push({ id: 'hrd-panel', type: 'block', content: { mod: 'herdr-agents', props: { role: 'panel' } } })
+  return true
+}
+
 const agentsList = { mod: 'herdr-agents', props: { role: 'agents' } }
 
 /** Points the `agents` block (Herdr's agents list) at this mod's copy, which has the Orchestrators section.
@@ -160,12 +170,12 @@ export function coordinatorLayout(main, version) {
     }
     return null
   }
+  if (find(layout, 'hrd-pins') || find(layout, 'hrd-strip')) throw new Error('layouts/main.json already has the pin bar or strip')
   const work = find(layout, 'work')
   const kids = work?.children
   const tabs = kids?.findIndex(c => c.id === 'tabs')
   const body = kids?.findIndex(c => c.id === 'work-body')
   if (!kids || tabs < 0 || body < 0 || body < tabs) throw new Error('layouts/main.json has no work column with tabs and work-body')
-  if (find(layout, 'hrd-pins') || find(layout, 'hrd-strip')) throw new Error('layouts/main.json already has the pin bar or strip')
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
   kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
@@ -174,12 +184,13 @@ export function coordinatorLayout(main, version) {
   addSheet(layout)
   addVersion(layout)
   addUsage(layout)
+  addPanel(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
 
 /** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists' or 'updated'. A file that exists keeps
- *  everything but what `repointAgents`, `repointSpaces`, `removeCard`, `addSheet`, `addVersion` and `addUsage` bring up to date (then 'updated'). */
+ *  everything but what `repointAgents`, `repointSpaces`, `removeCard`, `addSheet`, `addVersion`, `addUsage` and `addPanel` bring up to date (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) {
@@ -190,15 +201,16 @@ export function writeCoordinatorLayout(home) {
       return 'exists'
     }
     // All the edits run: `||` would skip the later ones.
-    const [repointed, uncarded, sheeted, versioned, spaced, usaged] = [
+    const [repointed, uncarded, sheeted, versioned, spaced, usaged, paneled] = [
       repointAgents(layout),
       removeCard(layout),
       addSheet(layout),
       addVersion(layout),
       repointSpaces(layout),
       addUsage(layout),
+      addPanel(layout),
     ]
-    if (!repointed && !uncarded && !sheeted && !versioned && !spaced && !usaged) return 'exists'
+    if (!repointed && !uncarded && !sheeted && !versioned && !spaced && !usaged && !paneled) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
     return 'updated'

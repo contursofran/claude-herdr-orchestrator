@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   removeCard,
+  addPanel,
   addSheet,
   addUsage,
   addVersion,
@@ -167,8 +168,9 @@ test('a coordinator layout that exists gets its agents block repointed and nothi
     )
     assert.equal(got.children[1].children[2].children[0].floating[0].id, 'hrd-sheet')
     delete got.children[1].children[2].children[0].floating
-    // ...and the status block's row, which has a test of its own.
+    // ...and the status block's row and the tabs block's, which have tests of their own.
     got.children[1].children[3] = old.children[1].children[3]
+    got.children[1].children[0] = old.children[1].children[0]
     assert.deepEqual(got, old)
     assert.equal(writeCoordinatorLayout(home), 'exists', 'a second run changes nothing')
     writeFileSync(target, 'not json')
@@ -458,4 +460,21 @@ test('a coordinator layout that exists gets its spaces block repointed in place,
   } finally {
     rmSync(home, { recursive: true, force: true })
   }
+})
+
+const panelBody = { id: 'panel-body', type: 'stack', active: 'files', children: [{ id: 'files' }, { id: 'changes' }] }
+
+test("the board joins Herdr's panel stack once, and the stack's choice stays", () => {
+  const layout = { id: 'root', children: [{ id: 'panel', hidden: true, children: [structuredClone(panelBody)] }] }
+  assert.equal(addPanel(layout), true)
+  const stack = layout.children[0].children[0]
+  assert.deepEqual(
+    stack.children.map(c => c.id),
+    ['files', 'changes', 'hrd-panel'],
+  )
+  assert.deepEqual(stack.children[2].content, { mod: 'herdr-agents', props: { role: 'panel' } })
+  assert.equal(stack.active, 'files')
+  assert.equal(layout.children[0].hidden, true)
+  assert.equal(addPanel(layout), false)
+  assert.equal(addPanel({ id: 'root', children: [] }), false)
 })
