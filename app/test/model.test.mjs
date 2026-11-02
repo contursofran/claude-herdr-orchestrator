@@ -777,7 +777,7 @@ test('otherCount: the terminal cycles through every other board, in address orde
   assert.equal(next('t4'), 't1', 'wraps')
   // Walking from board to board visits all of them.
   const seen = []
-  for (let at = 't1', i = 0; i < 4; i++) seen.push(at), (at = next(at))
+  for (let at = 't1', i = 0; i < 4; i++) (seen.push(at), (at = next(at)))
   assert.deepEqual(seen, ['t1', 't2', 't3', 't4'])
   // A shown board with no place in the order still gets the first one after it.
   const withGap = otherCount(boards, terminals, board('x', 't25'))
@@ -1171,4 +1171,14 @@ test('agedTimes: the ages each copy has on screen', async () => {
   assert.deepEqual(agedTimes('pins', { pins: { list }, gone: new Set(['a']) }), [2], 'a pin marked done is not drawn')
   for (const role of ['board', 'agents', 'version'])
     assert.deepEqual(agedTimes(role, { boards, pinAt: 9, open: { session: 's', key: 'D1' } }), [], role)
+})
+
+test('a remembered board gives way to one written over 30 minutes later on the same terminal (#272)', () => {
+  const terminals = [term('t2')]
+  const stale = board('dead', 't2', { at: 1000 })
+  const fresh = board('live', 't2', { at: 1000 + 31 * 60 * 1000 })
+  const pick = { s1: 'dead' }
+  assert.equal(resolveBoard([stale, fresh], terminals, focus('t2'), pick).board.session, 'live')
+  const near = board('live', 't2', { at: 1000 + 60 * 1000 })
+  assert.equal(resolveBoard([stale, near], terminals, focus('t2'), pick).board.session, 'dead')
 })

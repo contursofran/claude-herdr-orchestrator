@@ -83,11 +83,16 @@ export function labelOf(terminal, key) {
 // (terminal ids may restart with the core); terminals() carries the label (seen in the app).
 const live = t => t && t.state === 'live' && t.program?.agent === true && labelOf(t, 'herdr-agents.role') !== 'worker'
 
+// A remembered board gives way to one written this much later: terminal ids restart with herdr, so a dead session's file
+// can match a live terminal again (#272: a three-day-old board with the old 150k limit kept winning).
+const STALE_MS = 30 * 60 * 1000
+
 function choose(candidates, last) {
   if (candidates.length === 0) return null
+  const newest = [...candidates].sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || String(a.session).localeCompare(String(b.session)))[0]
   const kept = last && candidates.find(b => b.session === last.session)
-  if (kept) return kept
-  return [...candidates].sort((a, b) => (b.at ?? 0) - (a.at ?? 0) || String(a.session).localeCompare(String(b.session)))[0]
+  if (kept && (newest.at ?? 0) - (kept.at ?? 0) < STALE_MS) return kept
+  return newest
 }
 
 /**
@@ -1212,6 +1217,8 @@ export function contextLine(board) {
   const { tokens, limit } = board?.summary?.context ?? {}
   if (!Number.isFinite(tokens) || !Number.isFinite(limit) || limit <= 0) return null
   const level = tokens >= limit * 0.95 ? 'error' : tokens >= limit * 0.8 ? 'warning' : null
-  const text = `ctx ${Math.round(tokens / 1000)}k / ${Math.round(limit / 1000)}k${level === 'error' ? ' · resets soon' : ''}`
+  // The folder names whose session the number is; a board without a folder shows the bare numbers.
+  const folder = typeof board.cwd === 'string' ? board.cwd.split('/').filter(Boolean).pop() : ''
+  const text = `ctx ${Math.round(tokens / 1000)}k / ${Math.round(limit / 1000)}k${folder ? ` · ${folder}` : ''}${level === 'error' ? ' · resets soon' : ''}`
   return { text, level }
 }
