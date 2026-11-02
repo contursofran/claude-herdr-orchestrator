@@ -1,6 +1,6 @@
 // The board pop-up: the work table of the one board the strip shows, opened from `board ▴` (or ctrl-cmd-b).
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, exec, focused, notify, props, run, setShared, shared, terminals } from 'herdr'
+import { closeOverlay, exec, focused, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
 import { noteDismissed } from './outside.js'
@@ -10,6 +10,7 @@ import {
   boardSpace,
   popupKeyAction,
   mergedText,
+  rowLive,
   popupRefocus,
   projectName,
   rowAction,
@@ -80,6 +81,7 @@ export function link(r, text, id) {
 
 function row(r, board, ctl, now) {
   const merged = mergedText(r, now)
+  const live = rowLive(board, r, now)
   const labelCell = div().w(44).flex_none().text_color(color.dim)
   return div()
     .id(`work-${r.key}`)
@@ -121,6 +123,17 @@ function row(r, board, ctl, now) {
       ),
     )
     .when(merged, el => el.child(div().flex_none().text_size(11).text_color(color.dim).child(merged)))
+    .when(Boolean(live), el =>
+      el.child(
+        div()
+          .flex_none()
+          .max_w(170)
+          .truncate()
+          .text_size(11)
+          .text_color(live?.warn ? theme().working : color.dim)
+          .child(live?.short ?? ''),
+      ),
+    )
     .child(
       div()
         .w(70)

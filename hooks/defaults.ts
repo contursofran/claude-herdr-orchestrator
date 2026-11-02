@@ -57,6 +57,10 @@ export const LOST_REPORT_MS = 10_000
 export const BATCH_MS = 3000
 // The coordinator's tick: report check, band and inbox.
 export const TICK_MS = 3000
+// How long a tool runs before an agent's row names it: shorter ones would only rewrite the board.
+export const LIVE_COMMAND_MS = 15_000
+// How often a worker's stream of model output reaches its live file.
+export const LIVE_SAVE_MS = 30_000
 // How long a reported worker stays on the board.
 export const LINGER_MS = 60_000
 

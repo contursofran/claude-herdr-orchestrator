@@ -7,7 +7,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { listOrder, parkedNote } from "./model.js";
+import { agentLive, listOrder, parkedNote } from "./model.js";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 
 function find(node, id) {
@@ -204,6 +204,8 @@ export class AgentsList {
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
+    // Saying nothing mid-turn: no spinner, since nothing says it is still going.
+    if (a.status === "working" && a.live?.quiet) return div().size(7).mx(3).flex_none().rounded(4).bg(a.live.warn ? t.working : t.dim);
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
     if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
     if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
@@ -239,13 +241,18 @@ export class AgentsList {
 
     // A worker parked on WAIT.json is idle to Herdr, like a finished one: a dim line under its row says what it waits for.
     const parkedOf = (a) => (a.status === "idle" ? parkedNote(boards.list(), all, a.address) : null);
+    // What a working one is doing: a dim line under its row, amber once it has been quiet too long.
+    const liveOf = (a) => (a.status === "working" ? agentLive(boards.list(), all, a.address, now) : null);
     const withKids = (a, i) => {
       const subs = collapsed ? [] : this.tree(all, a.address);
       const r = row(a, i, subs);
       const parked = collapsed ? null : parkedOf(a);
+      const live = collapsed ? null : liveOf(a);
       const note = parked
         ? [h_flex().id(`ag-wait-${a.address}`).px(8).pb(4).flex_none().text_size(11).text_color(t.dim).child(div().flex_1().min_w(0).truncate().child(`\u23f8 ${parked}`))]
-        : [];
+        : live
+          ? [h_flex().id(`ag-live-${a.address}`).pl(30).pr(8).pb(4).flex_none().text_size(11).text_color(live.warn ? t.working : t.dim).child(div().flex_1().min_w(0).truncate().child(live.text))]
+          : [];
       if (this.folded.has(a.address)) return [r, ...note];
       return [r, ...note, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
     };
@@ -365,7 +372,7 @@ export class AgentsList {
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address && !isOrch, el => el.child(pin))
         .when(!(this.hovered === a.address && !isOrch) && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
-        .child(this.status(t, a, byPriority && !isPinned && !isOrch));
+        .child(this.status(t, { ...a, live: liveOf(a) }, byPriority && !isPinned && !isOrch));
     };
 
     // Groups in list order: spaces (grouped) or priority sections. Agents of a

@@ -7,6 +7,7 @@ import { ciOf, type Check } from './ci'
 import { toggleWrapUp } from './coordinator'
 import { PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
 import { linker } from './links'
+import { ownLiveFields } from './live'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { session } from './session'
 import { jobs } from './state'
@@ -129,6 +130,7 @@ export async function boardInputs($: EngineInterface) {
   const b = await readBoard($)
   return JSON.stringify([
     Math.floor((await $.clock.now()) / 60_000),
+    ownLiveFields(await $.clock.now()),
     b.rows,
     b.wrapUp,
     b.target,
@@ -151,7 +153,7 @@ export async function boardSnapshot($: EngineInterface) {
     cwd: session.cwd,
     at: now,
     // The hc terminal this coordinator runs in (null outside hc); an app finds the board by it.
-    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null },
+    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null, ...ownLiveFields(now) },
     stageNames: [...STAGES],
     summary: {
       busy,
@@ -170,6 +172,7 @@ export async function boardSnapshot($: EngineInterface) {
       note: r.note ?? null,
       since: r.since ?? null,
       repo: r.repo ?? null,
+      ...(r.outputAt === undefined ? {} : { command: r.command ?? null, commandAt: r.commandAt ?? null, outputAt: r.outputAt }),
     })),
     tasks: tasks.map(t => ({
       key: t.key,

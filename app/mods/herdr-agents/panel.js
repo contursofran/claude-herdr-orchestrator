@@ -4,7 +4,7 @@ import { div, svg } from 'gpui-kit'
 import { closeOverlay, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { boardSpace, counts, mergedText, projectName, rowAction, stripItems } from './model.js'
+import { boardSpace, counts, liveLine, mergedText, projectName, rowAction, rowLive, stripItems } from './model.js'
 import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { cell, link, popupShell } from './popup.js'
@@ -22,9 +22,19 @@ function open(r, board) {
   }
 }
 
+/** An agent's line: dim, amber once it has been quiet too long. */
+function liveText(live, text) {
+  return div()
+    .min_w_0()
+    .truncate()
+    .text_color(live?.warn ? theme().working : color.dim)
+    .child(text ?? '')
+}
+
 function row(r, board, now, ui) {
   const merged = mergedText(r, now)
   const who = merged && r.who.text === 'merged' ? '' : r.who.text
+  const live = rowLive(board, r, now)
   return div()
     .id(`panel-${r.key}`)
     .flex_none()
@@ -64,7 +74,8 @@ function row(r, board, now, ui) {
         )
         .when(!r.link && Boolean(r.label), el => el.child(div().flex_none().child(r.label)))
         .when(Boolean(merged), el => el.child(div().flex_none().child(merged)))
-        .when(Boolean(who), el => el.child(div().flex_1().min_w_0().truncate().child(who))),
+        .when(Boolean(who), el => el.child(div().min_w_0().truncate().child(who)))
+        .when(Boolean(live), el => el.child(liveText(live, live?.short))),
     )
     .when(Boolean(r.blocked), el =>
       el.child(
@@ -241,6 +252,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
   const r = workerRow(board, worker)
   const names = rowStageNames(r, board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES)
   const about = [worker.repo?.split('/').pop(), worker.note].filter(Boolean).join(' · ')
+  const live = worker.state === 'working' ? liveLine(worker, Date.now()) : null
   const back = backButton(board, ui)
   return frame('hrd-panel-worker')
     .child(
@@ -283,6 +295,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
             ),
         )
         .when(Boolean(about), el => el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child(about)))
+        .when(Boolean(live), el => el.child(div().text_size(11).child(liveText(live, live?.text))))
         .when(Boolean(r), el =>
           el.child(
             div()

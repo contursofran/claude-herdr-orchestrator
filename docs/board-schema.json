@@ -17,7 +17,10 @@
       "type": "object",
       "description": "Optional, so older boards stay valid.",
       "properties": {
-        "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." }
+        "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." },
+        "command": { "type": "string", "description": "Like a worker's `command`, `commandAt` and `outputAt`: there only mid-turn." },
+        "commandAt": { "type": "number" },
+        "outputAt": { "type": "number" }
       }
     },
     "stageNames": {
@@ -60,7 +63,16 @@
             "type": ["number", "null"],
             "description": "Optional, so older boards stay valid. When a waiting worker started waiting, ms since the epoch; a reader works the clock out from it, so the time passing never rewrites the file."
           },
-          "repo": { "type": ["string", "null"], "description": "owner/name on GitHub." }
+          "repo": { "type": ["string", "null"], "description": "owner/name on GitHub." },
+          "command": {
+            "type": ["string", "null"],
+            "description": "Optional, like the next two, and only on a working worker that runs this mod, mid-turn. The tool it has been running for 15 s or more: `npm test`."
+          },
+          "commandAt": { "type": ["number", "null"], "description": "When that tool started, ms since the epoch." },
+          "outputAt": {
+            "type": "number",
+            "description": "When the model last said anything or a tool last ended, ms since the epoch, rounded up to the minute. A reader works the clocks out from these, so the time passing never rewrites the file."
+          }
         }
       }
     },

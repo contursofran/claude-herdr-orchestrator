@@ -1071,7 +1071,12 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     await $.fs.write(`${tmp}/.keep`, '')
     // These come last, so a profile's env cannot drop them. A worker's own session
     // reads the role (see session.start).
-    const env: [string, string][] = [...Object.entries(p.env ?? {}), ['TMPDIR', tmp], ['HERDR_AGENTS_ROLE', 'worker']]
+    const env: [string, string][] = [
+      ...Object.entries(p.env ?? {}),
+      ['TMPDIR', tmp],
+      ['HERDR_AGENTS_ROLE', 'worker'],
+      ['HERDR_AGENTS_LIVE', `${dir}/LIVE.json`],
+    ]
     // With a space the terminal is adopted into the coordinator's Herdr space, in a tab of its own.
     const labels = ['herdr-agents.role=worker', ...(space ? [`herdr.space=${space}`, `herdr.tab=hrd-${worker}`] : [])].flatMap(l => [
       '--label',

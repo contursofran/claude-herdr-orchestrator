@@ -4,6 +4,7 @@ import type { Board, Job, Links, Row } from '../types'
 import { config, target, wrappingUp } from './config'
 import { LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { lastStatus } from './hc'
+import { workerLiveFields } from './live'
 import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
 import { active, jobs } from './state'
@@ -80,6 +81,7 @@ export async function refresh($: EngineInterface) {
       // The start time, not a clock: a ticking note would rewrite the board file on every tick (#151). The app works the clock out.
       ...(j.status === 'running' && j.wait ? { note: j.wait.for, since: j.wait.since } : {}),
       ...(byCwd[j.cwd] ? { repo: byCwd[j.cwd] } : {}),
+      ...(state === 'working' ? await workerLiveFields($, j.dir, now) : {}),
     })
   }
   const held = await read($, board)
