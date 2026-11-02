@@ -89,9 +89,21 @@ export function panelMove(focus, board, terminals, state, width, last = null, he
   return { key, moved, commands: [] }
 }
 
-/** The bottom row's way in: `panel` reopens a closed panel where there is room for it (D43), nothing while an orchestrator's board
- *  is already open, and otherwise the `board` pop-up. Below the width limit the pop-up stays until the panel can float (#276). */
+/** The bottom row's way in: `panel` whenever the panel is closed (D43), nothing while an orchestrator's board is already open,
+ *  and otherwise the `board` pop-up. Unmeasured it stays the pop-up, which works at any width. */
 export function bottomPill(state, width, orchestrator) {
-  if (state === 'closed' && Number.isFinite(width) && width >= PANEL_MIN_WORK_PX) return 'panel'
+  if (state === 'closed' && Number.isFinite(width)) return 'panel'
   return state === 'board' && orchestrator ? null : 'board'
 }
+
+/** Whether `panel ▴` reopens the panel in place, or floats it over the terminal where there is no room to. */
+export const panelFloats = width => !(width >= PANEL_MIN_WORK_PX)
+
+/** The design's panel width, which it keeps when floating. */
+export const PANEL_FLOAT_W = 380
+// What the floating panel leaves clear of the window's height: top bar, pin bar, strip, status bar and a little air.
+const PANEL_FLOAT_CLEAR = 42 + 38 + 34 + 28 + 16
+const PANEL_FLOAT_MIN_H = 240
+
+/** The floating panel's height, from the window's. */
+export const panelFloatHeight = viewH => Math.max(PANEL_FLOAT_MIN_H, Math.floor(viewH - PANEL_FLOAT_CLEAR))
