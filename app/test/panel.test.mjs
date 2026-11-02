@@ -6,7 +6,15 @@ const m = await import('../mods/herdr-agents/panelmodel.js')
 const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
 
-app.theme = { background: '#111111', selected: '#404040', muted: '#505050', foreground: '#606060', hover: '#707070', working: '#808080' }
+app.theme = {
+  background: '#111111',
+  selected: '#404040',
+  muted: '#505050',
+  foreground: '#606060',
+  hover: '#707070',
+  working: '#808080',
+  blocked: '#909090',
+}
 
 const COORD = 't1'
 const board = (extra = {}) => ({
@@ -299,4 +307,42 @@ test('the floating panel follows the tab it hands back to, and its close and row
   assert.equal(ctl.leaving, true, 'a row moved the keyboard, so closing leaves it there')
   app.terminals = []
   app.props = null
+})
+
+test('a blocked worker moves its row to Needs a look, saying why, once however many share it', () => {
+  const b = board({
+    workers: [
+      { name: 'w1', state: 'blocked', note: 'permission prompt' },
+      { name: 'w2', state: 'blocked' },
+      { name: 'w3', state: 'blocked' },
+      { name: 'w4', state: 'working' },
+    ],
+    tasks: [task('a', { workers: ['w1', 'w2'] }), task('b', { tab: 'w4' })],
+  })
+  const s = m.panelSections(b)
+  assert.deepEqual(
+    s.look.map(r => [r.key, r.blocked]),
+    [
+      ['a', 'permission prompt'],
+      ['worker-w3', 'waiting'],
+    ],
+  )
+  assert.deepEqual(
+    s.work.map(r => r.key),
+    ['b'],
+  )
+})
+
+test('Needs a look draws only when it has rows, and takes the stage heads', () => {
+  const heads = v => textOf(v).filter(t => t === 'P').length
+  const clear = panelView(board({ tasks: [task('a')] }), 0)
+  assert.ok(!textOf(clear).some(t => /^Needs a look/.test(t)))
+  assert.equal(heads(clear), 1)
+  const view = panelView(
+    board({ workers: [{ name: 'w1', state: 'blocked', note: 'permission prompt' }], tasks: [task('a', { tab: 'w1' })] }),
+    0,
+  )
+  const text = textOf(view)
+  for (const want of ['Needs a look · 1', 'blocked · permission prompt', 'open tab']) assert.ok(text.includes(want), want)
+  assert.equal(heads(view), 1)
 })
