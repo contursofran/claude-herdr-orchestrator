@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { app, findId, textOf } from './fake-gpui.mjs'
 
 const m = await import('../mods/herdr-agents/panelmodel.js')
-const { panelView, stageHead } = await import('../mods/herdr-agents/panel.js')
+const { panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
 
 app.theme = { background: '#111111', selected: '#404040', muted: '#505050', foreground: '#606060', hover: '#707070', working: '#808080' }
@@ -51,12 +51,29 @@ test('the board comes back over a Changes this code moved to, not over one the o
   assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'files', WIDE, shell).commands, [])
 })
 
+test('a draw before the move to Changes lands does not forget it was this code that moved', () => {
+  const shell = m.panelMove({ tab: 's', terminal: 't3' }, board(), terms, 'board', WIDE)
+  const early = m.panelMove({ tab: 's', terminal: 't3' }, board(), terms, 'board', WIDE, shell)
+  assert.equal(early.moved, true)
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'changes', WIDE, early).commands, OPEN)
+  // Arriving with the board back up ends it: a Changes picked after that is the owner's.
+  assert.equal(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'board', WIDE, early).moved, false)
+})
+
 test('closing the board holds: arriving no longer opens it', () => {
   assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', WIDE, null, true).commands, [])
 })
 
-test("a worker's tab leaves the panel alone, so nothing resizes", () => {
-  assert.deepEqual(m.panelMove({ tab: 'w', terminal: 't2' }, board(), terms, 'board', WIDE).commands, [])
+test("a worker's tab leaves the panel as it is, so nothing resizes", () => {
+  for (const state of ['board', 'closed', 'files', 'changes']) {
+    assert.deepEqual(m.panelMove({ tab: 'w', terminal: 't2' }, board(), terms, state, WIDE).commands, [])
+  }
+})
+
+test("a worker's tab takes back a Changes this code moved to, and Files the owner picked stays", () => {
+  const shell = m.panelMove({ tab: 's', terminal: 't3' }, board(), terms, 'board', WIDE)
+  assert.deepEqual(m.panelMove({ tab: 'w', terminal: 't2' }, board(), terms, 'changes', WIDE, shell).commands, OPEN)
+  assert.deepEqual(m.panelMove({ tab: 'w', terminal: 't2' }, board(), terms, 'files', WIDE, shell).commands, [])
 })
 
 test('a shell tab goes back to Changes only when the board was showing', () => {
@@ -186,4 +203,63 @@ test('its close button hides the panel and remembers', () => {
   assert.deepEqual(app.ran, [['layout.hide', { id: 'panel' }]])
   assert.equal(panelHeld(), true)
   app.store['hrd.panelHidden'] = undefined
+})
+
+const worker = { name: 'fix-1', profile: 'builder', state: 'working', repo: 'o/app', note: null }
+
+test('a worker is found by its tab, and only on its own board', () => {
+  assert.equal(m.focusedWorker(board(), terms, { terminal: 't2' })?.name, 'fix-1')
+  assert.equal(m.focusedWorker(board(), terms, { terminal: 't3' }), null)
+  assert.equal(m.focusedWorker(board(), terms, { terminal: COORD }), null)
+  assert.equal(m.focusedWorker(board({ workers: [] }), terms, { terminal: 't2' }), null)
+  assert.equal(m.focusedWorker(null, terms, { terminal: 't2' }), null)
+})
+
+test("a worker's row is the one naming it, the running one over a finished one", () => {
+  const b = board({
+    tasks: [task('old', { tab: 'fix-1', isFinished: true }), task('new', { workers: ['fix-1'] }), task('other', { tab: 'fix-2' })],
+  })
+  assert.equal(m.workerRow(b, worker).key, 'new')
+  assert.equal(m.workerRow(board({ tasks: [task('old', { tab: 'fix-1', isFinished: true })] }), worker).key, 'old')
+  assert.equal(m.workerRow(board(), worker), null)
+})
+
+test('plan shows only for a planned row', () => {
+  const names = ['plan', 'build', 'rev', 'CI', 'you']
+  assert.deepEqual(m.rowStageNames({ stages: ['done', 'run'] }, names), names)
+  assert.deepEqual(m.rowStageNames({ stages: ['none', 'run'] }, names), names.slice(1))
+})
+
+test("a worker's tab draws that worker, and any other tab the board", () => {
+  app.terminals = terms
+  const b = board({ tasks: [task('#7', { tab: 'fix-1', pr: 7, url: 'https://github.com/o/r/pull/7', now: 'Building the fix.' })] })
+  const shown = panelFor({ ...b, workers: [worker] }, { terminal: 't2' }, 0, { open: new Set() })
+  assert.ok(findId(shown, 'hrd-panel-worker'))
+  const text = textOf(shown)
+  for (const want of ['fix-1', 'builder', 'working', 'app', 'Title #7', 'Building the fix.', '#7 ↗', 'Stop'])
+    assert.ok(text.includes(want), want)
+  assert.ok(findId(panelFor(b, { terminal: COORD }, 0, { open: new Set() }), 'hrd-panel'))
+  app.terminals = []
+})
+
+test('a worker with no task says so, and a blocked one says why', () => {
+  const text = textOf(workerView(board(), { ...worker, state: 'blocked', note: 'permission prompt' }))
+  assert.ok(text.includes('No task on the board for this worker.'))
+  assert.ok(text.includes('app · permission prompt'))
+})
+
+test('Stop takes a second press, and only then sends', async () => {
+  const ui = { open: new Set() }
+  const b = board()
+  const press = () => findId(workerView(b, worker, ui), 'panel-stop').node.calls.on_mouse_down[1](null, { notify() {} })
+  const sent = () => Object.values(app.files).filter(v => String(v).includes('"action":"stop"'))
+  press()
+  assert.ok(textOf(workerView(b, worker, ui)).includes('Stop fix-1?'))
+  await new Promise(r => setImmediate(r))
+  assert.deepEqual(sent(), [])
+  press()
+  await new Promise(r => setImmediate(r))
+  assert.deepEqual(sent(), [JSON.stringify({ action: 'stop', worker: 'fix-1' })])
+  assert.equal(ui.stopping, null)
+  assert.ok(textOf(workerView(b, worker, ui)).includes('Stop'))
 })

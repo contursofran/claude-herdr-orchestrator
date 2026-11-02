@@ -1,11 +1,12 @@
-// Role `panel`: the right panel on an orchestrator's tab, which is its board (#274). The strip's copy moves the panel here on
-// arrival at the tab (`panelMove` in panelmodel.js); this copy only draws the board that tab resolves to.
+// Role `panel`: the right panel, which follows the tab (#274): an orchestrator's tab draws its board, a worker's tab that worker.
+// The strip's copy moves the panel here on arrival at the tab (`panelMove` in panelmodel.js); this copy only draws.
 import { div, svg } from 'gpui-kit'
-import { run, terminals, theme } from 'herdr'
+import { notify, run, terminals, theme } from 'herdr'
+import { send } from './board.js'
 import { openCard } from './cardctl.js'
 import { boardSpace, counts, mergedText, projectName, rowAction, stripItems } from './model.js'
 import { holdPanel } from './panelheld.js'
-import { PANEL_HISTORY, panelSections } from './panelmodel.js'
+import { PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { cell, link } from './popup.js'
 import { color, font, popup as look } from './tokens.js'
 
@@ -146,11 +147,11 @@ function history(name, rows, board, now, ui) {
   return [sectionHead(name, toggle), ...(open ? rows : rows.slice(0, PANEL_HISTORY)).map(r => row(r, board, now))]
 }
 
-/** Fills its block: the stack gives it the panel's whole size, and the strip's copy says when it shows. Framed like Herdr's Changes. */
-export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
+/** The frame both views draw in: it fills its block, as the stack gives it the panel's whole size. Framed like Herdr's Changes. */
+function frame(id) {
   const t = theme()
-  const root = div()
-    .id('hrd-panel')
+  return div()
+    .id(id)
     .size_full()
     .min_h_0()
     .flex()
@@ -162,10 +163,169 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
     .border_color(t.border)
     .text_size(font.size)
     .text_color(color.text)
+}
+
+/** Stop needs a second press, since it closes a running worker's tab. `ui.stopping` is the worker the first press was for. */
+function stopButton(board, worker, ui) {
+  const armed = ui.stopping === worker.name
+  return div()
+    .id('panel-stop')
+    .h(24)
+    .px(10)
+    .flex_none()
+    .flex()
+    .items_center()
+    .rounded(5)
+    .border_1()
+    .border_color(theme().border)
+    .text_size(11)
+    .text_color(armed ? color.text : color.dim)
+    .cursor_pointer()
+    .hover(el => el.bg(color.hover).text_color(color.text))
+    .on_mouse_down('left', (_e, cx) => {
+      ui.stopping = armed ? null : worker.name
+      if (armed) {
+        send(board.session, { action: 'stop', worker: worker.name }).catch(e =>
+          notify({ title: 'Could not stop', body: String(e?.message ?? e), level: 'error' }),
+        )
+      }
+      cx.notify()
+    })
+    .child(armed ? `Stop ${worker.name}?` : 'Stop')
+}
+
+/** A worker's tab: who it is, how far it got, what it is on and its PR, from what the board has. */
+export function workerView(board, worker, ui = { open: new Set() }) {
+  const t = theme()
+  const r = workerRow(board, worker)
+  const names = rowStageNames(r, board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES)
+  const about = [worker.repo?.split('/').pop(), worker.note].filter(Boolean).join(' · ')
+  return frame('hrd-panel-worker')
+    .child(
+      div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(6)
+        .px(14)
+        .py(10)
+        .border_b(1)
+        .border_color(t.border)
+        .child(
+          div()
+            .flex()
+            .items_center()
+            .gap(8)
+            .child(div().min_w_0().truncate().font_bold().child(worker.name))
+            .when(Boolean(worker.profile), el =>
+              el.child(
+                div()
+                  .flex_none()
+                  .px(4)
+                  .rounded(3)
+                  .border_1()
+                  .border_color(t.border)
+                  .text_size(10)
+                  .text_color(color.dim)
+                  .child(worker.profile),
+              ),
+            )
+            .child(div().flex_1())
+            .child(
+              div()
+                .flex_none()
+                .text_size(11)
+                .text_color(color.dim)
+                .child(worker.state ?? ''),
+            ),
+        )
+        .when(Boolean(about), el => el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child(about)))
+        .when(Boolean(r), el =>
+          el.child(
+            div()
+              .flex()
+              .items_center()
+              .gap(10)
+              .child(
+                div()
+                  .flex()
+                  .flex_none()
+                  .gap(8)
+                  .children(r.stages.slice(5 - names.length).map(name => cell(name, CELL))),
+              )
+              .child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child(names.join(' · '))),
+          ),
+        ),
+    )
+    .child(
+      div()
+        .id('panel-worker-body')
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .gap(14)
+        .px(14)
+        .py(12)
+        .overflow_y_scrollbar()
+        .when(!r, el => el.child(div().text_color(color.dim).child('No task on the board for this worker.')))
+        .when(Boolean(r), el =>
+          el
+            .child(
+              div()
+                .flex()
+                .flex_col()
+                .gap(6)
+                .child(div().text_color(look.head).child('Task'))
+                .child(div().child(r.title))
+                .when(Boolean(r.now), inner => inner.child(div().text_size(11).text_color(color.dim).child(r.now))),
+            )
+            .when(Boolean(r.link), inner =>
+              inner.child(
+                div()
+                  .flex()
+                  .items_center()
+                  .gap(8)
+                  .text_color(color.dim)
+                  .child(
+                    div()
+                      .flex_none()
+                      .child(link(r, `${r.link.text} ↗`, `panel-pr-${r.key}`)),
+                  )
+                  .child(div().min_w_0().truncate().text_size(11).child(r.who.text)),
+              ),
+            ),
+        ),
+    )
+    .child(
+      div()
+        .flex_none()
+        .flex()
+        .justify_end()
+        .px(14)
+        .py(10)
+        .border_t(1)
+        .border_color(t.border)
+        .child(stopButton(board, worker, ui)),
+    )
+}
+
+const STAGE_NAMES = ['plan', 'build', 'rev', 'CI', 'you']
+
+/** What the panel draws for the tab in focus: that worker on a worker's tab, else the board. */
+export function panelFor(board, focus, now, ui) {
+  const worker = focusedWorker(board, terminals(), focus)
+  return worker ? workerView(board, worker, ui) : panelView(board, now, ui)
+}
+
+/** The board, which the strip's copy says when to show. */
+export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
+  const t = theme()
+  const root = frame('hrd-panel')
   if (!board) return root.child(div().p(14).text_color(color.dim).child('No board for this tab.'))
   const { work, merged } = panelSections(board)
   const chip = statusChip(board)
-  const names = board.stageNames?.length === 5 ? board.stageNames : ['plan', 'build', 'rev', 'CI', 'you']
+  const names = board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES
   return root
     .child(
       div()

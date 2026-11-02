@@ -165,6 +165,14 @@
         },
         {
           "type": "object",
+          "required": ["action", "worker"],
+          "properties": {
+            "action": { "const": "stop" },
+            "worker": { "type": "string", "description": "A worker's name: as the stop tool does." }
+          }
+        },
+        {
+          "type": "object",
           "required": ["action", "on"],
           "properties": { "action": { "const": "wrapUp" }, "on": { "type": "boolean" } }
         }
