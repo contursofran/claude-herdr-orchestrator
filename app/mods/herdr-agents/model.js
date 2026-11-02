@@ -50,11 +50,18 @@ export function applyFile(boards, id, text) {
  *  The agents list draws coordinators and parked workers; the pop-up its own board; the sheet task rows too (the tasks waiting on
  *  an item), only while open (`open`, its hrd.sheet). The pin bar, strip and card draw no task rows, but the strip sizes the pop-up from how many there are, so the rows'
  *  keys count and their text (a minute clock) does not. */
+const liveKey = a => [a?.command, a?.commandAt, a?.outputAt]
+
 export function drawnKey(role, boards, session, open = null) {
   const list = boards ?? []
   if (role === 'agents')
     return JSON.stringify(
-      list.map(b => [b.session, b.coordinator?.terminal, (b.workers ?? []).map(w => [w?.name, w?.state, w?.note, w?.since])]),
+      list.map(b => [
+        b.session,
+        b.coordinator?.terminal,
+        liveKey(b.coordinator),
+        (b.workers ?? []).map(w => [w?.name, w?.state, w?.note, w?.since, liveKey(w)]),
+      ]),
     )
   if (role === 'panel')
     return JSON.stringify(list.map(b => [b.session, b.coordinator?.terminal, b.cwd, b.stageNames, b.tasks, b.workers, counts(b)]))
@@ -313,6 +320,41 @@ export function ageText(at, now) {
   return `${Math.floor(s / 86400)}d`
 }
 
+/** How long an agent says nothing mid-turn before its row says so: the longest real thought measured was 63 s (#171). */
+export const QUIET_SHOW_MS = 2 * 60_000
+/** And when that turns amber. */
+export const QUIET_WARN_MS = 5 * 60_000
+
+/** What an agent's row says it is doing, from a board's worker or coordinator; null when nothing is worth a line. `short` leaves the
+ *  time out of a running command, as the board's rows do. The board has these fields only mid-turn, so an idle agent gets no warning. */
+export function liveLine(agent, now) {
+  if (typeof agent?.command === 'string' && agent.command) {
+    const short = `running ${agent.command}`
+    const age = ageText(agent.commandAt, now)
+    return { text: age && age !== 'now' ? `${short} · ${age}` : short, short, quiet: false, warn: false }
+  }
+  if (!Number.isFinite(agent?.outputAt) || now - agent.outputAt < QUIET_SHOW_MS) return null
+  const text = `no output · ${ageText(agent.outputAt, now)}`
+  return { text, short: text, quiet: true, warn: now - agent.outputAt >= QUIET_WARN_MS }
+}
+
+/** The line for the row a work row's worker runs on: its working worker's, if it has one. */
+export function rowLive(board, row, now) {
+  const working = (board?.workers ?? []).find(w => w?.state === 'working' && (w.name === row.tab || row.workers?.includes(w.name)))
+  return working ? liveLine(working, now) : null
+}
+
+/** The line for a terminal in the agents list: a worker's by its tab's name, or a coordinator's by its terminal. */
+export function agentLive(boards, terminals, address, now) {
+  const name = (terminals ?? []).find(t => t.address === address)?.name
+  for (const b of boards ?? []) {
+    if (b.coordinator?.terminal === address) return liveLine(b.coordinator, now)
+    const w = name && (b.workers ?? []).find(x => x?.name === name && x.state === 'working')
+    if (w) return liveLine(w, now)
+  }
+  return null
+}
+
 /** How often a copy that draws ages looks at them. */
 export const AGE_TICK_MS = 60_000
 
@@ -321,10 +363,15 @@ export const AGE_TICK_MS = 60_000
  *   pinAt   the pin bar's current pin's time       pins  props() of a pins copy       gone  the pins it has hidden */
 export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set(), session = null } = {}) {
   const known = at => (at ? [at] : [])
-  // The board pop-up: the merge times of the merged rows.
-  if (role === 'board') return workRows(boards.find(b => b.session === session)).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
-  // The right panel: the merge times of every board's merged rows, since which it shows follows focus.
-  if (role === 'panel') return boards.flatMap(b => workRows(b).flatMap(r => (r.isMerged ? known(r.mergedAt) : [])))
+  // The clocks of a board's agents, which move on their own, and of its merged rows.
+  const liveTimes = b => (b?.workers ?? []).flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
+  const mergeTimes = b => workRows(b).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
+  if (role === 'board') {
+    const board = boards.find(b => b.session === session)
+    return [...mergeTimes(board), ...liveTimes(board)]
+  }
+  // The right panel: every board, since which it shows follows focus.
+  if (role === 'panel') return boards.flatMap(b => [...mergeTimes(b), ...liveTimes(b)])
   if (role === 'pinbar') return known(pinAt)
   if (role === 'pins') {
     const list = (pins?.list ?? []).filter(p => !gone.has(p.id))

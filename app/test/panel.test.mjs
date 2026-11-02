@@ -368,3 +368,25 @@ test('going back from a floating panel closes it and leaves the keyboard on the 
   app.terminals = []
   app.props = null
 })
+
+test("a working worker's row and its view say what it is doing, and a blocked one's say nothing", () => {
+  const now = Date.now()
+  const live = (state, extra) =>
+    board({
+      workers: [{ name: 'fix-1', state, ...extra }],
+      tasks: [
+        { key: 'k', label: '#1', title: 'One', tab: 'fix-1', who: { text: 'fix-1 3m', kind: 'text' }, workers: ['fix-1'], stages: [] },
+      ],
+    })
+  const running = { command: 'npm test', commandAt: now - 180_000, outputAt: now }
+  const b = live('working', running)
+  app.focus = { terminal: COORD }
+  assert.match(textOf(panelView(b)).join(' '), /fix-1 3m/)
+  assert.match(textOf(panelView(b)).join(' '), /running npm test/)
+  assert.match(textOf(workerView(b, b.workers[0])).join(' '), /running npm test · 3m/)
+  const quiet = live('working', { outputAt: now - 480_000 })
+  assert.match(textOf(workerView(quiet, quiet.workers[0])).join(' '), /no output · 8m/)
+  const blocked = live('blocked', running)
+  assert.doesNotMatch(textOf(panelView(blocked)).join(' '), /running npm test/)
+  assert.doesNotMatch(textOf(workerView(blocked, blocked.workers[0])).join(' '), /running npm test/)
+})

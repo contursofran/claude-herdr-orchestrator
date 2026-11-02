@@ -302,6 +302,7 @@ test("spawn runs the worker through the login shell, with HERDR_AGENTS_ROLE=work
     'A=1',
     'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
     'HERDR_AGENTS_ROLE=worker',
+    'HERDR_AGENTS_LIVE=/repo/wt/.herdr-agents/w-env/LIVE.json',
     'claude',
     '--model',
     'm',
@@ -387,6 +388,7 @@ test('a fish login shell runs the worker with exec $argv', async ($, on) => {
     '/usr/bin/env',
     'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
     'HERDR_AGENTS_ROLE=worker',
+    'HERDR_AGENTS_LIVE=/repo/wt/.herdr-agents/w-env/LIVE.json',
     'claude',
   ])
   await stopAll($, clock, ['w-env'])
@@ -399,6 +401,7 @@ test('a shell the mod does not know runs the worker directly', async ($, on) => 
     '/usr/bin/env',
     'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
     'HERDR_AGENTS_ROLE=worker',
+    'HERDR_AGENTS_LIVE=/repo/wt/.herdr-agents/w-env/LIVE.json',
     'claude',
   ])
   await stopAll($, clock, ['w-env'])

@@ -1182,3 +1182,53 @@ test('a remembered board gives way to one written over 30 minutes later on the s
   const near = board('live', 't2', { at: 1000 + 60 * 1000 })
   assert.equal(resolveBoard([stale, near], terminals, focus('t2'), pick).board.session, 'dead')
 })
+
+test('liveLine: a running tool with its clock, then quiet from 2 minutes, amber from 5, and nothing without the fields', async () => {
+  const { liveLine } = await import('../mods/herdr-agents/model.js')
+  const NOW = 10_000_000
+  const min = n => n * 60_000
+  assert.deepEqual(liveLine({ command: 'npm test', commandAt: NOW - 20_000 }, NOW), {
+    text: 'running npm test',
+    short: 'running npm test',
+    quiet: false,
+    warn: false,
+  })
+  assert.equal(liveLine({ command: 'npm test', commandAt: NOW - min(3), outputAt: NOW - min(9) }, NOW).text, 'running npm test · 3m')
+  assert.equal(liveLine({ outputAt: NOW - min(1) }, NOW), null)
+  assert.deepEqual(liveLine({ outputAt: NOW - min(2) }, NOW), { text: 'no output · 2m', short: 'no output · 2m', quiet: true, warn: false })
+  assert.equal(liveLine({ outputAt: NOW - min(8) }, NOW).warn, true)
+  assert.equal(liveLine({ state: 'working' }, NOW), null)
+  assert.equal(liveLine(null, NOW), null)
+})
+
+test('rowLive and agentLive find a working worker, and agentLive a coordinator by its terminal', async () => {
+  const { agentLive, rowLive } = await import('../mods/herdr-agents/model.js')
+  const NOW = 10_000_000
+  const board = {
+    coordinator: { terminal: 't1', outputAt: NOW - 600_000 },
+    workers: [
+      { name: 'a', state: 'working', command: 'npm test', commandAt: NOW - 20_000 },
+      { name: 'b', state: 'blocked', command: 'old', commandAt: NOW - 20_000 },
+    ],
+  }
+  assert.equal(rowLive(board, { tab: 'a', workers: [] }, NOW).short, 'running npm test')
+  assert.equal(rowLive(board, { tab: null, workers: ['a'] }, NOW).short, 'running npm test')
+  assert.equal(rowLive(board, { tab: 'b', workers: ['b'] }, NOW), null)
+  const terminals = [
+    { address: 't2', name: 'a' },
+    { address: 't3', name: 'b' },
+  ]
+  assert.equal(agentLive([board], terminals, 't2', NOW).short, 'running npm test')
+  assert.equal(agentLive([board], terminals, 't3', NOW), null)
+  assert.equal(agentLive([board], terminals, 't1', NOW).warn, true)
+  assert.equal(agentLive([board], terminals, 't9', NOW), null)
+})
+
+test('the agents list and the panel redraw when a clock changes, and their ages tick with it', async () => {
+  const { agedTimes, drawnKey } = await import('../mods/herdr-agents/model.js')
+  const b = worker => [{ session: 's', workers: [{ name: 'a', state: 'working', ...worker }] }]
+  assert.notEqual(drawnKey('agents', b({ outputAt: 1 })), drawnKey('agents', b({ outputAt: 2 })))
+  assert.notEqual(drawnKey('agents', b({ command: 'x' })), drawnKey('agents', b({})))
+  assert.deepEqual(agedTimes('panel', { boards: b({ commandAt: 5, outputAt: 6 }) }), [5, 6])
+  assert.deepEqual(agedTimes('board', { boards: b({ commandAt: 5 }), session: 's' }), [5])
+})

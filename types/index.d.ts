@@ -109,6 +109,10 @@ export type Row = {
   note?: string
   since?: number
   repo?: string
+  // What it is doing mid-turn (see hooks/live.ts).
+  command?: string | null
+  commandAt?: number | null
+  outputAt?: number
 }
 
 // The GitHub repo (owner/name) of each folder this session and its workers used, from its git

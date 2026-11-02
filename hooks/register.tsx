@@ -7,6 +7,7 @@ import { pollPrs } from './boarddata'
 import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
+import { liveOutput, liveTool, liveTurn, startLive } from './live'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS, TICK_MS } from './defaults'
 import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
@@ -31,6 +32,7 @@ export const register: Register = on => {
     // check for the workers they started while one of them runs.
     const isWorker = (await $.env.get('HERDR_AGENTS_ROLE')) === 'worker'
     session.cwd = started.cwd
+    await startLive($)
     const settings = await config($)
     if (typeof settings.commandPrefix === 'string') session.prefix = settings.commandPrefix
     // Each register waits 8 s for its tool to appear, which never happens under an --agent whose tools
@@ -123,6 +125,7 @@ export const register: Register = on => {
   // outbox (see outbox.ts) wait for the turn's end too.
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
+      await liveTurn($, true).catch(() => {})
       noteReports(e.turnId, e.text)
       turnStarted()
       void refreshSpawnTool($).catch(() => {})
@@ -132,6 +135,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const out = await next(e)
     if (e.agentId === undefined) {
+      await liveTurn($, false).catch(() => {})
       // turnEnded runs even when the ping throws: a busy flag left set would hold the outbox until a turn ends.
       try {
         await pingAfterReports($, e.turnId)
@@ -140,6 +144,22 @@ export const register: Register = on => {
       }
     }
     return out
+  })
+
+  // What each row says the agent is doing (#277). A retry or other engine item isn't the model saying anything.
+  on('turn.step', async function* ($, e, next) {
+    for await (const chunk of next(e)) {
+      if (chunk.kind !== 'engine') void liveOutput($).catch(() => {})
+      yield chunk
+    }
+  })
+  on('tool.call', async ($, e, next) => {
+    const done = await liveTool($, e).catch(() => null)
+    try {
+      return await next(e)
+    } finally {
+      await done?.().catch(() => {})
+    }
   })
 
   // After each turn: show the context fill on the band and reset it past the limit.
