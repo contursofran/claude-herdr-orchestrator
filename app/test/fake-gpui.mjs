@@ -150,7 +150,7 @@ globalThis.__fakeGpui = {
     app.store[k] = v
   },
   shared: k => app.store[k],
-  terminals: () => [],
+  terminals: () => app.terminals ?? [],
 }
 
 const names = {

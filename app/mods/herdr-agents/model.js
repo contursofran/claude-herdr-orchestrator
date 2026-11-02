@@ -56,6 +56,7 @@ export function drawnKey(role, boards, session, open = null) {
     return JSON.stringify(
       list.map(b => [b.session, b.coordinator?.terminal, (b.workers ?? []).map(w => [w?.name, w?.state, w?.note, w?.since])]),
     )
+  if (role === 'panel') return JSON.stringify(list.map(b => [b.session, b.coordinator?.terminal, b.cwd, b.stageNames, b.tasks, counts(b)]))
   if (role === 'board') {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
@@ -321,6 +322,8 @@ export function agedTimes(role, { boards = [], open = null, pinAt = null, pins =
   const known = at => (at ? [at] : [])
   // The board pop-up: the merge times of the merged rows.
   if (role === 'board') return workRows(boards.find(b => b.session === session)).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
+  // The right panel: the merge times of every board's merged rows, since which it shows follows focus.
+  if (role === 'panel') return boards.flatMap(b => workRows(b).flatMap(r => (r.isMerged ? known(r.mergedAt) : [])))
   if (role === 'pinbar') return known(pinAt)
   if (role === 'pins') {
     const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
@@ -940,6 +943,7 @@ export function workRows(board) {
       tab: t.tab ?? null,
       link: prLink(t),
       isMerged: t.isMerged === true,
+      isFinished: t.isFinished === true,
       mergedAt: Number.isFinite(t.mergedAt) && t.mergedAt > 0 ? t.mergedAt : null,
     }))
 }

@@ -1,6 +1,6 @@
 import { Popup } from 'gpui-base'
 import { div, svg } from 'gpui-kit'
-import { focused, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
+import { focused, layout, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -21,6 +21,8 @@ import {
   stripItems,
   workRows,
 } from './model.js'
+import { holdPanel, panelHeld } from './panelheld.js'
+import { PANEL_CHILD, PANEL_OPEN, bottomPill, onOrchestrator, panelMove, panelState } from './panelmodel.js'
 import { Arrivals } from './arrivals.js'
 import { card } from './card.js'
 import { closeCard, openCard } from './cardctl.js'
@@ -63,6 +65,9 @@ function tabBody(item, fg) {
     .child(div().max_w(110).truncate().child(item.label))
 }
 
+const panelList = () => shared('workspace.panels') ?? ['files', 'changes']
+const panelAllowed = () => panelList().includes(PANEL_CHILD)
+
 /** State the strip keeps between draws: when each item first showed up, which ones the owner has seen. */
 export class StripState {
   constructor() {
@@ -72,6 +77,27 @@ export class StripState {
     this.boardsRead = false // the first read of the boards has ended
     this.waiting = null // the last command that came before it
     this.arrivals = new Arrivals({ play: playSound, post: notify })
+    this.width = null // the strip's, from its last layout
+    this.panelLast = null // the arrival the right panel last moved for, and whether it moved off the board
+  }
+
+  /** Lets Herdr's top bar restore the board when a space comes back: it hides any panel not on this list. */
+  allowPanel() {
+    if (!panelAllowed()) setShared('workspace.panels', [...panelList(), PANEL_CHILD])
+  }
+
+  /** Called from the draw, so the panel follows focus with no polling; the commands wait for the draw to end. */
+  followPanel(cx, board) {
+    const state = panelState(layout())
+    const move = panelMove(focused(), board, terminals(), state, this.width, this.panelLast, panelHeld())
+    this.panelLast = move
+    if (!move.commands.length && (state === null || panelAllowed())) return
+    cx.spawn(async cx => {
+      await cx.sleep(0)
+      this.allowPanel()
+      for (const [name, args] of move.commands) run(name, args)
+      cx.notify()
+    })
   }
 
   /** Called with a live `cx` (from the board reader) after the boards changed. */
@@ -338,6 +364,26 @@ const settingsPill = board =>
     .child(svg(icon('settings')).size(14).text_color(look.muted))
 
 /** `board ▴`: opens the work table above it. */
+/** `panel ▴`: opens a closed panel in place, and lifts the hold of having closed it. */
+const panelPill = part =>
+  div()
+    .id('strip-panel')
+    .h(24)
+    .px(8)
+    .flex()
+    .items_center()
+    .rounded(5)
+    .text_color(look.muted)
+    .cursor_pointer()
+    .hover(el => el.bg(look.pillHover))
+    .on_mouse_down('left', (_e, cx) => {
+      part?.allowPanel()
+      holdPanel(false)
+      for (const [name, args] of PANEL_OPEN) run(name, args)
+      cx.notify()
+    })
+    .child('panel ▴')
+
 const boardPill = board =>
   div()
     .id('strip-board')
@@ -357,7 +403,21 @@ const boardPill = board =>
 
 /** The strip's row: tabs for what needs the owner, then counts. Always the same height so nothing resizes the terminal. */
 export function strip(board, ctx = {}) {
-  const root = div().relative().h(row.strip).w_full().flex().items_end().bg(color.bar).text_size(font.size)
+  const pill = bottomPill(panelState(layout()), ctx.part?.width, onOrchestrator(board, focused()))
+  const root = div()
+    .id('strip-root')
+    .relative()
+    .h(row.strip)
+    .w_full()
+    .flex()
+    .items_end()
+    .bg(color.bar)
+    .text_size(font.size)
+    .on_size_change((size, cx) => {
+      if (!ctx.part || ctx.part.width === size.width) return
+      ctx.part.width = size.width
+      cx.notify()
+    })
   root.child(div().absolute().left(0).right(0).bottom(0).h(1).bg(look.line))
   if (!board) return root
   const state = ctx.part
@@ -427,7 +487,8 @@ export function strip(board, ctx = {}) {
         .child(count('waiting', c.waiting))
         .child(count('blocked', c.blocked)),
     )
-    .child(boardPill(board))
+    .when(pill === 'board', el => el.child(boardPill(board)))
+    .when(pill === 'panel', el => el.child(panelPill(ctx.part)))
     .child(settingsPill(board))
     .child(sheetPill(board))
   return root.child(tabs).child(right)

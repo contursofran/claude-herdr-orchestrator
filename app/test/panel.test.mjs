@@ -1,0 +1,189 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { app, findId, textOf } from './fake-gpui.mjs'
+
+const m = await import('../mods/herdr-agents/panelmodel.js')
+const { panelView, stageHead } = await import('../mods/herdr-agents/panel.js')
+const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
+
+app.theme = { background: '#111111', selected: '#404040', muted: '#505050', foreground: '#606060', hover: '#707070', working: '#808080' }
+
+const COORD = 't1'
+const board = (extra = {}) => ({
+  session: 's',
+  cwd: '/code/repo',
+  coordinator: { terminal: COORD },
+  workers: [{ name: 'fix-1', state: 'working' }],
+  tasks: [],
+  ...extra,
+})
+const terms = [
+  { address: COORD, name: null },
+  { address: 't2', name: 'fix-1' },
+  { address: 't3', name: null },
+]
+const OPEN = [
+  ['layout.select', { stack: 'panel-body', child: 'hrd-panel' }],
+  ['layout.show', { id: 'panel' }],
+]
+const WIDE = 1400
+
+test("arriving at an orchestrator's tab opens a closed panel on the board, once", () => {
+  const first = m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', WIDE)
+  assert.deepEqual(first.commands, OPEN)
+  // Closed again on this tab, it stays closed until the owner leaves.
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', WIDE, first).commands, [])
+  // Back from elsewhere is a new arrival.
+  const away = m.panelMove({ tab: 'b', terminal: 't3' }, board(), terms, 'closed', WIDE, first)
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', WIDE, away).commands, OPEN)
+})
+
+test('Files or Changes the owner picked stay when arriving at an orchestrator', () => {
+  for (const state of ['files', 'changes', 'board']) {
+    assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, state, WIDE).commands, [])
+  }
+})
+
+test('the board comes back over a Changes this code moved to, not over one the owner then picked', () => {
+  const shell = m.panelMove({ tab: 's', terminal: 't3' }, board(), terms, 'board', WIDE)
+  assert.equal(shell.moved, true)
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'changes', WIDE, shell).commands, OPEN)
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'files', WIDE, shell).commands, [])
+})
+
+test('closing the board holds: arriving no longer opens it', () => {
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', WIDE, null, true).commands, [])
+})
+
+test("a worker's tab leaves the panel alone, so nothing resizes", () => {
+  assert.deepEqual(m.panelMove({ tab: 'w', terminal: 't2' }, board(), terms, 'board', WIDE).commands, [])
+})
+
+test('a shell tab goes back to Changes only when the board was showing', () => {
+  const back = [['layout.select', { stack: 'panel-body', child: 'changes' }]]
+  assert.deepEqual(m.panelMove({ tab: 's', terminal: 't3' }, board(), terms, 'board', WIDE).commands, back)
+  assert.deepEqual(m.panelMove({ tab: 's', terminal: 't3' }, null, terms, 'board', WIDE).commands, back)
+  assert.deepEqual(m.panelMove({ tab: 's', terminal: 't3' }, board(), terms, 'files', WIDE).commands, [])
+})
+
+test('a narrow window does not open it, and widening past the limit does', () => {
+  const narrow = m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', m.PANEL_MIN_WORK_PX - 1)
+  assert.deepEqual(narrow.commands, [])
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', m.PANEL_MIN_WORK_PX, narrow).commands, OPEN)
+})
+
+test('nothing is decided before the strip is measured or with no focus', () => {
+  const last = { key: 'old', moved: true }
+  assert.deepEqual(m.panelMove({ tab: 'a', terminal: COORD }, board(), terms, 'closed', null, last), { ...last, commands: [] })
+  assert.deepEqual(m.panelMove(null, board(), terms, 'closed', WIDE, last), { ...last, commands: [] })
+})
+
+test("the panel's state comes from the layout", () => {
+  const root = (hidden, active) => ({ id: 'r', children: [{ id: 'panel', hidden, children: [{ id: 'panel-body', active }] }] })
+  assert.equal(m.panelState(root(false, 'hrd-panel')), 'board')
+  assert.equal(m.panelState(root(true, 'hrd-panel')), 'closed')
+  assert.equal(m.panelState(root(false, 'changes')), 'changes')
+  assert.equal(m.panelState(null), null)
+})
+
+test('the bottom row offers panel when it is closed with room, nothing over the open board, else the pop-up', () => {
+  assert.equal(m.bottomPill('closed', WIDE, true), 'panel')
+  assert.equal(m.bottomPill('closed', WIDE, false), 'panel')
+  assert.equal(m.bottomPill('board', WIDE, true), null)
+  assert.equal(m.bottomPill('board', WIDE, false), 'board')
+  assert.equal(m.bottomPill('files', WIDE, true), 'board')
+  assert.equal(m.bottomPill('closed', m.PANEL_MIN_WORK_PX - 1, true), 'board')
+  assert.equal(m.bottomPill('closed', null, true), 'board')
+  assert.equal(m.bottomPill(null, WIDE, true), 'board')
+})
+
+const task = (key, extra) => ({ key, label: key, title: `Title ${key}`, stages: [], who: { text: 'building', kind: 'dim' }, ...extra })
+
+test('rows split into what can still need a look and merged, merged newest first; other finished rows leave', () => {
+  const merged = { isMerged: true, who: { text: 'merged', kind: 'dim' } }
+  const b = board({
+    tasks: [
+      task('a', { ...merged, mergedAt: 100 }),
+      task('b'),
+      task('c', { ...merged, mergedAt: 300 }),
+      task('d', { isFinished: true, who: { text: 'done', kind: 'dim' } }),
+      task('e', { ...merged }),
+      task('f', { isMerged: true, who: { text: 'you', kind: 'you' } }), // merged, but a test waits on the owner
+      task('g', { ...merged, isFinished: true, mergedAt: 200 }),
+    ],
+  })
+  const keys = rows => rows.map(r => r.key)
+  const s = m.panelSections(b)
+  assert.deepEqual(keys(s.work), ['b', 'f'])
+  assert.deepEqual(keys(s.merged), ['c', 'g', 'a', 'e'])
+})
+
+test('a long history shows its newest rows until asked for all of them', () => {
+  const tasks = Array.from({ length: 5 }, (_, i) =>
+    task(`d${i}`, { isMerged: true, mergedAt: 100 - i, who: { text: 'merged', kind: 'dim' } }),
+  )
+  const ui = { open: new Set() }
+  const view = () => panelView(board({ tasks }), 0, ui)
+  const shown = () => textOf(view()).filter(t => /^Title d/.test(t))
+  assert.deepEqual(shown(), ['Title d0', 'Title d1', 'Title d2'])
+  assert.ok(textOf(view()).includes('all 5'))
+  findId(view(), 'panel-all-Merged').node.calls.on_mouse_down[1](null, { notify() {} })
+  assert.equal(shown().length, 5)
+  assert.ok(textOf(view()).includes('fewer'))
+  findId(view(), 'panel-all-Merged').node.calls.on_mouse_down[1](null, { notify() {} })
+  assert.equal(shown().length, 3)
+})
+
+test('a short history has no toggle, and an empty one no head', () => {
+  const view = panelView(board({ tasks: [task('m', { isMerged: true, who: { text: 'merged', kind: 'dim' } })] }), 0)
+  assert.equal(findId(view, 'panel-all-Merged'), null)
+  assert.ok(textOf(view).includes('Merged'))
+  assert.ok(!textOf(panelView(board({ tasks: [task('a')] }), 0)).includes('Merged'))
+})
+
+test('the rows scroll with a visible scrollbar, and the panel is framed like Changes', () => {
+  const view = panelView(board(), 0)
+  assert.ok(findId(view, 'panel-rows').node.calls.overflow_y_scrollbar)
+  assert.deepEqual(view.node.calls.rounded, [10])
+  assert.ok(view.node.calls.border_1)
+})
+
+test('the view draws both lists, with the PR as a link', () => {
+  const b = board({
+    tasks: [
+      task('#7', { pr: 7, url: 'https://github.com/o/r/pull/7' }),
+      task('m', { isMerged: true, mergedAt: 1000, who: { text: 'merged', kind: 'dim' } }),
+    ],
+  })
+  const view = panelView(b, 1000 + 2 * 3600 * 1000)
+  const text = textOf(view)
+  for (const want of ['Title #7', '#7 ↗', 'building', 'Merged', 'Title m', 'merged 2h']) assert.ok(text.includes(want), want)
+  assert.ok(findId(view, 'panel-pr-#7'))
+  // The age already says merged.
+  assert.equal(text.filter(t => t === 'merged').length, 0)
+})
+
+test('with nothing to show it says so instead of drawing empty', () => {
+  assert.ok(textOf(panelView(null)).includes('No board for this tab.'))
+  assert.ok(textOf(panelView(board())).includes('Nothing running.'))
+})
+
+test('stage heads fit their narrow cells', () => {
+  assert.deepEqual(['plan', 'build', 'rev', 'CI', 'you'].map(stageHead), ['P', 'B', 'R', 'CI', 'you'])
+})
+
+test('the header says what the orchestrator is doing, and has no wrap-up', () => {
+  app.terminals = [{ address: COORD, status: 'working' }]
+  assert.ok(textOf(panelView(board(), 0)).includes('working'))
+  app.terminals = []
+  assert.ok(!textOf(panelView(board(), 0)).includes('working'))
+  assert.equal(findId(panelView(board(), 0), 'panel-wrap'), null)
+})
+
+test('its close button hides the panel and remembers', () => {
+  app.ran.length = 0
+  findId(panelView(board(), 0), 'panel-close').node.calls.on_click[0]()
+  assert.deepEqual(app.ran, [['layout.hide', { id: 'panel' }]])
+  assert.equal(panelHeld(), true)
+  app.store['hrd.panelHidden'] = undefined
+})

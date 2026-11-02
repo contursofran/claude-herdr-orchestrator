@@ -1,5 +1,5 @@
 import { expect } from 'claude-code/testing'
-import { briefRefs, groupTasks } from '../hooks/tasks'
+import { briefRefs, groupTasks, titleOf } from '../hooks/tasks'
 import type { Job } from '../types'
 import { settled, start, stopAll, test, until } from './harness'
 
@@ -206,4 +206,11 @@ test('a reported worker that waits blocked is a blocked stage on its task row, n
   expect(task!.stages[1]).toBe('block')
   expect(task!.isFinished).toBe(false)
   expect(task!.who.text).toBe('blocked')
+})
+
+test('a title is what a brief says the work is, not the repo it names', async () => {
+  expect(titleOf('Issue #2581 (contursofran/aerum): fix the login page')).toBe('fix the login page')
+  expect(titleOf('Fix #12 (copy commands from the board)')).toBe('copy commands from the board')
+  expect(titleOf('Issue #12: fix the login page.')).toBe('fix the login page')
+  expect(titleOf('Implement #2582 (contursofran/aerum)')).toBe('Implement #2582 (contursofran/aerum)')
 })
