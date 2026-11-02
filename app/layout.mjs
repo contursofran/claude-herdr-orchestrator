@@ -98,6 +98,19 @@ export function addVersion(layout) {
   return wrap(layout)
 }
 
+const USAGE_WIDTH = 290
+
+/** Puts a fixed `hrd-usage` block just left of the version block, in place. true if it changed anything; nothing is added
+ *  when the version block is not in its row (`addVersion` makes that row, so run it first). */
+export function addUsage(layout) {
+  if (findNode(layout, 'hrd-usage')) return false
+  const row = findNode(layout, 'hrd-status-row')
+  const at = row?.children?.findIndex(c => c?.id === 'hrd-version') ?? -1
+  if (at < 0) return false
+  row.children.splice(at, 0, block('hrd-usage', USAGE_WIDTH, 'usage'))
+  return true
+}
+
 const agentsList = { mod: 'herdr-agents', props: { role: 'agents' } }
 
 /** Points the `agents` block (Herdr's agents list) at this mod's copy, which has the Orchestrators section.
@@ -160,12 +173,13 @@ export function coordinatorLayout(main, version) {
   removeCard(layout)
   addSheet(layout)
   addVersion(layout)
+  addUsage(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
 
 /** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists' or 'updated'. A file that exists keeps
- *  everything but what `repointAgents`, `repointSpaces`, `removeCard`, `addSheet` and `addVersion` bring up to date (then 'updated'). */
+ *  everything but what `repointAgents`, `repointSpaces`, `removeCard`, `addSheet`, `addVersion` and `addUsage` bring up to date (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) {
@@ -176,14 +190,15 @@ export function writeCoordinatorLayout(home) {
       return 'exists'
     }
     // All the edits run: `||` would skip the later ones.
-    const [repointed, uncarded, sheeted, versioned, spaced] = [
+    const [repointed, uncarded, sheeted, versioned, spaced, usaged] = [
       repointAgents(layout),
       removeCard(layout),
       addSheet(layout),
       addVersion(layout),
       repointSpaces(layout),
+      addUsage(layout),
     ]
-    if (!repointed && !uncarded && !sheeted && !versioned && !spaced) return 'exists'
+    if (!repointed && !uncarded && !sheeted && !versioned && !spaced && !usaged) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
     return 'updated'
