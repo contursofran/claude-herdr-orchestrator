@@ -4,7 +4,7 @@ import { APP_MOD_FILE, APP_MOD_FRESH_MS } from './defaults'
 import { hc } from './hc'
 import { session } from './session'
 
-// The Herdr app mod's pin bar copy writes ~/.herdr-agents/app-mod.json = {at, terminals, core} every 30 s while it draws the
+// The Herdr app mod's strip copy writes ~/.herdr-agents/app-mod.json = {at, terminals, core} every 30 s while it draws the
 // boards. The band steps aside when that is fresh and lists this session's terminal; anything else (no file, an old one,
 // one that does not parse, another machine's session, a plain hc terminal, another hc core) leaves the band as it is.
 // `core` is the hc core's id (`hc server status`); a file or a session without one is matched on the terminal alone.

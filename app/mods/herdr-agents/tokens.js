@@ -6,7 +6,7 @@ export const font = { size: 12, line: 18, terminalSize: 13, terminalLine: 20 }
 
 export const icon = name => `mods/herdr-agents/icons/${name}.svg`
 
-export const row = { pins: 38, strip: 34 }
+export const row = { strip: 34 }
 
 /** The palettes by mode. Each token group has the same keys in both; non-colour values are the same in both. */
 export const palettes = {
@@ -54,16 +54,6 @@ export const palettes = {
     },
     // The board pop-up (S7).
     popup: { bg: '#181818', border: '#3A3A3A', head: '#7A7A7A', rowHover: '#1C1C1C', cell: 44 },
-    // The pin drop panel and the all-pins popover (S8).
-    pinsLook: {
-      bg: '#181818',
-      line: '#3A3A3A',
-      border: '#2E2E2E',
-      rowHover: '#1C1C1C',
-      dot: '#9A9A9A',
-      buttonBorder: '#333333',
-      buttonHover: '#1E1E1E',
-    },
     // The context sheet (S9), floating over the top of the terminal.
     sheet: { well: '#111111', wellBorder: '#262626', rule: '#222222', label: '#7A7A7A', waiting: '#8A8A8A', impact: '#BDBDBD' },
   },
@@ -106,15 +96,6 @@ export const palettes = {
       hover: '#F2F2F2',
     },
     popup: { bg: '#FFFFFF', border: '#D0D0D0', head: '#6E6E6E', rowHover: '#F2F2F2', cell: 44 },
-    pinsLook: {
-      bg: '#FFFFFF',
-      line: '#D0D0D0',
-      border: '#DADADA',
-      rowHover: '#F2F2F2',
-      dot: '#8A8A8A',
-      buttonBorder: '#D8D8D8',
-      buttonHover: '#F2F2F2',
-    },
     sheet: { well: '#F5F5F5', wellBorder: '#E2E2E2', rule: '#E8E8E8', label: '#6E6E6E', waiting: '#6E6E6E', impact: '#4A4A4A' },
   },
 }
@@ -156,5 +137,4 @@ export const color = live(['color'])
 export const strip = live(['strip'])
 export const card = live(['card'])
 export const popup = live(['popup'])
-export const pinsLook = live(['pinsLook'])
 export const sheet = live(['sheet'])

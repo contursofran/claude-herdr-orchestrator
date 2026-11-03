@@ -10,8 +10,6 @@ const { card, makeCardState } = await import('../mods/herdr-agents/card.js')
 const { makeSheetState, sheetBlock } = await import('../mods/herdr-agents/sheet.js')
 const { popupView } = await import('../mods/herdr-agents/popup.js')
 const { strip, StripState } = await import('../mods/herdr-agents/strip.js')
-const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
-const { pinbar } = await import('../mods/herdr-agents/pinbar.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 
 const board = () => ({ ...JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url))), session: 's' })
@@ -183,34 +181,6 @@ test("sheet button: a press that closed the card opens the sheet on the card's i
   pressOn(bar(), 'strip-sheet', e)
   assert.equal(app.store['hrd.sheet'].key, later.key)
   assert.equal(app.store['hrd.sheet'].back, 't1')
-})
-
-test('pin bar: a press that closed the card opens the pin, which keeps the terminal to hand back', () => {
-  const needs = [{ key: 'K1', kind: 'know', isOpen: true, text: 'K1 text' }]
-  const pinBoard = { session: 's', needs }
-  const ctl = new PinCtl()
-  const e = press({ bounds: { x: 0, y: 0, width: 800, height: 30 } })
-  out(cardRoot(), e)
-  app.focused = { terminal: null, space: 'a' }
-  const ui = ctl.ui(pinBoard, cx)
-  const root = pinbar(pinBoard, ui)
-  root.node.calls.on_mouse_down[1](e, cx)
-  findId(root, 'pin-all').node.calls.on_click[0](null, cx)
-  assert.equal(app.opened[0].props.back, 't1')
-  assert.equal(app.store['hrd.open'], null)
-})
-
-test('pin bar: a press that closed the card, then the caret, hands the keyboard back for the pin', () => {
-  const needs = [{ key: 'K1', kind: 'know', isOpen: true, text: 'K1 text' }]
-  const pinBoard = { session: 's', needs }
-  const ctl = new PinCtl()
-  const e = press({ bounds: { x: 0, y: 0, width: 800, height: 30 } })
-  out(cardRoot(), e)
-  app.focused = { terminal: null, space: 'a' }
-  const root = pinbar(pinBoard, ctl.ui(pinBoard, cx))
-  root.node.calls.on_mouse_down[1](e, cx)
-  findId(root, 'pin-caret').node.calls.on_click[0](null, cx)
-  assert.equal(app.opened[0].props.back, 't1')
 })
 
 test('a later press on the button is its own press: it opens again', () => {

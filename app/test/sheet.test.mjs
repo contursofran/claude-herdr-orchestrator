@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { deriveBar, newBarState, pins, slimLine } from '../mods/herdr-agents/model.js'
+import { pins } from '../mods/herdr-agents/model.js'
 import { clearStaleSheet } from '../mods/herdr-agents/cardstate.js'
 import {
   SHEET_MAX_H,
@@ -274,7 +274,7 @@ test('sheetHint: only the keys that work', () => {
 test('sheetSize: the window is measured in the px the app scales by the zoom', () => {
   assert.deepEqual(
     sheetSize({ width: 1280, height: 820 }, 1.2),
-    { w: 726, h: 423, narrow: true, meta: true },
+    { w: 726, h: 461, narrow: true, meta: true },
     '726 px draw as 871 of the 1280',
   )
   assert.equal(sheetSize({ width: 760, height: 460 }, 1.2).w, SHEET_MIN_W, '760 / 1.2 - 340 is under the minimum')
@@ -287,36 +287,20 @@ test('sheetSize: the window is measured in the px the app scales by the zoom', (
 
 test('sheetSize: 470 px at most and shorter in a short window, so the strip and prompt stay visible; narrower in a narrow one', () => {
   assert.deepEqual(sheetSize({ width: 1800, height: 1000 }), { w: SHEET_W, h: SHEET_MAX_H, narrow: false, meta: true })
-  assert.equal(sheetSize({ width: 1800, height: 600 }).h, 600 - 260, 'a 600 px window leaves 260 px under the top of the terminal')
-  assert.equal(sheetSize({ width: 1800, height: 460 }).h, SHEET_MIN_H, 'options stay in reach, over the strip and prompt if it must')
+  assert.equal(sheetSize({ width: 1800, height: 600 }).h, 600 - 222, 'a 600 px window leaves 222 px under the top of the terminal')
+  assert.equal(sheetSize({ width: 1800, height: 400 }).h, SHEET_MIN_H, 'options stay in reach, over the strip and prompt if it must')
   assert.equal(
     sheetSize({ width: 1800, height: 300 }).h,
-    300 - 182,
+    300 - 144,
     'a very short window: only what the main block has, or the app cuts it off',
   )
   assert.equal(sheetSize({ width: 1800, height: 200 }).h, 100, 'never smaller than it can be read')
-  assert.equal(sheetSize({ width: 760, height: 460 }, 1.2).h, Math.floor(460 / 1.2 - 182), 'its room is measured at the zoom')
+  assert.equal(sheetSize({ width: 760, height: 400 }, 1.2).h, Math.floor(400 / 1.2 - 144), 'its room is measured at the zoom')
   assert.equal(sheetSize({ width: 760, height: 460 }, 1.2).meta, false, 'no meta where it pushes esc out of the frame')
   assert.equal(sheetSize({ width: 900, height: 1000 }).w, 560)
   assert.equal(sheetSize({ width: 900, height: 1000 }).narrow, true)
   assert.equal(sheetSize({ width: 200, height: 1000 }).w, 300)
   assert.deepEqual(sheetSize(null), { w: SHEET_W, h: SHEET_MAX_H, narrow: false, meta: true })
-})
-
-test('the pin bar goes slim at the same row while the sheet is open, and says how many are new; no flash starts', () => {
-  const b = board()
-  b.needs = b.needs.filter(n => n.kind === 'know').slice(0, 2)
-  const list = pins(b)
-  assert.equal(slimLine(list), '2 pins · nothing new · last: Index added')
-  assert.equal(slimLine(list, true), '2 pins · 2 new · last: Index added')
-  const open = deriveBar(newBarState(), b, { now: 1, slim: true })
-  assert.equal(open.view.mode, 'slim')
-  assert.equal(open.flashStart, null)
-  assert.equal(open.view.slim, '2 pins · 2 new · last: Index added')
-  const closed = deriveBar(open.state, b, { now: 2 })
-  assert.equal(closed.view.mode, 'full', 'closing the sheet brings the full row back')
-  assert.notEqual(closed.flashStart, null, 'the unread pin still flashes once, when it is shown')
-  assert.equal(deriveBar(newBarState(), { ...b, needs: [] }, { slim: true }).view.mode, 'empty', 'no pins: still the quiet empty row')
 })
 
 test('clearStaleSheet forgets a sheet left open by the last run, and only that', () => {
