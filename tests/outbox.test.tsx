@@ -12,6 +12,9 @@ const turnEnd = (turnId: string) => ({ turnId, answer: '', durationMs: 1, isAbor
 test('two reports that land together reach the coordinator as one prompt, with one worker count', async ($, on) => {
   const { clock, emit, submitted, typed, files } = await start($, on)
   await command($, 'hrd-orchestrate')
+  // The playbook prompt goes out first; this test is about the reports.
+  await clock.advance(BATCH_MS)
+  submitted.length = 0
   await spawn($, ['w-a', 'w-b'])
   for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
