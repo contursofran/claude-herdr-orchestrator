@@ -22,6 +22,11 @@ test('the failed job, its run time and its run come from the checks', () => {
   expect(runIdOf(null)).toBeNull()
 })
 
+test('a very long test name is cut before it goes on the board', () => {
+  const log = `(fail) ${'x'.repeat(500)}\n0 pass\n1 fail\n`
+  expect(parseLog(log).tests[0]).toHaveLength(200)
+})
+
 test('a bun log gives the failing tests and totals, a few names and how many more', () => {
   const line = (t: string) => `test\tRun tests\t2026-11-02T10:00:00.0000000Z ${t}`
   const log = [

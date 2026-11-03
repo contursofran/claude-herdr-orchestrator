@@ -56,7 +56,7 @@ export function parseLog(log: string): Pick<CiFailure, 'failed' | 'passed' | 'te
   return {
     failed: failed ?? (names.length || null),
     passed,
-    tests: names.slice(0, MAX_TESTS),
+    tests: names.slice(0, MAX_TESTS).map(n => n.slice(0, 200)),
     more: names.length ? Math.max(0, total - MAX_TESTS) : 0,
   }
 }

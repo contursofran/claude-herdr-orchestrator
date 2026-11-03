@@ -513,11 +513,20 @@ test('a failed CI reads as the design has it on the row and in the worker view',
   assert.ok(row.includes('CI failed · 3 tests ↗'))
   const view = workerView(b, { name: 'fix-1', state: 'working' })
   const text = textOf(view)
-  for (const line of ['3 failed · 46 passed', 'test · 3m 5s', 'a > one', '+1 more failing test', 'Open log ↗'])
+  for (const line of ['3 failed · 46 passed', 'test · 3m 5s', 'a > one', '+2 more failing tests', 'Open log ↗'])
     assert.ok(text.includes(line), line)
   assert.ok(!text.includes('a > two'))
   assert.ok(findId(view, 'panel-ci-log-one'))
   assert.ok(findId(panelView(b), 'panel-ci-one'))
+})
+
+test('two failures, both named, still say there is one more than the first shown', () => {
+  const ci = { job: 'test', url: null, seconds: null, failed: 2, passed: 1, tests: ['a > one', 'a > two'], more: 0 }
+  const b = board({ tasks: [task('one', { tab: 'fix-1', ciFailure: ci })] })
+  const text = textOf(workerView(b, { name: 'fix-1', state: 'working' }))
+  assert.ok(text.includes('a > one'))
+  assert.ok(text.includes('+1 more failing test'))
+  assert.ok(!text.includes('+1 more failing tests'))
 })
 
 test('a failed CI with less on the board says less, and one without a run has no link', () => {
@@ -525,7 +534,7 @@ test('a failed CI with less on the board says less, and one without a run has no
     tasks: [
       task('one', {
         tab: 'fix-1',
-        ciFailure: { job: 'build', url: null, seconds: null, failed: null, passed: null, tests: ['t'], more: 5 },
+        ciFailure: { job: 'build', url: null, seconds: null, failed: null, passed: null, tests: ['t'], more: 0 },
       }),
     ],
   })
@@ -536,7 +545,7 @@ test('a failed CI with less on the board says less, and one without a run has no
     counts: '1 failed',
     job: 'build',
     first: 't',
-    more: '+5 more failing tests',
+    more: '',
   })
   assert.ok(textOf(panelView(b)).includes('CI failed · 1 test'))
   assert.ok(!textOf(panelView(b)).includes('↗'))

@@ -1022,7 +1022,8 @@ function ciFailureOf(t) {
   const tests = (Array.isArray(f.tests) ? f.tests : []).filter(x => typeof x === 'string' && x)
   const failed = count(f.failed) ?? (tests.length || null)
   const passed = count(f.passed)
-  const more = tests.length && Number.isInteger(f.more) && f.more > 0 ? f.more : 0
+  // The worker's view shows only the first test, so every other failure is "more" (the board's `more` counts only those past the named ones).
+  const more = tests.length && failed ? Math.max(0, failed - 1) : 0
   const secs = Number.isFinite(f.seconds) && f.seconds >= 0 ? f.seconds : null
   return {
     summary: failed ? `CI failed · ${failed} test${failed === 1 ? '' : 's'}` : 'CI failed',
