@@ -130,24 +130,27 @@ prepare() {
 }
 
 finish() {
-  local version=$1 notes oid select
+  local version=$1 notes oid
   cd "$root"
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a version: $version"
   [[ $(git rev-parse --abbrev-ref HEAD) == main ]] || die "not on main"
   [[ -z $(git status --porcelain) ]] || die "the working tree is not clean"
   git rev-parse -q --verify "refs/tags/v$version" >/dev/null && die "tag v$version already exists"
   # The Version pull request must have merged: its merge commit is what gets tagged, not whatever HEAD is.
-  select="[.[] | select(.title == \"Version $version\")][0]"
-  oid=$(gh pr list --state merged --base main --search "Version $version in:title" --json title,mergeCommit \
-    --jq "$select.mergeCommit.oid // empty")
-  [[ -n $oid ]] || die "the Version $version pull request has not merged (found no merged pull request with that title)"
+  # Look the pull request up by its branch: `gh pr list --search` reads GitHub's search index, which lags behind a merge.
+  local info state title
+  info=$(gh pr view "version-$version" --json state,title,mergeCommit \
+    --jq '[.state, .title, .mergeCommit.oid // ""] | @tsv' 2>/dev/null) || info=""
+  IFS=$'\t' read -r state title oid <<<"$info"
+  [[ $state == MERGED ]] || die "the Version $version pull request has not merged (branch version-$version is ${state:-not found})"
+  [[ $title == "Version $version" ]] || die "pull request version-$version is titled \"$title\", not \"Version $version\""
+  [[ -n $oid ]] || die "the Version $version pull request has no merge commit"
   git fetch --quiet origin main
   git cat-file -e "$oid^{commit}" 2>/dev/null || die "merge commit $oid is not in this checkout"
   git merge-base --is-ancestor "$oid" origin/main || die "merge commit $oid is not on origin/main"
   notes="${RELEASE_NOTES_FILE:-$(mktemp)}"
   [[ -n ${RELEASE_NOTES_FILE:-} ]] || cleanup_files+=("$notes")
-  gh pr list --state merged --base main --search "Version $version in:title" --json title,body \
-    --jq "$select.body // empty" >"$notes"
+  gh pr view "version-$version" --json body --jq '.body // ""' >"$notes"
   [[ -s $notes ]] || die "the Version $version pull request has no notes"
   run git tag -a "v$version" -m "Version $version" "$oid"
   run git push origin "v$version"
