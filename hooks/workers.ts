@@ -214,7 +214,14 @@ async function send($: EngineInterface, name: string, text: string, force = fals
   }
   // The visible screen only: `hc read --lines` scrolls a full-screen CLI, and took 25 s on one that had not started its turn.
   const onScreen = async () => {
-    const screen = await readScreen($, name)
+    // A read that times out leaves the screen unknown: `undefined`, not a failed start.
+    let screen: string
+    try {
+      screen = await readScreen($, name)
+    } catch (err) {
+      if (kindOf(err) === 'timeout') return undefined
+      throw err
+    }
     // The placeholder counts only in the input box at the bottom: the transcript above may show an earlier prompt's.
     return screen.includes(text.slice(0, 40)) || /\[Pasted /i.test(screen.split('\n').slice(-8).join('\n'))
   }
@@ -227,8 +234,11 @@ async function send($: EngineInterface, name: string, text: string, force = fals
   for (let i = 0; i < PROMPT_TRIES; i++) {
     if (i > 0 && (await late())) return notDelivered(`no work started within ${SEND_DEADLINE_MS / 60_000} minutes`)
     try {
-      if (i > 0 && (await onScreen())) {
+      const shown = i > 0 ? await onScreen() : false
+      if (shown) {
         await hc($, ['keys', name, 'enter'])
+      } else if (shown === undefined) {
+        // The screen read timed out: the text was typed on an earlier try, so do not type it again, just wait for work.
       } else if (!mayLand) {
         const sent = await typeIt()
         if (sent === 'timeout') mayLand = true

@@ -1,5 +1,6 @@
 import { expect } from 'claude-code/testing'
-import { BATCH_MS, LOST_REPORT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SEND_DEADLINE_MS } from '../hooks/defaults'
+import { BATCH_MS, READ_LINES_MS, LOST_REPORT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SEND_DEADLINE_MS } from '../hooks/defaults'
+import { READ_SCREEN_MS } from '../hooks/hc'
 import { registering, settled, spawn, start, stopAll, test, until } from './harness'
 
 // The hc side of the mod: the guard, how a worker is started, prompted, watched, messaged and
@@ -526,7 +527,7 @@ test('a plain screen read is given a 10 s timeout', async ($, on) => {
   await clock.advance(PROMPT_CHECK_MS)
   expect(readTimeouts.length).toBeGreaterThan(0)
   expect(readTimeouts).not.toContain(undefined)
-  expect(readTimeouts.every(t => t === 10_000 || t === 5000)).toBe(true)
+  expect(readTimeouts.every(t => t === READ_SCREEN_MS || t === READ_LINES_MS)).toBe(true)
   await stopAll($, clock, ['w-hc'])
 })
 
@@ -829,6 +830,26 @@ test('a timed-out send whose text shows on screen is submitted with enter, not t
   await clock.advance(PROMPT_WAIT_MS)
   expect(typed).toHaveLength(1)
   expect(keyed).toEqual([['w-hc', 'enter']])
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a screen read that times out during send retries leaves the start going, without typing again', async ($, on) => {
+  const { clock, slowSend, slowScreen, sends, keyed, status, toasts, store } = await start($, on)
+  slowSend.add('w-hc')
+  slowScreen.add('w-hc')
+  await $.tool.call(spawnArgs)
+  await settled()
+  // No work for a whole wait: the next try reads the screen, which times out.
+  await clock.advance(PROMPT_WAIT_MS)
+  await settled()
+  expect(toasts.join('\n')).not.toMatch(/first prompt failed/)
+  status['w-hc'] = 'working'
+  await clock.advance(PROMPT_CHECK_MS)
+  await settled()
+  expect(sends).toHaveLength(1)
+  expect(keyed).toEqual([])
+  expect(toasts.join('\n')).not.toMatch(/first prompt failed/)
+  expect(jobOf(store, 'w-hc')).toMatchObject({ status: 'running' })
   await stopAll($, clock, ['w-hc'])
 })
 
