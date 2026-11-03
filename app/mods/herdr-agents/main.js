@@ -55,6 +55,6 @@ export default class HerdrAgents extends View {
       const t = theme()
       return div().size_full().flex().items_center().px(8).text_size(11).text_color(t.dim).child(div().truncate().child(this.failure))
     }
-    return this.role?.render(cx) ?? div()
+    return this.role?.render?.(cx) ?? div() // a role that draws nothing (arrivals) has no render
   }
 }

@@ -677,3 +677,9 @@ test('a role whose init throws is not kept half-set, and the failure shows', asy
     console.log = log
   }
 })
+
+test('the arrivals copy draws nothing and its render does not throw', async () => {
+  const copy = await startCopy('arrivals')
+  assert.equal(copy.role.constructor.name, 'ArrivalsRole')
+  assert.deepEqual(copy.render(cx).kids, [])
+})
