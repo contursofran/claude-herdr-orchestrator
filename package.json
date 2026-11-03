@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "types": "scripts/types.sh",
-    "typecheck": "tsc -p . && tsc -p view",
+    "typecheck": "scripts/types.sh --if-missing && tsc -p . && tsc -p view",
     "validate": "claude plugin validate . && claude plugin validate view",
     "test": "nice -n 10 claude plugin test .",
     "test:file": "scripts/test-file.sh",

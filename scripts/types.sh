@@ -6,6 +6,8 @@
 #   scripts/types.sh          copy the installed mod's types into .claude-plugin/types (ignored by git)
 #   scripts/types.sh --pin    refresh types-pinned/, the copy CI typechecks against, from the same source
 #   scripts/types.sh --pinned copy types-pinned/ into .claude-plugin/types (what CI runs)
+#   scripts/types.sh --if-missing  copy types-pinned/ only when .claude-plugin/types has no tsconfig.json
+#                             (npm run typecheck runs this, so a fresh worktree works; an existing copy is kept)
 #
 # CI can't write the types itself: they come from a signed-in Claude Code session loading the mod.
 # So types-pinned/ is committed. Refresh it with --pin after a Claude Code update and commit the result.
@@ -17,6 +19,12 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 src=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/mods/herdr-agents/.claude-plugin/types
 mode=${1:-}
+
+if [[ $mode == --if-missing ]]; then
+  [[ -f $here/.claude-plugin/types/tsconfig.json ]] && exit 0
+  echo "No .claude-plugin/types here: using the pinned copy (scripts/types.sh gets your local types)." >&2
+  mode=--pinned
+fi
 
 if [[ $mode == --pinned ]]; then
   if [[ -d $here/.claude-plugin/types && -z ${CI:-} ]]; then
