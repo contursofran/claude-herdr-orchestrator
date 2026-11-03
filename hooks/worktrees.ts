@@ -4,7 +4,8 @@ import { session } from './session'
 import { active, dropOldJobs, jobs } from './state'
 
 // Every `pruneMinutes`, and on the prune command: removes the linked worktrees of the
-// repos this session's workers used once their branch's PR is merged on GitHub, the
+// repos this session's workers used once their branch's PR is merged on GitHub (in a repo with no origin
+// remote, once the branch has commits of its own and is an ancestor of the main checkout's branch), the
 // tree is clean, no terminal there is working or blocked and no job of this session that has not reported is
 // still living there (a worker idle between turns is not finished). Closes those workers' terminals
 // and deletes the local branch. Ignored files (node_modules, target) go with the tree;
@@ -43,18 +44,30 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
       // Without both lists nothing is known about who is in a tree: no pass.
       return done
     }
+    // Closes the mod's own workers in the tree, removes it and deletes its branch; false when git keeps the tree.
+    const removeTree = async (path: string, common: string, branch: string, here: HcListed[]) => {
+      for (const a of here) {
+        if (!mine.has(a.address)) continue
+        try {
+          await closeTerminal($, a.address)
+        } catch {}
+      }
+      if ((await run(['git', `--git-dir=${common}`, 'worktree', 'remove', path], 300_000)) === undefined) return false
+      await run(['git', `--git-dir=${common}`, 'branch', '-D', branch])
+      return true
+    }
     const inside = (wt: string) => agents.filter(a => a.cwd === wt || String(a.cwd ?? '').startsWith(`${wt}/`))
 
     for (const common of commons) {
       const list = (await run(['git', `--git-dir=${common}`, 'worktree', 'list', '--porcelain'])) ?? ''
       // The first entry is the main checkout, never removed.
-      const trees = list
-        .split('\n\n')
-        .slice(1)
-        .map(block => ({
-          path: block.match(/^worktree (.+)$/m)?.[1],
-          branch: block.match(/^branch refs\/heads\/(.+)$/m)?.[1],
-        }))
+      const blocks = list.split('\n\n')
+      // With no origin remote, the base is the branch the main checkout is on.
+      const base = blocks[0]?.match(/^branch refs\/heads\/(.+)$/m)?.[1]
+      const trees = blocks.slice(1).map(block => ({
+        path: block.match(/^worktree (.+)$/m)?.[1],
+        branch: block.match(/^branch refs\/heads\/(.+)$/m)?.[1],
+      }))
       for (const { path, branch } of trees) {
         if (!path || !branch || !(await $.fs.exists(path))) continue
         const here = inside(path)
@@ -64,6 +77,17 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
         if (here.some(a => !mine.has(a.address) || !['idle', 'done', 'error'].includes(a.status ?? ''))) continue
         if ((await run(['git', '-C', path, 'status', '--porcelain'])) !== '') continue
         const remotes = (await run(['git', '-C', path, 'remote', '-v'])) ?? ''
+        if (!remotes.includes('origin')) {
+          // No remote to ask: the branch is merged when the base already holds all of it.
+          if (!base || branch === base) continue
+          // A fresh branch (tip == base) is an ancestor too: keep one whose reflog shows only its creation, or none.
+          const reflog = (await run(['git', '-C', path, 'reflog', 'show', `refs/heads/${branch}`])) ?? ''
+          if (!reflog.split('\n').some(l => l.trim() && !/: branch: Created from/.test(l))) continue
+          if ((await run(['git', '-C', path, 'merge-base', '--is-ancestor', branch, base])) === undefined) continue
+          if (!(await removeTree(path, common, branch, here))) continue
+          done.push(`${path.split('/').pop()} (${branch})`)
+          continue
+        }
         const slug = remotes.match(/github\.com[:/]([^/\s]+\/[^\s]+?)(?:\.git)?\s/)?.[1]
         if (!slug) continue
         const pr = await run([
@@ -85,15 +109,7 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
         if (!merged || !mergedHead) continue
         // Commits made after the merge exist only here: keep the tree.
         if ((await run(['git', '-C', path, 'rev-parse', 'HEAD'])) !== mergedHead) continue
-
-        for (const a of here) {
-          if (!mine.has(a.address)) continue
-          try {
-            await closeTerminal($, a.address)
-          } catch {}
-        }
-        if ((await run(['git', `--git-dir=${common}`, 'worktree', 'remove', path], 300_000)) === undefined) continue
-        await run(['git', `--git-dir=${common}`, 'branch', '-D', branch])
+        if (!(await removeTree(path, common, branch, here))) continue
         done.push(`${path.split('/').pop()} (${slug.split('/').pop()}#${merged})`)
       }
     }

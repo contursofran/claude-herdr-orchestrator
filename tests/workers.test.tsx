@@ -343,7 +343,7 @@ test('the report rule keeps temp files, PR bodies included, in the job folder', 
 test('the report rule carries a WAIT.json example for CI that is valid JSON', async ($, on) => {
   const { clock, typed, files } = await start($, on, claudeX)
   await spawnX($)
-  const rules = files['/repo/wt/.herdr-agents/w-env/REPORTING.md']
+  const rules = files['/repo/wt/.herdr-agents/w-env/REPORTING.md'] ?? ''
   const example = rules.match(/\{"for": "CI on PR #123".*\}/)?.[0] ?? ''
   expect(typed[0]).toContain(example)
   expect(JSON.parse(example)).toEqual({
