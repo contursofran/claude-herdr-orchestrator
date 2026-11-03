@@ -2,7 +2,7 @@
 // only (an invisible block every layout holds once), so it happens once per window. Keys stay in memory (a `shared` write
 // would redraw every mod); the mark of the last announcement is saved in a file, so what arrived while the owner was in
 // another layout (a layout switch restarts the mods) is announced when the next layout starts.
-// No `herdr` import, so node can test it: arrivalsrole.js hands in playSound, notify and the mark's file.
+// No `herdr` import, so node can test it: role-arrivals.js hands in playSound, notify and the mark's file.
 import { arrivalNotice, newArrivals } from './model.js'
 
 export class Arrivals {

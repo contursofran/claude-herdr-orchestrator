@@ -9,7 +9,7 @@ const markFile = () => `${home()}/.herdr-agents/arrivals-mark.json`
 /** Herdr's own sound switch (settings.json `sounds.enabled`); the toast posts either way. */
 const soundOff = () => settings()?.sounds?.enabled === false
 
-export class ArrivalsRole {
+export default class ArrivalsRole {
   init(cx) {
     this.arrivals = new Arrivals({
       play: playSound,
@@ -23,4 +23,6 @@ export class ArrivalsRole {
     this.boards.start(cx, () => this.arrivals.observe(this.boards.list()))
     cx.spawn(async () => this.arrivals.start())
   }
+
+  close() {}
 }

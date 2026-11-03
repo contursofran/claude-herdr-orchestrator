@@ -6,6 +6,7 @@
 #   ./install.sh            # from a clone of this repo; run it again after a pull
 #
 # Needs node (to edit the JSON settings) and rsync; hc (herdr-core) runs the workers.
+# With the Herdr app there and running it ends by printing the window's errors (scripts/window-errors.sh).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -66,7 +67,7 @@ if [[ -d $app_home ]]; then
   mkdir -p "$app_home/mods/herdr-agents"
   # The app writes jsconfig.json and gpui-kit.d.ts into mod folders.
   # By content, keeping no times or modes: `-a` rewrites every file a checkout dated differently and `-p` chmods them all.
-  # Either wakes the app's watcher, each hot reload leaves the window slower until it restarts (#158), so an unchanged file must see no event.
+  # Either wakes the app's watcher, each hot reload keeps the mod's code in Herdr's memory until it restarts (#158, #335), so an unchanged file must see no event.
   # version.json stays through the rsync: rewriting it each time would reload every copy of the mod.
   rsync -rlc --delete --exclude jsconfig.json --exclude gpui-kit.d.ts --exclude version.json "$here/app/mods/herdr-agents/" "$app_home/mods/herdr-agents/"
   # What the status bar shows: the plugin's version, and the short commit if git can give it (the app mod is sometimes
@@ -89,3 +90,10 @@ EOF
 fi
 
 echo "Installed herdr-agents into $claude. A first install loads in sessions started from now on; running sessions reload updates by themselves."
+
+# A mod that fails to reload shows only in the window's errors: print them when the app is there and running.
+# The app reloads the copied mod in the next moment, so give it a short while first.
+if [[ -d $app_home ]] && command -v herdr-app >/dev/null 2>&1; then
+  sleep "${INSTALL_WINDOW_WAIT:-2}"
+  "$here/scripts/window-errors.sh"
+fi

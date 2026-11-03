@@ -1,251 +1,60 @@
 import { View, div } from 'gpui-kit'
-import { exec, focused, props, setShared, shared, terminals } from 'herdr'
-import { AgentsList } from './agents.js'
-import { ArrivalsRole } from './arrivalsrole.js'
-import { Boards, beat, clearBeat } from './board.js'
-import { makeCardState } from './card.js'
-import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
-import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
-import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, resolveBoard } from './model.js'
-import { floatView, panelFor } from './panel.js'
-import { makePopupState, popupView, releasePopup } from './popup.js'
-import { PinCtl } from './pinctl.js'
-import { SpacesList } from './spaces.js'
-import { SettingsState, settingsView } from './settingsview.js'
-import { makeSheetState, sheetBlock } from './sheet.js'
-import { StripState, strip } from './strip.js'
-import { POLL_MS as USAGE_POLL_MS, UsageTracker, usageView } from './usage.js'
-import { readVersion, versionView } from './version.js'
+import { props, setShared, shared, theme } from 'herdr'
 
-// One mod, one file per part; props().role says which part this copy draws.
-// Role `agents` is the agents list (agents.js) and `spaces` the Spaces list (spaces.js), which keep state of their own; `version` and `board` have their own
-// branches here. Each of the roles below takes what it needs from the same bag.
+// One mod, one file per part; props().role says which part this copy draws. Herdr keeps every load of a mod for the life of
+// the window, and loads it again for each copy, so a copy imports only its own role's code, with import() (#335). Each role
+// module's default export is a class with init(cx), render(cx) and close(). A role with no module here draws nothing.
 const roles = {
-  strip: (board, x) => strip(board, { ...x.strip, card: x.card, cx: x.cx }),
-  sheet: (_board, x) => sheetBlock(x.strip.boards, x.sheet, x.cx),
+  version: () => import('./role-version.js'),
+  usage: () => import('./role-usage.js'),
+  settings: () => import('./role-settings.js'),
+  spaces: () => import('./role-spaces.js'),
+  agents: () => import('./role-agents.js'),
+  panel: () => import('./role-panel.js'),
+  board: () => import('./role-board.js'),
+  strip: () => import('./role-strip.js'),
+  sheet: () => import('./role-sheet.js'),
+  arrivals: () => import('./role-arrivals.js'),
 }
 
 export default class HerdrAgents extends View {
   init(_props, cx) {
-    if (props()?.role === 'version') {
-      // Read once: nothing here starts the boards or redraws other copies.
-      cx.spawn(async cx => {
-        this.version = await readVersion()
-        if (this.version) cx.notify()
+    // props() is read now: after the import() it answers for the copy loaded last, so the role gets this copy's own.
+    const own = props()
+    const load = roles[own?.role]
+    if (!load) return
+    // `loaded` settles once the role is running (the tests wait on it); until then the copy draws nothing.
+    this.loaded = load()
+      .then(mod => {
+        const role = new mod.default()
+        role.props = own
+        role.init(cx)
+        this.role = role // only once it runs: a role whose init threw is never drawn or closed half-set
+        // The redraw that shows the role goes through a spawn: a bare cx.notify() here reaches only some of the copies.
+        cx.spawn(async cx => cx.notify())
       })
-      return
-    }
-    if (props()?.role === 'arrivals') {
-      // Draws nothing; rings for new questions and to-dos in whatever layout the window is in.
-      new ArrivalsRole().init(cx)
-      return
-    }
-    if (props()?.role === 'usage') {
-      this.usage = new UsageTracker(exec)
-      this.pollUsage(cx)
-      return
-    }
-    if (props()?.role === 'settings') {
-      this.settings = new SettingsState(cx)
-      return
-    }
-    if (props()?.role === 'spaces') {
-      this.spacesList = new SpacesList()
-      this.spacesList.init(cx)
-      return
-    }
-    if (props()?.role === 'agents') {
-      // The sort menu is a popup of this same mod: it needs neither the boards nor the list's state.
-      this.agentsList = new AgentsList()
-      if (props()?.sortMenu) return
-      this.boards = new Boards()
-      this.boards.start(cx, cx => this.drawnChanged() && cx.notify())
-      this.agentsList.init(cx)
-      return
-    }
-    this.boards = new Boards()
-    if (props()?.role === 'panel') {
-      // Which board follows focus when drawing. The strip's copy says when this block shows.
-      this.last = null
-      this.panelUi = { open: new Set() } // the history lists opened with `all N`
-      this.boards.start(cx, cx => this.drawnChanged() && cx.notify())
-      this.watchAges(cx) // the merge ages of its rows
-      return
-    }
-    if (props()?.role === 'board') {
-      this.popup = makePopupState(cx)
-      // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
-      this.boards.startOne(cx, props().session, props().board, cx => this.drawnChanged() && cx.notify())
-      this.drawnChanged() // the board the strip passed is what the first draw shows
-      this.watchAges(cx) // the merge ages of its rows
-      return
-    }
-    this.last = null
-    // The strip's copy is the one always in the window (the coordinator layout has it and nothing else drops it), so it does what
-    // the pin bar's copy used to do besides drawing: the heartbeat (one writer per window), the pin outbox, the start-of-run
-    // clean-up and the report of a part that fails to draw.
-    const host = props()?.role === 'strip'
-    this.pin = host ? new PinCtl() : null
-    if (host) this.pin.outbox.release() // what the last copy queued and never sent would go out stale
-    // Once per app run: overlays stay open across a layout switch, and a Done asked for on `main` waits for this copy.
-    // The key keeps its old name (from when the pin bar copy ran this): renaming it would repeat the clean-up once after an upgrade.
-    if (host && firstThisRun('hrd.pinbarStarted')) {
-      clearStaleOverlays(shared, setShared)
-      clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
-    }
-    // The card (drawn by the strip's copy) and the sheet settle their Outbox here, or a failed send would never show.
-    this.card = host ? makeCardState(cx) : null
-    this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
-    // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
-    this.part = host ? new StripState() : null
-    this.beating = host
-    this.boards.start(cx, cx => {
-      onBoardsChanged({ pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx, () => this.drawnChanged())
-      this.part?.onBoardsRead(cx, () => resolveBoard(this.boards.list(), terminals(), focused(), this.last).board)
-      // The first read says which coordinators are live: tell the plugin now, not 30 s later.
-      if (this.beating && !this.started) {
-        this.started = true
-        this.beat(cx)
-      }
-    })
-    // A data timer, no cx.notify: it must not redraw the window. One writer per window: the strip's copy only.
-    if (host) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
-    this.part?.listen(cx)
-    this.watchAges(cx) // the strip's card shows an age
+      .catch(error => this.loadFailed(own.role, error, cx))
   }
 
-  /** One timer for the next read; a redraw only when what is shown changed. */
-  pollUsage(cx) {
-    cx.spawn(async cx => {
-      await this.usage.poll(() => cx.notify())
-    })
-    cx.timer.after(USAGE_POLL_MS, cx => this.pollUsage(cx))
-  }
-
-  /** Ages on screen move with the clock, not with a board write. A look at the time: no process, no read, and a redraw only
-   *  when one would read differently. The agents list has its own timer. */
-  watchAges(cx) {
-    this.ages = new AgeClock()
-    cx.timer.every(AGE_TICK_MS, cx => {
-      if (this.ages.moved(this.agedTimes(), Date.now())) cx.notify()
-    })
-  }
-
-  agedTimes() {
-    const role = props()?.role
-    return agedTimes(role, {
-      boards: this.boards.list(),
-      open: role === 'strip' ? shared('hrd.open') : role === 'sheet' ? shared('hrd.sheet') : null,
-      session: props()?.session,
-    })
-  }
-
-  /** What was just drawn is what the next tick compares with. */
-  drewAges(el) {
-    this.ages?.drawn(this.agedTimes(), Date.now())
-    return el
-  }
-
-  /** Whether what this copy draws from the boards changed since it last asked. */
-  drawnChanged() {
-    const role = props()?.role
-    const open = role === 'sheet' ? shared('hrd.sheet') : null
-    const key = drawnKey(role, this.boards.list(), props()?.session, open)
-    if (key === this.drawn) return false
-    this.drawn = key
-    return true
-  }
-
-  beat(cx) {
-    cx.spawn(async () => {
-      try {
-        await beat(this.boards.list(), terminals(), !anyDrawFailed(shared))
-      } catch {
-        // the plugin keeps its band when the file goes stale
-      }
-    })
-  }
-
-  /** Notes how this draw went, after the draw: setShared redraws every mod, which a draw should not start from inside. */
-  noteDrawn(cx, error) {
-    const role = props()?.role
-    if (!guardsDraw(role) || !drawNoteDue(role, error, shared)) return
-    cx.spawn(async cx => {
-      await cx.sleep(0)
-      if (noteDraw(role, error, shared, setShared) && error) console.log(`herdr-agents: ${role} failed to draw: ${error}`)
-    })
-  }
-
-  /** The strip's copy tells the plugin at once when a part starts or stops failing, not at the next 30 s beat. */
-  beatOnChange(cx) {
-    if (!this.beating) return
-    const failed = anyDrawFailed(shared)
-    if (failed === Boolean(this.beatFailed)) return
-    this.beatFailed = failed
-    this.beat(cx)
+  /** A role that cannot load says so: in the log, in the view (a dim line, so the owner is not left with a blank band) and,
+   *  for a part the plugin's band stands in for, in the draw-failed key the strip's copy reports with its heartbeat. */
+  loadFailed(role, error, cx) {
+    this.failure = `herdr-agents: ${role} failed to load: ${error?.message ?? error}`
+    console.log(this.failure)
+    import('./drawguard.js').then(guard => guard.guardsDraw(role) && guard.noteDraw(role, error, shared, setShared)).catch(() => {})
+    cx.spawn(async cx => cx.notify())
   }
 
   async close() {
-    if (this.popup) releasePopup(this.popup)
-    // A part that is gone no longer fails to draw. Its own key only: the other parts are still there.
-    if (guardsDraw(props()?.role)) noteDraw(props().role, null, shared, setShared)
-    if (this.beating) await clearBeat()
+    await this.loaded
+    await this.role?.close()
   }
 
   render(cx) {
-    if (props()?.role === 'version') return versionView(this.version)
-    if (this.usage) return usageView(this.usage)
-    if (this.settings) return settingsView(this.settings, cx)
-    if (this.spacesList) return this.spacesList.render()
-    if (this.agentsList) return this.agentsList.render(cx, this.boards)
-    if (props()?.role === 'panel') {
-      const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
-      this.last = found.pick
-      return this.drewAges(panelFor(found.board, focused(), Date.now(), this.panelUi))
+    if (this.failure) {
+      const t = theme()
+      return div().size_full().flex().items_center().px(8).text_size(11).text_color(t.dim).child(div().truncate().child(this.failure))
     }
-    if (props()?.role === 'board' && props()?.float)
-      return this.drewAges(
-        floatView(
-          this.boards.list().find(b => b.session === props().session),
-          this.popup,
-          Date.now(),
-          (this.panelUi ??= { open: new Set() }),
-        ),
-      )
-    if (props()?.role === 'board')
-      return this.drewAges(
-        popupView(
-          this.boards.list().find(b => b.session === props().session),
-          this.popup,
-        ),
-      )
-    const draw = roles[props()?.role]
-    if (!draw) return div()
-    this.beatOnChange(cx)
-    try {
-      // Resolved while drawing, so it follows focus with no polling.
-      const found = resolveBoard(this.boards.list(), terminals(), focused(), this.last)
-      this.last = found.pick
-      if (this.part) {
-        this.part.board = found.board
-        this.part.followPanel(cx, found.board)
-      }
-      const fault = {} // the strip says here when only its card failed to draw
-      const el = this.drewAges(
-        draw(found.board, {
-          pin: this.pin,
-          card: this.card,
-          sheet: this.sheet,
-          cx,
-          strip: { part: this.part, boards: this.boards.list(), terminals: terminals(), fault },
-        }),
-      )
-      this.noteDrawn(cx, fault.error ?? null)
-      return el
-    } catch (error) {
-      if (!guardsDraw(props()?.role)) throw error // the sheet stands in for no band: as before
-      this.noteDrawn(cx, error)
-      return div()
-    }
+    return this.role?.render?.(cx) ?? div() // a role that draws nothing (arrivals) has no render
   }
 }

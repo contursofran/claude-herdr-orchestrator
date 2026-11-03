@@ -192,6 +192,10 @@ npm run check                   # formatting, type check, both manifests, tests
 
 A release is one step, run from an up-to-date, clean `main` for a finished batch of changes (at most about once a day unless a fix can't wait): `scripts/release.sh X.Y.Z` (or `--minor`, `--patch`). It bumps `version` in `.claude-plugin/plugin.json` and opens a pull request titled `Version X.Y.Z`, whose body is the notes: one line per pull request merged since the last tag, with its number. Once CI passes and that pull request merges, run `scripts/release.sh --finish X.Y.Z`: it refuses unless that pull request has merged, then tags its merge commit `vX.Y.Z`, pushes the tag and runs `gh release create` with the same notes. `--dry-run` on either run prints every step and changes nothing (it only runs `git fetch`, which updates `origin/main`). The release notes need `gh` signed in.
 
+#### Merging
+
+`scripts/merge-pr.sh N` lands a pull request from the clone's `main`: it waits until the PR's checks exist and have finished (`gh pr checks --watch` can return before they register), refuses if any failed, squash-merges with an empty body and deletes the branch, pulls `main`, runs `./install.sh` and prints the Herdr window's errors (`install.sh` ends by printing them, from `herdr-app status`, when the app is installed and running; `scripts/window-errors.sh` does it alone). `--dry-run` prints the merge, pull and install steps and changes nothing; it still reads the checks, and waits for them. `MERGE_PR_EVERY` (seconds between looks, default 20) and `MERGE_PR_MAX` (seconds before giving up, default 1800) tune the wait.
+
 While you work, run only the test files you touched, with `npm run test:file -- tests/bridge.test.tsx`: the whole suite takes about a minute.
 
 ### Layout
