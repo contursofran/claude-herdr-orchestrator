@@ -106,6 +106,20 @@
             "type": ["integer", "null"],
             "description": "When the PR merged, in ms since the epoch; null or absent when unknown (older boards)."
           },
+          "ciFailure": {
+            "type": ["object", "null"],
+            "description": "What failed in an open PR's CI, read once per failing head; null or absent when its CI has not failed or nobody knows (older boards). Counts, tests and url may be missing when the log could not be read.",
+            "required": ["job", "tests", "more"],
+            "properties": {
+              "job": { "type": "string", "description": "The first failed check." },
+              "url": { "type": ["string", "null"], "description": "Where its run opens." },
+              "seconds": { "type": ["integer", "null"], "description": "How long it ran." },
+              "failed": { "type": ["integer", "null"], "description": "Failing tests, from the log." },
+              "passed": { "type": ["integer", "null"], "description": "Passing tests, from the log." },
+              "tests": { "type": "array", "items": { "type": "string" }, "description": "A few failing test names." },
+              "more": { "type": "integer", "description": "Failing tests beyond the ones named." }
+            }
+          },
           "conflictsWith": {
             "type": ["string", "null"],
             "description": "The base branch an open PR conflicts with; null or absent when it doesn't or nobody knows (older boards)."

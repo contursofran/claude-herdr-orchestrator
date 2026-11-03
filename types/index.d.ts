@@ -139,6 +139,20 @@ export type Pr = {
   conflict?: boolean
   base?: string
   files?: string[]
+  failure?: CiFailure
+}
+
+// The first failed check of a PR's CI at one head commit: its job, run time in seconds and run address, and what its log says
+// of the tests (null / empty when the log gave none). `tests` holds a few names, `more` how many failing tests it leaves out.
+export type CiFailure = {
+  head: string
+  job: string
+  url: string | null
+  seconds: number | null
+  failed: number | null
+  passed: number | null
+  tests: string[]
+  more: number
 }
 
 // The board's own state (boarddata.ts). `items` are in arrival order and only Clear done removes
