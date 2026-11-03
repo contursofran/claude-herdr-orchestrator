@@ -1132,11 +1132,16 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     // A temp folder of its own, so a fixed name cannot collide with another worker's (#157). The folder must exist.
     const tmp = `${dir}/tmp`
     await $.fs.write(`${tmp}/.keep`, '')
+    // The sandbox resets TMPDIR for a Claude session's Bash, but sources CLAUDE_ENV_FILE before each command, so the job tmp
+    // is exported there. No hook rewrites a tool call, which auto mode would refuse (#340).
+    const pin = p.kind === 'claude' ? ([['CLAUDE_ENV_FILE', `${dir}/env.sh`]] as [string, string][]) : []
+    if (pin.length) await $.fs.write(pin[0][1], `export TMPDIR='${tmp.replace(/'/g, `'\\''`)}'\n`)
     // These come last, so a profile's env cannot drop them. A worker's own session
     // reads the role (see session.start).
     const env: [string, string][] = [
       ...Object.entries(p.env ?? {}),
       ['TMPDIR', tmp],
+      ...pin,
       ['HERDR_AGENTS_ROLE', 'worker'],
       ['HERDR_AGENTS_LIVE', `${dir}/LIVE.json`],
     ]
