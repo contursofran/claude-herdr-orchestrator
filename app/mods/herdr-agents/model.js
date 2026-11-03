@@ -1048,6 +1048,31 @@ function ciFailureOf(t) {
   }
 }
 
+/** A worker's context fill as the panel says it (`ctx 41%`), or '' when the board has none (an older plugin, or a worker without this mod). */
+export function ctxText(worker) {
+  const n = worker?.context
+  return Number.isInteger(n) && n >= 0 && n <= 100 ? `ctx ${n}%` : ''
+}
+
+/** A worker's branch against its base as the panel draws it, or null when the board has none: `title` (`Branch vs main`), `total`
+ *  (`+142 −31`) and a row per file with git's status letter and its `delta`, `more` for the files the board left out. */
+export function branchDiff(worker) {
+  const d = worker?.diff
+  if (!d || typeof d !== 'object' || typeof d.base !== 'string' || !Array.isArray(d.files)) return null
+  const count = n => (Number.isInteger(n) && n >= 0 ? n : 0)
+  const delta = f => `+${count(f.add)} \u2212${count(f.del)}`
+  const files = d.files
+    .filter(f => f && typeof f.path === 'string')
+    .map(f => ({ path: f.path, status: String(f.status ?? 'M').slice(0, 1), delta: delta(f) }))
+  const more = count(d.more)
+  return {
+    title: `Branch vs ${d.base}`,
+    total: delta(d),
+    files,
+    more: more ? `+${more} more file${more === 1 ? '' : 's'}` : '',
+  }
+}
+
 /** The board's Next list as rows the panel draws like its work rows: the issue's link, its plan mark, and `ready`, the first one
  *  `ready · next in line`. [] for a board without one (an older plugin). */
 export function nextRows(board) {

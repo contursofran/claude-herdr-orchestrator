@@ -3,11 +3,11 @@ import { appModShown, learnCore, watchAppMod } from './appmod'
 import { drawBand, hidesToolResult, hidesToolUse, shortenBrief } from './band'
 import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
-import { pollPrs, setNext, type NextArgs } from './boarddata'
+import { pollDiffs, pollPrs, setNext, type NextArgs } from './boarddata'
 import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
-import { liveOutput, liveTool, liveTurn, startLive } from './live'
+import { liveContext, liveOutput, liveTool, liveTurn, startLive } from './live'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS, TICK_MS } from './defaults'
 import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
@@ -85,6 +85,7 @@ export const register: Register = on => {
           .catch(() => {}),
     )
     $.clock.every(PR_POLL_MS, () => void pollPrs($).catch(() => {}))
+    $.clock.every(PR_POLL_MS, () => void pollDiffs($).catch(() => {}))
     const pruneMinutes = settings.pruneMinutes ?? PRUNE_MINUTES
     if (pruneMinutes > 0) $.clock.every(pruneMinutes * 60_000, () => void pruneMerged($))
     // The sweep always runs: it is what catches a worker whose wait child died. Only its
@@ -171,6 +172,7 @@ export const register: Register = on => {
     if (tokens !== undefined) {
       const { limit } = await resetSettings($)
       await showContext($, tokens, limit)
+      await liveContext($, tokens, e.context.window ?? limit)
       void maybeReset($, tokens)
     }
     return out

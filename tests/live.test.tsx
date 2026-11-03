@@ -97,3 +97,14 @@ test("the coordinator's own turn goes on the board, and leaves it when the turn 
   await clock.advance(3000)
   expect(coordinator().outputAt).toBe(undefined)
 })
+
+test('a worker records its context fill after each turn, with the window when it is known', async ($, on) => {
+  on('session.measure', () => ({ changed: ['context'] }))
+  const { clock, files } = await start($, on, {}, {}, IN_WORKER)
+  await $.session.measure({ context: { tokens: 82_000, window: 200_000 }, rateLimits: [], changed: ['context'] } as never)
+  await until(clock, () => JSON.parse(files[LIVE] ?? '{}').context)
+  expect(JSON.parse(files[LIVE] ?? '{}').context).toEqual({ tokens: 82_000, limit: 200_000 })
+  // Kept when the next turn starts and ends.
+  await $.turn.start({ text: 'Go.', turnId: 't1' })
+  expect(JSON.parse(files[LIVE] ?? '{}').context).toEqual({ tokens: 82_000, limit: 200_000 })
+})

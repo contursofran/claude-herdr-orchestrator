@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { BoardItem, BoardState, CiFailure, NextItem, Pr } from '../types'
+import { readDiff } from './branchdiff'
 import { appModShown } from './appmod'
 import { readBoard } from './board'
 import { ciOf, type Check } from './ci'
@@ -157,6 +158,27 @@ function failureForBoard(f?: CiFailure) {
   return shown
 }
 
+// Each shown worker's branch against its default branch, kept in the state for the board. Like pollPrs, only while the app mod draws.
+let diffing = false
+export async function pollDiffs($: EngineInterface) {
+  if (diffing || !(await appModShown($))) return
+  diffing = true
+  try {
+    const { board } = await gather($)
+    const all = await jobs($)
+    const got: NonNullable<BoardState['diffs']> = {}
+    for (const r of board.rows) {
+      const cwd = all[r.name]?.cwd
+      const d = cwd ? await readDiff($, cwd).catch(() => null) : null
+      if (d) got[r.name] = d
+    }
+    if (JSON.stringify(got) === JSON.stringify((await read($, state)).diffs ?? {})) return
+    await update($, state, s => ({ ...s, diffs: got }))
+  } finally {
+    diffing = false
+  }
+}
+
 export async function pollPrs($: EngineInterface) {
   // Polls while the app mod draws the boards: its pop-up's CI column reads these PRs.
   if (polling || !(await appModShown($))) return
@@ -282,6 +304,8 @@ export async function boardSnapshot($: EngineInterface) {
       since: r.since ?? null,
       repo: r.repo ?? null,
       ...(r.outputAt === undefined ? {} : { command: r.command ?? null, commandAt: r.commandAt ?? null, outputAt: r.outputAt }),
+      ...(r.context === undefined ? {} : { context: r.context }),
+      ...(v.diffs?.[r.name] ? { diff: v.diffs[r.name] } : {}),
     })),
     tasks: tasks.map(t => ({
       key: t.key,

@@ -4,7 +4,7 @@ import type { Board, Job, Links, Row } from '../types'
 import { config, target, wrappingUp } from './config'
 import { INTERRUPTED_NOTE, LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { lastStatus } from './hc'
-import { workerLiveFields } from './live'
+import { workerContext, workerLiveFields } from './live'
 import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
 import { active, jobs } from './state'
@@ -83,6 +83,7 @@ export async function refresh($: EngineInterface) {
       ...(j.status === 'running' && j.interrupted ? { note: INTERRUPTED_NOTE } : {}),
       ...(byCwd[j.cwd] ? { repo: byCwd[j.cwd] } : {}),
       ...(state === 'working' ? await workerLiveFields($, j.dir, now) : {}),
+      ...(await workerContext($, j.dir)),
     })
   }
   const held = await read($, board)
