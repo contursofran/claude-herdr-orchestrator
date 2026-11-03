@@ -58,6 +58,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report. Its status is done, blocked, failed (also a worker that did not start) or gone (its tab is gone).",
     "- Worktrees: give spawn `branch` (and `repo` when the folder holds several) and the mod creates the worker's worktree off the base branch (fetched from origin first, if the repo has one) at ../<repo>-wt/<branch>; give `cwd` instead only to reuse a worktree (a fix round). Never two writers in one.",
     '- Roles: `builder` does all code changes; `reviewer` reviews every builder PR.',
+    "- Briefs: open a brief with the issue's title, not a command: the board takes the brief's first line or first backtick span as the worker's row title.",
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
     '- A worker going the wrong way or quiet too long: interrupt it, then message the correction, which keeps its context; its report comes from that turn. stop loses the context.',
     `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,

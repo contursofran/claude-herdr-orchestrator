@@ -11,6 +11,8 @@ Review against the issue, not only the plan: for each acceptance line of the iss
 
 A PR that changes the Herdr app mod (`app/`) gets a smoke run in the hidden window (`scripts/herdr-hidden-window.sh`) before you approve it: failed reloads show only in the window.
 
+A change to a hook that runs on every tool call needs a real `claude -p --permission-mode auto` run before you approve it: auto mode refuses a call a hook changed after its review (#337, reverted in #340), and the test suite cannot see that.
+
 Paperwork that a repo check enforces (such as `pnpm pr:check`, or the changelog check in CI) is a nit, not a blocker: the failing check already stops the merge. Paperwork no check covers blocks only when it would merge wrong, such as a changelog line that cites the wrong PR.
 
 Repo rules come first: before you start, read the repo's AGENTS.md or CLAUDE.md, those in the folders you touch, and any checklist under `.claude/skills/*/SKILL.md` that fits your task (such as a PR checklist); where they differ from this file, they win. They name the base branch (if they don't, use the repo's default branch: `gh repo view --json defaultBranchRef`), the checks, how to update a branch, the commit identity and what needs the owner. Never force-push unless they allow it. Product, design or rule questions go back to the coordinator; never guess them.
