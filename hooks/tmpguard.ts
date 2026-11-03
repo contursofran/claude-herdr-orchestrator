@@ -18,3 +18,30 @@ export function pinTmp(command: string, tmp: string): string {
   const prefix = `export TMPDIR=${quote(tmp)}; `
   return command.startsWith(prefix) ? command : prefix + command
 }
+
+// Resolves `.`, `..` and repeated slashes of an absolute path (hooks may not import node:path).
+function normalize(file: string): string {
+  const out: string[] = []
+  for (const part of file.split('/')) {
+    if (part === '..') out.pop()
+    else if (part && part !== '.') out.push(part)
+  }
+  return `/${out.join('/')}${file.endsWith('/') && out.length ? '/' : ''}`
+}
+
+const SHARED = ['/tmp/', '/private/tmp/', '/var/tmp/', '/private/var/tmp/']
+
+// True for a path in a temp folder every session shares (after resolving `..`); false for the job tmp or anywhere else.
+export function sharedTmp(file: string): boolean {
+  if (!file.startsWith('/')) return false
+  const norm = normalize(file)
+  return SHARED.some(p => norm.startsWith(p))
+}
+
+// The refusal for a worker's Write/Edit into shared temp, or null when the path is fine or this is not a worker.
+export async function tmpDenied($: EngineInterface, file: string | undefined): Promise<{ deny: string } | null> {
+  if (!file || !sharedTmp(file)) return null
+  const tmp = await jobTmp($)
+  if (!tmp) return null
+  return { deny: `${file} is in a shared temp folder another worker can overwrite (#157). Write it in ${tmp} instead.` }
+}
