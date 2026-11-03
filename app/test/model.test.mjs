@@ -762,91 +762,129 @@ const needsBoard = (...needs) => ({
 })
 
 test('newArrivals: the first sight of a board is silent', () => {
-  const r = newArrivals(null, needsBoard(['D1', 'ask'], ['P1', 'know']))
+  const r = newArrivals(null, needsBoard(['D1', 'ask'], ['T1', 'do']))
   assert.deepEqual(r.fresh, [])
-  assert.deepEqual([...r.keys].sort(), ['D1', 'P1'])
+  assert.deepEqual([...r.keys].sort(), ['D1', 'T1'])
 })
 
-test('newArrivals: a later know, do or ask is new; closed items and blocked workers are not', () => {
+test('newArrivals: a later do or ask is new; know, closed items and blocked workers are not', () => {
   const first = newArrivals(null, needsBoard(['D1', 'ask']))
   const r = newArrivals(first.keys, needsBoard(['D1', 'ask'], ['D2', 'ask'], ['P1', 'know'], ['T1', 'do'], ['P2', 'know', false]))
   assert.deepEqual(
     r.fresh.map(f => [f.key, f.kind, f.text]),
     [
       ['D2', 'ask', 'text D2'],
-      ['P1', 'know', 'text P1'],
       ['T1', 'do', 'text T1'],
     ],
   )
+  assert.equal(r.keys.has('P1'), false)
 })
 
 test('newArrivals: a reread with the same keys fires nothing', () => {
-  const b = needsBoard(['D1', 'ask'], ['P1', 'know'])
+  const b = needsBoard(['D1', 'ask'], ['T1', 'do'])
   assert.deepEqual(newArrivals(newArrivals(null, b).keys, b).fresh, [])
+})
+
+const atBoard = (...needs) => ({
+  ...needsBoard(),
+  needs: needs.map(([key, kind, at]) => ({ key, kind, isOpen: true, text: `text ${key}`, at })),
+})
+
+test('newArrivals: first sight with a mark announces only items newer than it', () => {
+  const r = newArrivals(null, atBoard(['D1', 'ask', 100], ['D2', 'ask', 40], ['T1', 'do', 51], ['P1', 'know', 900]), 50)
+  assert.deepEqual(
+    r.fresh.map(f => [f.key, f.at]),
+    [
+      ['D1', 100],
+      ['T1', 51],
+    ],
+  )
+  assert.deepEqual(newArrivals(null, atBoard(['D1', 'ask', 100])).fresh, [], 'no mark: silent')
+})
+
+test('newArrivals: an item without at is never announced on first sight', () => {
+  assert.deepEqual(newArrivals(null, atBoard(['D1', 'ask', undefined], ['D2', 'ask', '120']), 50).fresh, [])
 })
 
 test('arrivalNotice: none, one, and several make one notice', () => {
   assert.equal(arrivalNotice([{ terminal: 't4', fresh: [] }]), null)
   const one = [{ key: 'D2', kind: 'ask', text: 'Ship it?' }]
   assert.deepEqual(arrivalNotice([{ terminal: 't4', fresh: one }]), { title: 'New question', body: 'Ship it?', terminal: 't4' })
-  const pin = [{ key: 'P1', kind: 'know', text: 'Note' }]
-  assert.deepEqual(arrivalNotice([{ terminal: 't4', fresh: pin }]).title, 'New pin')
-  const many = arrivalNotice([
-    { terminal: 't7', fresh: [...one, ...pin] },
-    { terminal: 't9', fresh: pin },
-  ])
-  assert.deepEqual(many, { title: '3 new items', body: '1 question, 2 pins', terminal: 't7' })
   const todo = [{ key: 'T1', kind: 'do', text: 'Merge' }]
   assert.deepEqual(arrivalNotice([{ terminal: 't4', fresh: todo }]).title, 'New to-do')
-  assert.equal(arrivalNotice([{ terminal: 't4', fresh: [...todo, ...pin] }]).body, '1 to-do, 1 pin')
+  const many = arrivalNotice([
+    { terminal: 't7', fresh: [...one, ...todo] },
+    { terminal: 't9', fresh: todo },
+  ])
+  assert.deepEqual(many, { title: '3 new items', body: '1 question, 2 to-dos', terminal: 't7' })
 })
 
-test('Arrivals: a to-do and a pin made together sound and post once; the same to-do again is silent', () => {
+test('arrivalNotice: never names pins', () => {
+  assert.equal(arrivalNotice([{ terminal: 't4', fresh: [] }]), null)
+  const n = arrivalNotice([
+    {
+      terminal: 't4',
+      fresh: [
+        { key: 'T1', kind: 'do', text: 'a' },
+        { key: 'D1', kind: 'ask', text: 'b' },
+      ],
+    },
+  ])
+  assert.doesNotMatch(JSON.stringify(n), /pin/i)
+})
+
+test('Arrivals: a to-do and a question made together sound and post once; the same ones again are silent', () => {
   const calls = []
   const a = new Arrivals({ play: s => calls.push(['play', s]), post: n => calls.push(['post', n.title]) })
   a.observe([needsBoard(['D1', 'ask'])])
-  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['P1', 'know'])])
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'], ['P1', 'know'])])
   assert.deepEqual(calls, [
     ['play', 'done'],
     ['post', '2 new items'],
   ])
   calls.length = 0
-  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['P1', 'know'])])
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'], ['P1', 'know'])])
+  assert.deepEqual(calls, [])
+})
+
+test('Arrivals: a know item alone makes no sound and no notice', () => {
+  const calls = []
+  const a = new Arrivals({ play: s => calls.push(s), post: n => calls.push(n) })
+  a.observe([needsBoard(['D1', 'ask'])])
+  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'])])
   assert.deepEqual(calls, [])
 })
 
 test('Arrivals: silent first sight, one sound and notice per change, a returning board is silent', () => {
   const calls = []
   const a = new Arrivals({ play: s => calls.push(['play', s]), post: n => calls.push(['post', n]) })
-  const b1 = needsBoard(['D1', 'ask'])
-  a.observe([b1])
+  a.observe([needsBoard(['D1', 'ask'])])
   assert.deepEqual(calls, [])
-  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'])])
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'])])
   assert.deepEqual(calls, [
     ['play', 'done'],
-    ['post', { title: '2 new items', body: '1 question, 1 pin', action: { name: 'pane.focus', args: { terminal: 't4' } } }],
+    ['post', { title: '2 new items', body: '1 question, 1 to-do', action: { name: 'pane.focus', args: { terminal: 't4' } } }],
   ])
   calls.length = 0
+  const full = [needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'])]
   a.observe([]) // file gone
-  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'])]) // and back
-  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'])])
+  a.observe(full) // and back
+  a.observe(full)
   assert.deepEqual(calls, [])
   // keys are kept while the file is gone: an item that arrived meanwhile still fires on return
   a.observe([])
-  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'], ['D3', 'ask'])])
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'], ['D3', 'ask'])])
   assert.equal(calls.length, 2)
   calls.length = 0
-  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask'], ['D3', 'ask'])])
+  a.observe([needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'], ['D3', 'ask'])])
   // a board seen for the first time later is silent too, while another board's arrival fires
   const other = { ...needsBoard(['X1', 'ask']), session: 's2', coordinator: { terminal: 't9' } }
-  a.observe([needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask']), other])
+  const base = needsBoard(['D1', 'ask'], ['T1', 'do'], ['D2', 'ask'], ['D3', 'ask'])
+  a.observe([base, other])
   assert.deepEqual(calls, [])
-  a.observe([
-    needsBoard(['D1', 'ask'], ['P1', 'know'], ['D2', 'ask']),
-    { ...other, needs: [...other.needs, { key: 'X2', kind: 'know', isOpen: true, text: 'Hi' }] },
-  ])
+  a.observe([base, { ...other, needs: [...other.needs, { key: 'X2', kind: 'do', isOpen: true, text: 'Hi' }] }])
   assert.equal(calls[1][1].action.args.terminal, 't9')
-  assert.equal(calls[1][1].title, 'New pin')
+  assert.equal(calls[1][1].title, 'New to-do')
 })
 
 test('Arrivals: a click goes to the first board with a terminal; with none the notice has no action', () => {
@@ -868,6 +906,72 @@ test('Arrivals: a board with no session is skipped', () => {
   a.observe([nameless])
   a.observe([{ ...nameless, needs: [...nameless.needs, { key: 'D2', kind: 'ask', isOpen: true, text: 'Hi' }] }])
   assert.deepEqual(calls, [])
+})
+
+const withMark = (loadMark, extra = {}) => {
+  const calls = []
+  const a = new Arrivals({
+    play: s => calls.push(['play', s]),
+    post: n => calls.push(['post', n.title]),
+    loadMark,
+    saveMark: at => calls.push(['save', at]),
+    ...extra,
+  })
+  return { a, calls }
+}
+
+test('Arrivals: a missing or unreadable mark is silent and writes now', async () => {
+  const { a, calls } = withMark(async () => {
+    throw new Error('no file')
+  })
+  const before = Date.now()
+  await a.start()
+  assert.equal(calls[0][0], 'save')
+  assert.ok(calls[0][1] >= before)
+  calls.length = 0
+  a.observe([atBoard(['D1', 'ask', 100])])
+  assert.deepEqual(calls, [])
+})
+
+test('Arrivals: boards read before the mark wait for it; first sight announces what is newer than the mark', async () => {
+  let give
+  const { a, calls } = withMark(() => new Promise(r => (give = r)))
+  const started = a.start()
+  a.observe([atBoard(['D1', 'ask', 100], ['D2', 'ask', 40])])
+  assert.deepEqual(calls, [], 'nothing before the mark is known')
+  give(50)
+  await started
+  assert.deepEqual(calls, [
+    ['save', 100],
+    ['play', 'done'],
+    ['post', 'New question'],
+  ])
+})
+
+test('Arrivals: the mark moves to the newest announced at', async () => {
+  const { a, calls } = withMark(async () => 10)
+  await a.start()
+  a.observe([atBoard(['D1', 'ask', 20])])
+  calls.length = 0
+  a.observe([atBoard(['D1', 'ask', 20], ['D2', 'ask', 70], ['T1', 'do', 60])])
+  assert.deepEqual(calls[0], ['save', 70])
+})
+
+test('Arrivals: a second observe with the same items is silent', async () => {
+  const { a, calls } = withMark(async () => 10)
+  await a.start()
+  a.observe([atBoard(['D1', 'ask', 20])])
+  calls.length = 0
+  a.observe([atBoard(['D1', 'ask', 20])])
+  assert.deepEqual(calls, [])
+})
+
+test('Arrivals: muted skips the sound but still posts', () => {
+  const calls = []
+  const a = new Arrivals({ play: s => calls.push(['play', s]), post: n => calls.push(['post', n.title]), muted: () => true })
+  a.observe([needsBoard(['D1', 'ask'])])
+  a.observe([needsBoard(['D1', 'ask'], ['D2', 'ask'])])
+  assert.deepEqual(calls, [['post', 'New question']])
 })
 
 test('parkedNote: a worker parked on WAIT.json shows what it waits for; finished, blocked and unknown ones show nothing', async () => {

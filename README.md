@@ -36,7 +36,7 @@ What only you can do (test a build, merge a PR, restart something) is pinned in 
 
 ### Decisions, with options and a recommendation
 
-Questions that are yours (a product rule, a design choice, an approval) wait in the app with their options and the recommended one marked, with a toast; Herdr's own sound and toast cover a worker that blocks or finishes. Answer on the card, or on Discord if you set it up.
+Questions that are yours (a product rule, a design choice, an approval) wait in the app with their options and the recommended one marked, with a toast and a sound (every layout rings, and the sound follows Herdr's `sounds.enabled`); Herdr's own sound and toast cover a worker that blocks or finishes. Answer on the card, or on Discord if you set it up.
 
 ### Only your questions reach you
 

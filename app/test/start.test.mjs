@@ -26,6 +26,7 @@ globalThis.__startFake = {
   },
   readTextFile: async path => {
     state.reads.push(path)
+    if (path.endsWith('arrivals-mark.json')) return state.mark ?? Promise.reject(new Error('no mark'))
     return state.file
   },
   theme: () => ({ chrome: '#101010', border: '#202020', dim: '#303030' }),
@@ -41,7 +42,7 @@ globalThis.__startFake = {
     if (state.drawThrows) throw new Error('boom')
     return state.terminals ?? []
   },
-  settings: () => ({}),
+  settings: () => state.settings ?? {},
   hc: async () => ({ code: 1, stdout: '' }),
   writeTextFile: async (_path, text) => {
     state.beats.push(JSON.parse(text))
@@ -61,6 +62,7 @@ globalThis.__startFake = {
   props: () => state.props,
   shared: k => state.store[k],
   notify: n => state.notes?.push(n),
+  playSound: n => state.sounds?.push(n),
   setShared: (k, v) => {
     state.store[k] = v
   },
@@ -547,4 +549,50 @@ test('a new run forgets last run’s failures; a closing part forgets only its o
   const strip = drawCopy('strip')
   await strip.copy.close()
   assert.equal(state.store[failKey('strip')], null, 'a closing part forgets its own')
+})
+
+// The sound and toast for new questions come from the `arrivals` copy only: one invisible block per layout.
+const ringOnBoard = async role => {
+  state.sounds = []
+  state.notes = []
+  state.props = { role }
+  state.listing = 's.json'
+  state.mark = JSON.stringify({ at: 50 })
+  state.terminals = []
+  state.file = JSON.stringify({
+    session: 's',
+    coordinator: { terminal: 't1' },
+    needs: [{ key: 'D1', kind: 'ask', isOpen: true, text: 'Ship it?', at: 100 }],
+    tasks: [],
+    workers: [],
+  })
+  const own = { notify() {}, sleep: async () => {}, focus_handle: () => ({}), timer: { every() {}, after() {} }, spawn: f => f(own) }
+  new HerdrAgents().init(state.props, own)
+  await settle()
+  await settle()
+}
+
+test('start: the strip copy no longer calls playSound on a new question', async () => {
+  await ringOnBoard('strip')
+  assert.deepEqual(state.sounds, [])
+  assert.deepEqual(state.notes, [])
+})
+
+test('start: the arrivals copy plays once and posts once, for what arrived after the saved mark', async () => {
+  await ringOnBoard('arrivals')
+  assert.deepEqual(state.sounds, ['done'])
+  assert.equal(state.notes.length, 1)
+  assert.equal(state.notes[0].title, 'New question')
+  assert.deepEqual(state.beats.at(-1), { at: 100 }, 'the mark moved to the question')
+})
+
+test('start: with sounds off the arrivals copy still posts', async () => {
+  state.settings = { sounds: { enabled: false } }
+  try {
+    await ringOnBoard('arrivals')
+  } finally {
+    state.settings = null
+  }
+  assert.deepEqual(state.sounds, [])
+  assert.equal(state.notes.length, 1)
 })

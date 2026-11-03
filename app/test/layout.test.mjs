@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
+  addArrivals,
+  addArrivalsToLayouts,
   removeCard,
   removePinBar,
   addPanel,
@@ -69,6 +71,12 @@ test('everything else is main as it was, and main is not changed', () => {
   layout.children[0].children[0].content = { mod: 'agents' }
   assert.equal(layout.children[1].children[1].children[0].floating.length, 1, 'only the floating sheet is added to main')
   delete layout.children[1].children[1].children[0].floating
+  assert.deepEqual(
+    layout.floating.map(f => f.id),
+    ['hrd-arrivals'],
+    'and the invisible arrivals block on the root',
+  )
+  delete layout.floating
   assert.deepEqual(layout, main())
 })
 
@@ -490,4 +498,49 @@ test("the board joins Herdr's panel stack once, and the stack's choice stays", (
   assert.equal(layout.children[0].hidden, true)
   assert.equal(addPanel(layout), false)
   assert.equal(addPanel({ id: 'root', children: [] }), false)
+})
+
+test('addArrivals: adds one floating hrd-arrivals block; a second call changes nothing', () => {
+  const layout = main()
+  assert.equal(addArrivals(layout), true)
+  assert.deepEqual(layout.floating, [
+    { id: 'hrd-arrivals', content: { mod: 'herdr-agents', props: { role: 'arrivals' } }, edge: 'top', align: 'end' },
+  ])
+  assert.equal(addArrivals(layout), false)
+  assert.equal(layout.floating.length, 1)
+})
+
+test('addArrivals: keeps an existing (dragged) hrd-arrivals', () => {
+  const layout = main()
+  layout.children[1].floating = [{ id: 'hrd-arrivals', content: { mod: 'herdr-agents' }, edge: 'left', align: 'start' }]
+  assert.equal(addArrivals(layout), false)
+  assert.equal(layout.floating, undefined)
+  assert.equal(layout.children[1].floating[0].edge, 'left')
+})
+
+test('the coordinator layout carries the arrivals block', () => {
+  assert.equal(
+    coordinatorLayout(main()).floating.some(f => f.id === 'hrd-arrivals'),
+    true,
+  )
+})
+
+test('addArrivalsToLayouts: writes hrd-arrivals into every layout; a broken json is left untouched', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hrd-layout-'))
+  try {
+    mkdirSync(join(home, 'layouts'))
+    const dir = join(home, 'layouts')
+    writeFileSync(join(dir, 'main.json'), JSON.stringify(main()))
+    writeFileSync(join(dir, 'terminals.json'), JSON.stringify(main()))
+    writeFileSync(join(dir, 'broken.json'), '{ nope')
+    writeFileSync(join(dir, 'notes.txt'), 'x')
+    writeCoordinatorLayout(home)
+    assert.deepEqual(addArrivalsToLayouts(home).sort(), ['main.json', 'terminals.json'])
+    for (const name of ['main.json', 'terminals.json', 'coordinator.json'])
+      assert.equal(JSON.parse(readFileSync(join(dir, name), 'utf8')).floating.filter(f => f.id === 'hrd-arrivals').length, 1, name)
+    assert.equal(readFileSync(join(dir, 'broken.json'), 'utf8'), '{ nope')
+    assert.deepEqual(addArrivalsToLayouts(home), [], 'a second run changes nothing')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
