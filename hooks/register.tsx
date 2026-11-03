@@ -172,7 +172,8 @@ export const register: Register = on => {
     if (tokens !== undefined) {
       const { limit } = await resetSettings($)
       await showContext($, tokens, limit)
-      await liveContext($, tokens, e.context.window ?? limit)
+      // The reset limit isn't the window, so without a window there is no ctx % to show.
+      if (e.context.window) await liveContext($, tokens, e.context.window)
       void maybeReset($, tokens)
     }
     return out

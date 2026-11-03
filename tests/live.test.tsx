@@ -108,3 +108,11 @@ test('a worker records its context fill after each turn, with the window when it
   await $.turn.start({ text: 'Go.', turnId: 't1' })
   expect(JSON.parse(files[LIVE] ?? '{}').context).toEqual({ tokens: 82_000, limit: 200_000 })
 })
+
+test('a worker records no context when the window is not known', async ($, on) => {
+  on('session.measure', () => ({ changed: ['context'] }))
+  const { clock, files } = await start($, on, {}, {}, IN_WORKER)
+  await $.session.measure({ context: { tokens: 82_000 }, rateLimits: [], changed: ['context'] } as never)
+  await clock.advance(3000)
+  expect(JSON.parse(files[LIVE] ?? '{}').context).toBe(undefined)
+})
