@@ -1,10 +1,11 @@
 // Makes layouts/coordinator.json from layouts/main.json: the same window with the strip
 // under the work area (the strip draws the answer card above its tabs) and the version at the right of the status bar. Written only if absent, and never switched to
-// (layout.clone would switch the owner's window).
+// (layout.clone would switch the owner's window). Every layout in the app home also gets one invisible `hrd-arrivals` block, which
+// rings for new questions and to-dos whichever layout the window is in.
 //
 //   node app/layout.mjs [app home]      default: $HERDR_APP_HOME or ~/.config/herdr-app
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,6 +25,15 @@ const sheetBlock = () => ({
   content: { mod: 'herdr-agents', props: { role: 'sheet' } },
   edge: 'top',
   align: 'center',
+})
+
+/** The invisible block that sounds and posts a toast for each new question or to-do. Every layout holds one: it draws nothing,
+ *  like the sheet while closed. */
+const arrivalsBlock = () => ({
+  id: 'hrd-arrivals',
+  content: { mod: 'herdr-agents', props: { role: 'arrivals' } },
+  edge: 'top',
+  align: 'end',
 })
 
 const findNode = (node, id) => {
@@ -71,6 +81,40 @@ export function addSheet(layout) {
   if (!main) return false
   main.floating = [...(main.floating ?? []), sheetBlock()]
   return true
+}
+
+/** Adds the floating `hrd-arrivals` block to the root block unless one floats already (a dragged one keeps its spot). true if
+ *  the layout changed. */
+export function addArrivals(layout) {
+  if (!layout || typeof layout !== 'object' || hasFloating(layout, 'hrd-arrivals')) return false
+  layout.floating = [...(layout.floating ?? []), arrivalsBlock()]
+  return true
+}
+
+/** Gives every `*.json` layout in <home>/layouts the arrivals block, writing only the ones that change. A file that does not
+ *  parse is skipped with a warning and never rewritten. Returns the names it changed. */
+export function addArrivalsToLayouts(home) {
+  const dir = join(home, 'layouts')
+  const changed = []
+  let names = []
+  try {
+    names = readdirSync(dir).filter(n => n.endsWith('.json'))
+  } catch {}
+  for (const name of names) {
+    const file = join(dir, name)
+    let layout
+    try {
+      layout = JSON.parse(readFileSync(file, 'utf8'))
+    } catch (e) {
+      console.log(`Layout "${name}" left as it is (not valid JSON): ${e.message}`)
+      continue
+    }
+    if (!addArrivals(layout)) continue
+    writeFileSync(`${file}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
+    renameSync(`${file}.tmp`, file)
+    changed.push(name)
+  }
+  return changed
 }
 
 /** Removes the pin bar's `hrd-pins` block from `layout`, in place, so the tabs sit right above the work area. true if it was there. */
@@ -201,6 +245,7 @@ export function coordinatorLayout(main, version) {
   addVersion(layout)
   addUsage(layout)
   addPanel(layout)
+  addArrivals(layout)
   layout.cloned_from = version ? { name: 'main', version } : { name: 'main' }
   return layout
 }
@@ -260,4 +305,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     // Not fatal: the install carries on without the layout.
     console.log(`Layout "coordinator" not made: ${e.message}`)
   }
+  // After the coordinator layout is written, so it is covered too; its own step, so a failure above does not skip it.
+  const arrivals = addArrivalsToLayouts(home)
+  if (arrivals.length) console.log(`Arrivals block (sound and toast for new questions and to-dos) added to: ${arrivals.join(', ')}.`)
 }

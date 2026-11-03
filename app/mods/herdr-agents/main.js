@@ -1,6 +1,7 @@
 import { View, div } from 'gpui-kit'
 import { exec, focused, props, setShared, shared, terminals } from 'herdr'
 import { AgentsList } from './agents.js'
+import { ArrivalsRole } from './arrivalsrole.js'
 import { Boards, beat, clearBeat } from './board.js'
 import { makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
@@ -32,6 +33,11 @@ export default class HerdrAgents extends View {
         this.version = await readVersion()
         if (this.version) cx.notify()
       })
+      return
+    }
+    if (props()?.role === 'arrivals') {
+      // Draws nothing; rings for new questions and to-dos in whatever layout the window is in.
+      new ArrivalsRole().init(cx)
       return
     }
     if (props()?.role === 'usage') {
