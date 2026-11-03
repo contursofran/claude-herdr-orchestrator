@@ -227,6 +227,40 @@ test('a header verdict reaches the coordinator on the prompt tag', async ($, on)
   await stopAll($, clock, ['w-busy'])
 })
 
+test('a review report keeps its verdict and blockers on the board; a newer review replaces them', async ($, on) => {
+  const { clock, typed, files, finish } = await start($, on)
+  const BOARD = '/home/t/.herdr-agents/board/session-1234.json'
+  const review = async (body: string) => {
+    await $.tool.call({
+      tool: 'mcp__herdr-agents__spawn',
+      worker: 'review-12',
+      profile: 'reviewer',
+      cwd: '/repo/wt',
+      task: 'Review PR #12.',
+    })
+    await settled()
+    const token = typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]
+    files['/repo/wt/.herdr-agents/review-12/RESULT.md'] = `<!-- report ${token} -->\n${body}`
+    await finish('review-12')
+    await clock.advance(BATCH_MS)
+    await clock.advance(3000)
+    return (JSON.parse(files[BOARD] ?? '{}').tasks ?? []).find((t: { pr: number }) => t.pr === 12)
+  }
+  const first = await review(
+    '```report\nstatus: done\npr: 12\nverdict: changes\nhead: abc1234\nsummary: Two problems.\n```\n**Blockers**\n1. a.ts:3 wrong total\n2. b.ts:9 no test\n\n**Nits**\n1. naming',
+  )
+  expect(first.review).toEqual({
+    from: 'review-12',
+    verdict: 'changes',
+    blockers: ['a.ts:3 wrong total', 'b.ts:9 no test'],
+    head: 'abc1234',
+  })
+  await stopAll($, clock, ['review-12'])
+  const second = await review('```report\nstatus: done\npr: 12\nverdict: approve\nsummary: Fixed.\n```')
+  expect(second.review).toEqual({ from: 'review-12', verdict: 'approve', blockers: [], head: null })
+  await stopAll($, clock, ['review-12'])
+})
+
 test('a stop while a report is being delivered sends nothing for the stopped worker', async ($, on) => {
   const s = await start($, on)
   await spawnBusy($, 'builder')

@@ -128,6 +128,17 @@
             "type": ["string", "null"],
             "description": "The base branch an open PR conflicts with; null or absent when it doesn't or nobody knows (older boards)."
           },
+          "review": {
+            "type": ["object", "null"],
+            "description": "The newest review of this task from a reviewer's report; null or absent when none (older boards).",
+            "required": ["from", "verdict", "blockers"],
+            "properties": {
+              "from": { "type": "string", "description": "The reviewer worker's name." },
+              "verdict": { "enum": ["approve", "changes"] },
+              "blockers": { "type": "array", "description": "A few short lines, empty on approve.", "items": { "type": "string" } },
+              "head": { "type": ["string", "null"], "description": "The commit it reviewed, when the report said." }
+            }
+          },
           "shares": {
             "type": "array",
             "description": "The other open PRs on this board that change the same files, lockfiles aside; absent on older boards.",

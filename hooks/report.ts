@@ -65,6 +65,39 @@ function prNumbers(value: string): number[] {
   return [...new Set(found)].slice(0, 5)
 }
 
+// The blockers a review report lists: the lines under a `Blockers` heading (`**Blockers**`, `## Blockers`,
+// `Blockers:`), up to the next heading, a `Nits` line or a blank line after the list began. Each is one
+// short line without its list marker or number. The heading line holds only the title, or the title, `:` and
+// one inline blocker: a sentence that starts with "Blockers" is not one. Tolerant: no such heading means none.
+const BLOCKERS_HEAD = /^\s*(?:#+\s*)?\**\s*blockers?\s*(?:\**\s*:\s*\**\s*(.*?)|\**)\s*$/i
+const LIST_ITEM = /^\s*(?:[-*]|\d+[.)])\s+/
+export const BLOCKERS = 4
+export const BLOCKER_CHARS = 100
+export function parseBlockers(body: string): string[] {
+  const lines = body.split('\n')
+  const found: string[] = []
+  let i = lines.findIndex(l => BLOCKERS_HEAD.test(l) && !LIST_ITEM.test(l))
+  if (i < 0) return found
+  const inline = BLOCKERS_HEAD.exec(lines[i]!)?.[1]?.trim() ?? ''
+  if (inline && !/^(?:none|n\/a|-)\b\.?$/i.test(inline)) found.push(inline)
+  for (i++; i < lines.length; i++) {
+    const line = lines[i]!
+    if (!line.trim()) {
+      if (found.length) break
+      continue
+    }
+    if (!LIST_ITEM.test(line)) {
+      // a heading or another bold title ends the list; wrapped text under an item does not start one
+      if (/^\s*(?:#|\*\*|[A-Za-z][\w ]*:\s*$)/.test(line) || !found.length) break
+      continue
+    }
+    const text = line.replace(LIST_ITEM, '').replace(/\*\*/g, '').trim()
+    if (/^none\b\.?$/i.test(text)) break
+    if (text) found.push(text)
+  }
+  return found.slice(0, BLOCKERS).map(b => (b.length > BLOCKER_CHARS ? `${b.slice(0, BLOCKER_CHARS - 1)}…` : b))
+}
+
 // The header of a report body (RESULT.md without its token line), or undefined when it has none:
 // no summary line with some text in it. Its first key must start within HEADER_SCAN_LINES.
 export function parseHeader(body: string): Header | undefined {
