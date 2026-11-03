@@ -228,16 +228,18 @@ export const QUIET_SHOW_MS = 2 * 60_000
 export const QUIET_WARN_MS = 5 * 60_000
 
 /** What an agent's row says it is doing, from a board's worker or coordinator; null when nothing is worth a line. `short` leaves the
- *  time out of a running command, as the board's rows do. The board has these fields only mid-turn, so an idle agent gets no warning. */
-export function liveLine(agent, now) {
+ *  time out of a running command, as the board's rows do. The board has these fields only mid-turn, so an idle agent gets no warning.
+ *  `coordinator` is set for the coordinator's own row: once amber, its text also suggests the way out (workers have an interrupt button). */
+export function liveLine(agent, now, coordinator = false) {
   if (typeof agent?.command === 'string' && agent.command) {
     const short = `running ${agent.command}`
     const age = ageText(agent.commandAt, now)
     return { text: age && age !== 'now' ? `${short} · ${age}` : short, short, quiet: false, warn: false }
   }
   if (!Number.isFinite(agent?.outputAt) || now - agent.outputAt < QUIET_SHOW_MS) return null
-  const text = `no output · ${ageText(agent.outputAt, now)}`
-  return { text, short: text, quiet: true, warn: now - agent.outputAt >= QUIET_WARN_MS }
+  const short = `no output · ${ageText(agent.outputAt, now)}`
+  const warn = now - agent.outputAt >= QUIET_WARN_MS
+  return { text: warn && coordinator ? `${short} · Esc and resend?` : short, short, quiet: true, warn }
 }
 
 /** The line for the row a work row's worker runs on: its working worker's, if it has one. */
@@ -250,7 +252,7 @@ export function rowLive(board, row, now) {
 export function agentLive(boards, terminals, address, now) {
   const name = (terminals ?? []).find(t => t.address === address)?.name
   for (const b of boards ?? []) {
-    if (b.coordinator?.terminal === address) return liveLine(b.coordinator, now)
+    if (b.coordinator?.terminal === address) return liveLine(b.coordinator, now, true)
     const w = name && (b.workers ?? []).find(x => x?.name === name && x.state === 'working')
     if (w) return liveLine(w, now)
   }

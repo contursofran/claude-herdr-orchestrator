@@ -1014,6 +1014,18 @@ test('liveLine: a running tool with its clock, then quiet from 2 minutes, amber 
   assert.equal(liveLine(null, NOW), null)
 })
 
+test('liveLine: an amber quiet coordinator row suggests Esc and resend', async () => {
+  const { liveLine, agentLive } = await import('../mods/herdr-agents/model.js')
+  const NOW = 1_000_000_000
+  const min = m => m * 60_000
+  const a = { outputAt: NOW - min(6) }
+  assert.deepEqual(liveLine(a, NOW, true), { text: 'no output · 6m · Esc and resend?', short: 'no output · 6m', quiet: true, warn: true })
+  assert.equal(liveLine(a, NOW).text, 'no output · 6m')
+  assert.equal(liveLine({ outputAt: NOW - min(3) }, NOW, true).text, 'no output · 3m')
+  const board = { coordinator: { terminal: 't1', outputAt: NOW - min(6) }, workers: [] }
+  assert.equal(agentLive([board], [], 't1', NOW).text, 'no output · 6m · Esc and resend?')
+})
+
 test('rowLive and agentLive find a working worker, and agentLive a coordinator by its terminal', async () => {
   const { agentLive, rowLive } = await import('../mods/herdr-agents/model.js')
   const NOW = 10_000_000
