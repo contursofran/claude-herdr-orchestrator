@@ -25,7 +25,8 @@ jobs:
           w=scripts/herdr-hidden-window.sh
           export HERDR_HIDDEN_APP=/Volumes/Herdr/Herdr.app
           export PATH="$HOME/.local/bin:$PATH"
-          trap '$w stop || true' EXIT
+          trap 'cp /private/tmp/hw-hw/*.log .herdr-agents/smoke/ 2>/dev/null; tail -n 40 /private/tmp/hw-hw/*.log || true; $w stop || true' EXIT
+          set -x
           $w start
           $w demo
           $w run herdr-app status | tee .herdr-agents/smoke/status.json
@@ -36,9 +37,6 @@ jobs:
           ls -l .herdr-agents/smoke
           shasum .herdr-agents/smoke/*.png
           ! grep -q "could not create display link" /private/tmp/hw-hw/app.log
-      - name: Collect
-        if: always()
-        run: cp /private/tmp/hw-*/app.log .herdr-agents/smoke/ 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
