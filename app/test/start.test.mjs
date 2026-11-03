@@ -117,9 +117,13 @@ const newRun = () => {
   delete globalThis.__hrdStarted
 }
 const cx = { spawn() {}, notify() {}, focus_handle: () => ({}), timer: { every() {}, after() {} } }
-const startCopy = role => {
-  state.props = { role }
-  new HerdrAgents().init(state.props, cx)
+// A copy loads its role's code with import(): `loaded` settles once the role is running, and `role` is what it made.
+const startCopy = async (role, own = cx) => {
+  state.props = typeof role === 'string' ? { role } : role
+  const copy = new HerdrAgents()
+  copy.init(state.props, own)
+  await copy.loaded
+  return copy
 }
 const left = () => ({ 'hrd.pins': 'o2', 'hrd.popup': 'o3', 'hrd.doneReq': [{ session: 's', key: 'K1' }], 'hrd.read': { a: true } })
 const card = { session: 's', key: 'D1' }
@@ -134,38 +138,38 @@ beforeEach(() => {
   newRun()
 })
 
-test('the strip copy clears what the last run left, on the first start of a run', () => {
+test('the strip copy clears what the last run left, on the first start of a run', async () => {
   state.store = left()
-  startCopy('strip')
+  await startCopy('strip')
   assert.deepEqual(state.store, { 'hrd.pins': null, 'hrd.popup': null, 'hrd.doneReq': null, 'hrd.read': { a: true } })
 })
 
-test('a strip copy started again in the same run keeps open overlays and a queued Done', () => {
-  startCopy('strip')
+test('a strip copy started again in the same run keeps open overlays and a queued Done', async () => {
+  await startCopy('strip')
   state.store = left()
-  startCopy('strip')
+  await startCopy('strip')
   assert.deepEqual(state.store, left())
 })
 
-test('the next run clears again', () => {
-  startCopy('strip')
+test('the next run clears again', async () => {
+  await startCopy('strip')
   newRun()
   state.store = left()
-  startCopy('strip')
+  await startCopy('strip')
   assert.equal(state.store['hrd.pins'], null)
   assert.equal(state.store['hrd.doneReq'], null)
 })
 
-test('the strip copy (it draws the card) forgets a card left open by the last run, on the first start of a run', () => {
+test('the strip copy (it draws the card) forgets a card left open by the last run, on the first start of a run', async () => {
   state.store = { 'hrd.open': card, 'hrd.pick': card }
-  startCopy('strip')
+  await startCopy('strip')
   assert.deepEqual(state.store, { 'hrd.open': null, 'hrd.pick': null })
 })
 
-test('a strip copy started again in the same run keeps the open card', () => {
-  startCopy('strip')
+test('a strip copy started again in the same run keeps the open card', async () => {
+  await startCopy('strip')
   state.store = { 'hrd.open': card, 'hrd.pick': card }
-  startCopy('strip')
+  await startCopy('strip')
   assert.deepEqual(state.store, { 'hrd.open': card, 'hrd.pick': card })
 })
 
@@ -177,7 +181,7 @@ test('a new strip copy replaces the board pop-up the last copy opened, by its sh
   assert.equal(state.store['hrd.popup'], 'o4')
 })
 
-test('the board pop-up remembers the terminal to hand back; a card being replaced decides it', () => {
+test('the board pop-up remembers the terminal to hand back; a card being replaced decides it', async () => {
   globalThis.window = { viewport_size: () => ({ width: 1280, height: 820 }) }
   state.focused = { terminal: 't2', space: 'a' }
   state.store = {}
@@ -203,9 +207,17 @@ const startVersion = async file => {
     timer: { every: () => counts.timers++, after: () => counts.timers++ },
   }
   copy.init(state.props, own)
+  await copy.loaded
+  spawned.pop() // the redraw that shows the role is its own spawn, not the version read
   await Promise.all(spawned.map(f => f(own)))
   return { copy, counts, spawned }
 }
+
+test('closing an arrivals copy does not throw', async () => {
+  newRun()
+  const copy = await startCopy('arrivals')
+  await copy.close()
+})
 
 test('the version copy reads its file once, with no timer, no boards and no shared state', async () => {
   const { copy, counts, spawned } = await startVersion('{"version":"1.2.3","commit":"abc1234"}')
@@ -213,7 +225,7 @@ test('the version copy reads its file once, with no timer, no boards and no shar
   assert.equal(spawned.length, 1)
   assert.equal(counts.timers, 0)
   assert.equal(counts.notify, 1)
-  assert.equal(copy.boards, undefined)
+  assert.equal(copy.role.boards, undefined)
   assert.deepEqual(state.store, {})
   assert.equal(copy.render().kids[0].kids[0], 'herdr-agents 1.2.3 · abc1234')
 })
@@ -226,13 +238,13 @@ test('a version copy with a missing or bad file draws no text and does not redra
   }
 })
 
-test('before the file is read the version copy draws no text', () => {
+test('before the file is read the version copy draws no text', async () => {
   state.props = { role: 'version' }
   assert.deepEqual(new HerdrAgents().render().kids, [])
 })
 
 // The timers a copy starts, by interval; `tick` runs its age timer with this copy's own cx.
-function startTimed(props) {
+async function startTimed(props) {
   state.props = props
   const every = {}
   const counts = { notify: 0 }
@@ -242,39 +254,33 @@ function startTimed(props) {
     focus_handle: () => ({}),
     timer: { every: (ms, f) => (every[ms] = f), after() {} },
   }
-  const copy = new HerdrAgents()
-  copy.init(state.props, own)
-  return { copy, counts, every, tick: () => every[AGE_TICK_MS](own) }
+  const copy = await startCopy(props, own)
+  counts.notify = 0 // the redraw for the loaded role is not what these tests count
+  return { copy: copy.role, counts, every, tick: () => every[AGE_TICK_MS](own) }
 }
 
-test('only the copies that draw ages and have no timer for them start the age timer', () => {
+test('only the copies that draw ages and have no timer for them start the age timer', async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {} }
-  for (const role of ['strip', 'sheet', 'board']) assert.ok(startTimed({ role, list: [] }).every[AGE_TICK_MS], role)
-  for (const role of ['agents', 'version']) assert.equal(startTimed({ role, session: 's' }).every[AGE_TICK_MS], undefined, role)
+  for (const role of ['strip', 'sheet', 'board']) assert.ok((await startTimed({ role, list: [] })).every[AGE_TICK_MS], role)
+  for (const role of ['agents', 'version']) assert.equal((await startTimed({ role, session: 's' })).every[AGE_TICK_MS], undefined, role)
 })
 
 // What the pin bar's copy did besides drawing (#295): with the bar gone the strip's copy, which is always in the window, does it.
-test('the strip copy writes the heartbeat on a timer and at its first board read; no other copy does', () => {
+test('the strip copy writes the heartbeat on a timer and at its first board read; no other copy does', async () => {
   globalThis.localStorage = { getItem: () => null, setItem() {} }
-  assert.equal(typeof startTimed({ role: 'strip' }).every[HEARTBEAT_MS], 'function')
-  for (const role of ['sheet', 'panel', 'board', 'pinbar']) assert.equal(startTimed({ role }).every[HEARTBEAT_MS], undefined, role)
-  state.props = { role: 'strip' }
-  const strip = new HerdrAgents()
-  strip.init(state.props, cx)
-  assert.equal(strip.beating, true, 'the strip copy owns the heartbeat')
-  state.props = { role: 'sheet' }
-  const sheet = new HerdrAgents()
-  sheet.init(state.props, cx)
-  assert.equal(sheet.beating, false)
+  assert.equal(typeof (await startTimed({ role: 'strip' })).every[HEARTBEAT_MS], 'function')
+  for (const role of ['sheet', 'panel', 'board', 'pinbar']) assert.equal((await startTimed({ role })).every[HEARTBEAT_MS], undefined, role)
+  assert.equal((await startCopy('strip')).role.beating, true, 'the strip copy owns the heartbeat')
+  assert.equal((await startCopy('sheet')).role.beating, undefined)
 })
 
-test('the strip copy strands what the pin bar queued and never sent, once, when it starts', () => {
+test('the strip copy strands what the pin bar queued and never sent, once, when it starts', async () => {
   const queued = { id: 'a1', session: 's', action: { kind: 'done', key: 'K1' }, key: 'K1', due: Date.now() + 5000, surface: 'bar' }
   const other = { ...queued, id: 'a2', surface: 'elsewhere' }
   state.store = { 'hrd.outbox': { queue: [queued, other], sent: [], failed: [] } }
-  startCopy('sheet')
+  await startCopy('sheet')
   assert.deepEqual(state.store['hrd.outbox'].queue, [queued, other], 'a copy that is not the strip leaves it')
-  startCopy('strip')
+  await startCopy('strip')
   assert.deepEqual(state.store['hrd.outbox'].queue, [other], "only the bar's own action goes")
   assert.deepEqual(
     state.store['hrd.outbox'].failed.map(f => f.key),
@@ -282,7 +288,7 @@ test('the strip copy strands what the pin bar queued and never sent, once, when 
   )
 })
 
-test('the board pop-up redraws when a merge age moves with the clock, and not within the minute', t => {
+test('the board pop-up redraws when a merge age moves with the clock, and not within the minute', async t => {
   const T0 = 1_000_000_000
   let clock = T0 + 2 * 60_000
   t.mock.method(Date, 'now', () => clock)
@@ -293,7 +299,7 @@ test('the board pop-up redraws when a merge age moves with the clock, and not wi
       { key: 'b', pr: 6, isMerged: false },
     ],
   }
-  const { copy, counts, tick } = startTimed({ role: 'board', session: 's', board, height: 300 })
+  const { copy, counts, tick } = await startTimed({ role: 'board', session: 's', board, height: 300 })
   copy.render()
   clock += 30_000
   tick()
@@ -303,37 +309,37 @@ test('the board pop-up redraws when a merge age moves with the clock, and not wi
   assert.equal(counts.notify, 1)
 })
 
-test('the board pop-up with no merged row asks for no redraw as the clock moves', t => {
+test('the board pop-up with no merged row asks for no redraw as the clock moves', async t => {
   let clock = 1_000_000_000
   t.mock.method(Date, 'now', () => clock)
   const board = { session: 's', tasks: [{ key: 'a', pr: 5, isMerged: false }] }
-  const { copy, counts, tick } = startTimed({ role: 'board', session: 's', board, height: 300 })
+  const { copy, counts, tick } = await startTimed({ role: 'board', session: 's', board, height: 300 })
   copy.render()
   clock += 10 * 60_000
   tick()
   assert.equal(counts.notify, 0)
 })
 
-test('a closed card or sheet asks for no redraw as the clock moves', t => {
+test('a closed card or sheet asks for no redraw as the clock moves', async t => {
   let clock = 1_000_000_000
   t.mock.method(Date, 'now', () => clock)
   for (const role of ['strip', 'sheet']) {
-    const { counts, tick } = startTimed({ role })
+    const { counts, tick } = await startTimed({ role })
     clock += 10 * 60_000
     tick()
     assert.equal(counts.notify, 0, role)
   }
 })
 
-test('an open card (drawn by the strip), and an open sheet redraw when the age they show moves, and not within the minute', t => {
+test('an open card (drawn by the strip), and an open sheet redraw when the age they show moves, and not within the minute', async t => {
   const T0 = 1_000_000_000
   let clock = T0 + 2 * 60_000
   t.mock.method(Date, 'now', () => clock)
   const need = { key: 'D1', kind: 'ask', isOpen: true, at: T0 }
   const board = { session: 's', needs: [need] }
   const copies = {
-    strip: startTimed({ role: 'strip' }),
-    sheet: startTimed({ role: 'sheet' }),
+    strip: await startTimed({ role: 'strip' }),
+    sheet: await startTimed({ role: 'sheet' }),
   }
   state.store['hrd.open'] = { session: 's', key: 'D1' }
   state.store['hrd.sheet'] = { session: 's', key: 'D1' }
@@ -367,7 +373,7 @@ test('commands before the first board read wait for it: the last one then does i
   state.focused = { terminal: 't1', space: 'a' }
   state.file = JSON.stringify({ session: 's', coordinator: { terminal: 't1' }, needs: [], tasks: [] })
   const own = { notify() {}, sleep: async () => {}, focus_handle: () => ({}), timer: { every() {}, after() {} }, spawn: f => f(own) }
-  new HerdrAgents().init(state.props, own)
+  await startCopy(state.props, own)
   await settle()
   assert.equal(state.opened, null, 'no board yet')
   endRead()
@@ -429,11 +435,9 @@ const drawCx = () => {
   }
   return c
 }
-const drawCopy = role => {
-  state.props = { role }
+const drawCopy = async role => {
   const c = drawCx()
-  const copy = new HerdrAgents()
-  copy.init(state.props, cx) // the boards' and keys' own loops stay out of it
+  const { role: copy } = await startCopy(role) // the boards' and keys' own loops stay out of it
   return { copy, c, draw: async () => (copy.render(c), await c.settle()) }
 }
 const live = () => {
@@ -441,7 +445,7 @@ const live = () => {
 }
 
 test('a strip that throws records it and draws nothing; a later good draw clears it', async () => {
-  const { draw } = drawCopy('strip')
+  const { draw } = await drawCopy('strip')
   state.drawThrows = true
   await draw()
   assert.equal(state.store[failKey('strip')], 'boom')
@@ -451,7 +455,7 @@ test('a strip that throws records it and draws nothing; a later good draw clears
 })
 
 test('a part that keeps failing or keeps drawing writes nothing again, so it starts no redraws', async () => {
-  const { draw } = drawCopy('strip')
+  const { draw } = await drawCopy('strip')
   let writes = 0
   const real = state.store
   state.store = new Proxy(real, {
@@ -471,7 +475,7 @@ test('a part that keeps failing or keeps drawing writes nothing again, so it sta
 })
 
 test('a draw that changes nothing spawns no task and sleeps no sleep(0)', async () => {
-  const { copy, c } = drawCopy('strip')
+  const { copy, c } = await drawCopy('strip')
   let spawns = 0
   let sleeps = 0
   const { spawn } = c
@@ -490,7 +494,7 @@ test('a draw that changes nothing spawns no task and sleeps no sleep(0)', async 
 })
 
 test('the write waits until the draw is over, for a failure and for its clearing', async () => {
-  const { copy, c } = drawCopy('strip')
+  const { copy, c } = await drawCopy('strip')
   state.drawThrows = true
   copy.render(c)
   assert.equal(state.store[failKey('strip')], undefined, 'not written during the failing draw')
@@ -503,18 +507,16 @@ test('the write waits until the draw is over, for a failure and for its clearing
   assert.equal(state.store[failKey('strip')], null)
 })
 
-test('the sheet is not a band part: its throw stays the app’s', () => {
-  state.props = { role: 'sheet' }
-  const copy = new HerdrAgents()
-  copy.boards = { list: () => [] }
+test('the sheet is not a band part: its throw stays the app’s', async () => {
+  const { copy, c } = await drawCopy('sheet')
   state.drawThrows = true
-  assert.throws(() => copy.render(drawCx()), /boom/)
+  assert.throws(() => copy.render(c), /boom/)
 })
 
 test('the heartbeat lists no terminal while the strip fails, at once, and lists again after a good draw', async () => {
   live()
   const boards = [{ session: 's', coordinator: { terminal: 't1' } }]
-  const bar = drawCopy('strip')
+  const bar = await drawCopy('strip')
   bar.copy.boards.list = () => boards
   const listed = async () => {
     await bar.c.settle()
@@ -543,12 +545,39 @@ test('the heartbeat lists no terminal while the strip fails, at once, and lists 
 
 test('a new run forgets last run’s failures; a closing part forgets only its own', async () => {
   state.store = { [failKey('strip')]: 'old' }
-  startCopy('strip')
+  await startCopy('strip')
   assert.equal(state.store[failKey('strip')], null, 'the first strip copy of a run clears it')
   state.store[failKey('strip')] = 'again'
-  const strip = drawCopy('strip')
+  const strip = await drawCopy('strip')
   await strip.copy.close()
   assert.equal(state.store[failKey('strip')], null, 'a closing part forgets its own')
+})
+
+// Herdr keeps every load of a mod for the life of the window (#335): a copy must import only its own role's code.
+test('main.js imports nothing static from the mod: each role loads its own code with import()', async () => {
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../mods/herdr-agents/main.js', import.meta.url), 'utf8')
+  const statics = [...src.matchAll(/^import .* from '(.*)'$/gm)].map(m => m[1])
+  assert.deepEqual(statics, ['gpui-kit', 'herdr'])
+  for (const role of ['version', 'usage', 'settings', 'spaces', 'agents', 'panel', 'board', 'strip', 'sheet', 'arrivals'])
+    assert.match(src, new RegExp(`${role}: \\(\\) => import\\('./role-${role}\\.js'\\)`))
+})
+
+test('a copy of an unknown role loads nothing and draws nothing', async () => {
+  const copy = await startCopy('pinbar')
+  assert.equal(copy.role, undefined)
+  assert.deepEqual(copy.render().kids, [])
+})
+
+// After the import() Herdr's props() answers for the copy loaded last (found in a hidden window): the role keeps its own.
+test('a role runs with the props its copy had when it started, not what props() says after the import', async () => {
+  state.props = { role: 'version' }
+  const copy = new HerdrAgents()
+  copy.init(state.props, cx)
+  state.props = { role: 'sheet', float: 'hrd-sheet' } // the next copy's props
+  await copy.loaded
+  assert.deepEqual(copy.role.constructor.name, 'VersionRole')
+  assert.deepEqual(copy.role.props, { role: 'version' })
 })
 
 // The sound and toast for new questions come from the `arrivals` copy only: one invisible block per layout.
@@ -567,7 +596,9 @@ const ringOnBoard = async role => {
     workers: [],
   })
   const own = { notify() {}, sleep: async () => {}, focus_handle: () => ({}), timer: { every() {}, after() {} }, spawn: f => f(own) }
-  new HerdrAgents().init(state.props, own)
+  const copy = new HerdrAgents()
+  copy.init(state.props, own)
+  await copy.loaded
   await settle()
   await settle()
 }
@@ -595,4 +626,66 @@ test('start: with sounds off the arrivals copy still posts', async () => {
   }
   assert.deepEqual(state.sounds, [])
   assert.equal(state.notes.length, 1)
+})
+
+// A role whose module cannot load must say so (#342): a blank band hides the fault.
+test('a role that fails to load shows why in its view and, for the strip, in the draw-failed key', async () => {
+  const logs = []
+  const log = console.log
+  console.log = (...a) => logs.push(a.join(' '))
+  try {
+    state.store = {}
+    state.props = { role: 'strip' }
+    const bad = {
+      ...cx,
+      timer: {
+        every() {
+          throw new Error('no such module')
+        },
+        after() {},
+      },
+    }
+    const copy = new HerdrAgents()
+    copy.init(state.props, bad)
+    await copy.loaded
+    await settle()
+    assert.match(logs[0], /strip failed to load: no such module/)
+    assert.equal(state.store[failKey('strip')], 'no such module')
+    assert.match(JSON.stringify(copy.render(cx).kids), /strip failed to load: no such module/)
+  } finally {
+    console.log = log
+  }
+})
+
+test('a role whose init throws is not kept half-set, and the failure shows', async () => {
+  const log = console.log
+  console.log = () => {}
+  try {
+    state.props = { role: 'version' }
+    let thrown = false
+    const bad = {
+      spawn: f => {
+        if (!thrown) {
+          thrown = true
+          throw new Error('init boom')
+        }
+        return f(bad)
+      },
+      notify() {},
+      timer: { every() {}, after() {} },
+    }
+    const copy = new HerdrAgents()
+    copy.init(state.props, bad)
+    await copy.loaded
+    assert.equal(copy.role, undefined)
+    assert.match(copy.failure, /version failed to load: init boom/)
+  } finally {
+    console.log = log
+  }
+})
+
+test('the arrivals copy draws nothing and its render does not throw', async () => {
+  const copy = await startCopy('arrivals')
+  assert.equal(copy.role.constructor.name, 'ArrivalsRole')
+  assert.deepEqual(copy.render(cx).kids, [])
 })

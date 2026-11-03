@@ -33,8 +33,8 @@ export function openSettings(folder) {
 }
 
 export class SettingsState {
-  constructor(cx) {
-    this.folder = props()?.folder ?? null
+  constructor(cx, p = props()) {
+    this.folder = p?.folder ?? null
     this.pane = { scope: 'user', user: {}, folder: this.folder ? {} : undefined }
     this.texts = { user: null, folder: null }
     this.note = null

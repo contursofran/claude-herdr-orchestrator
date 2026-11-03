@@ -158,7 +158,7 @@ test('the pop-up takes the keyboard when it opens and closes on Esc', () => {
     src,
     /\.on_key_down\(e => \{\s*if \(popupKeyAction\(e\.keystroke \?\? e\.key, e\.is_held\) !== 'close'\) return\s*try \{\s*closeOverlay\(props\(\)\.overlay\)/,
   )
-  assert.match(source('main.js'), /this\.popup = makePopupState\(cx\)/)
+  assert.match(source('role-board.js'), /this\.popup = makePopupState\(cx\)/)
 })
 
 test('popupRefocus: the keyboard goes back to the terminal that had it', () => {
@@ -172,7 +172,7 @@ test('popupRefocus: the keyboard goes back to the terminal that had it', () => {
 })
 
 test('every way of closing hands the keyboard back, and a row keeps its own target', () => {
-  assert.match(source('main.js'), /async close\(\) \{\s*if \(this\.popup\) releasePopup\(this\.popup\)/)
+  assert.match(source('role-board.js'), /async close\(\) \{\s*if \(this\.popup\) releasePopup\(this\.popup\)/)
   const src = source('popup.js')
   assert.match(src, /run\('pane\.focus', \{ terminal \}\)/)
   assert.match(src, /ctl\.leaving = true\s*(\/\/.*\s*)?closeOverlay/)
