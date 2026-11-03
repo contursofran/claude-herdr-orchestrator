@@ -49,7 +49,7 @@ export function applyFile(boards, id, text) {
  *  The agents list draws coordinators and parked workers; the pop-up its own board; the sheet task rows too (the tasks waiting on
  *  an item), only while open (`open`, its hrd.sheet). The pin bar, strip and card draw no task rows, but the strip sizes the pop-up from how many there are, so the rows'
  *  keys count and their text (a minute clock) does not. */
-const liveKey = a => [a?.command, a?.commandAt, a?.outputAt]
+const liveKey = a => [a?.command, a?.commandAt, a?.outputAt, a?.turnAt, a?.tools]
 
 export function drawnKey(role, boards, session, open = null) {
   const list = boards ?? []
@@ -231,6 +231,16 @@ export const QUIET_WARN_MS = 5 * 60_000
  *  time out of a running command, as the board's rows do. The board has these fields only mid-turn, so an idle agent gets no warning.
  *  `coordinator` is set for the coordinator's own row: once amber, its text also suggests the way out (workers have an interrupt button). */
 export function liveLine(agent, now, coordinator = false) {
+  const line = liveBase(agent, now, coordinator)
+  // The coordinator's own row also says how long its turn has run and how many tools it has used (#174).
+  if (!coordinator || !Number.isFinite(agent?.turnAt)) return line
+  const n = Number.isFinite(agent.tools) ? agent.tools : 0
+  const prefix = `${Math.max(0, Math.floor((now - agent.turnAt) / 60_000))}m · ${n} ${n === 1 ? 'tool' : 'tools'}`
+  if (!line) return { text: prefix, short: prefix, quiet: false, warn: false }
+  return { ...line, text: `${prefix} · ${line.text}` }
+}
+
+function liveBase(agent, now, coordinator) {
   if (typeof agent?.command === 'string' && agent.command) {
     const short = `running ${agent.command}`
     const age = ageText(agent.commandAt, now)
@@ -289,7 +299,8 @@ export const AGE_TICK_MS = 60_000
 export function agedTimes(role, { boards = [], open = null, session = null } = {}) {
   const known = at => (at ? [at] : [])
   // The clocks of a board's agents, which move on their own, and of its merged rows.
-  const liveTimes = b => [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
+  const liveTimes = b =>
+    [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt), ...known(w?.turnAt)])
   const mergeTimes = b => workRows(b).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
   if (role === 'board') {
     const board = boards.find(b => b.session === session)

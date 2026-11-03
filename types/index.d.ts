@@ -128,6 +128,9 @@ export type Row = {
   command?: string | null
   commandAt?: number | null
   outputAt?: number
+  // The coordinator's own row only: when its turn started (to the minute) and how many tools it has run (#174).
+  turnAt?: number
+  tools?: number
   // Its context fill after its last turn, in whole percent (see workerLive).
   context?: number
 }

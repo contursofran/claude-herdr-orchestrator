@@ -25,7 +25,9 @@
         },
         "command": { "type": "string", "description": "Like a worker's `command`, `commandAt` and `outputAt`: there only mid-turn." },
         "commandAt": { "type": "number" },
-        "outputAt": { "type": "number" }
+        "outputAt": { "type": "number" },
+        "turnAt": { "type": "number", "description": "When the coordinator's turn started, to the minute; there only mid-turn." },
+        "tools": { "type": "integer", "description": "How many tools the coordinator has run this turn; there only mid-turn." }
       }
     },
     "stageNames": {

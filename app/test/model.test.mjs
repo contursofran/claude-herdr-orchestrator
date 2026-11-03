@@ -1026,6 +1026,22 @@ test('liveLine: an amber quiet coordinator row suggests Esc and resend', async (
   assert.equal(agentLive([board], [], 't1', NOW).text, 'no output · 6m · Esc and resend?')
 })
 
+test('liveLine: the coordinator row shows turn time and tool count, a worker row does not', async () => {
+  const { liveLine, agentLive } = await import('../mods/herdr-agents/model.js')
+  const NOW = 1_000_000_000
+  const min = m => m * 60_000
+  const turn = { turnAt: NOW - min(3), tools: 12 }
+  assert.deepEqual(liveLine(turn, NOW, true), { text: '3m · 12 tools', short: '3m · 12 tools', quiet: false, warn: false })
+  assert.equal(liveLine({ ...turn, tools: 1 }, NOW, true).text, '3m · 1 tool')
+  const running = liveLine({ ...turn, command: 'npm test', commandAt: NOW - min(1) }, NOW, true)
+  assert.equal(running.text, '3m · 12 tools · running npm test · 1m')
+  assert.equal(running.short, 'running npm test')
+  assert.equal(liveLine({ ...turn, outputAt: NOW - min(6) }, NOW, true).text, '3m · 12 tools · no output · 6m · Esc and resend?')
+  assert.equal(liveLine(turn, NOW), null)
+  assert.equal(liveLine({ outputAt: NOW - min(1) }, NOW, true), null)
+  assert.equal(agentLive([{ coordinator: { terminal: 't1', ...turn }, workers: [] }], [], 't1', NOW).text, '3m · 12 tools')
+})
+
 test('rowLive and agentLive find a working worker, and agentLive a coordinator by its terminal', async () => {
   const { agentLive, rowLive } = await import('../mods/herdr-agents/model.js')
   const NOW = 10_000_000
