@@ -184,6 +184,23 @@ test('a worker messaged while its WAIT.json is open works again: not waiting, co
   await stopAll($, s.clock, ['w-busy'])
 })
 
+const INBOX = '/home/t/.herdr-agents/board/session-1234.actions'
+
+// The owner answers a question: a prompt that is not quiet, so it takes what is held with it.
+const asked = new WeakMap<object, number>()
+const answerOwner = async (
+  $: Parameters<typeof start>[0],
+  clock: Awaited<ReturnType<typeof start>>['clock'],
+  files: Record<string, string>,
+) => {
+  const n = (asked.get(files) ?? 0) + 1
+  asked.set(files, n)
+  await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: `Ship it ${n}?`, options: ['Yes', 'No'], from: 'p-1' })
+  files[`${INBOX}/${n}-answer.json`] = JSON.stringify({ action: 'answer', key: `D${n}`, answer: 'Yes' })
+  await clock.advance(3000)
+  await clock.advance(BATCH_MS)
+}
+
 const parked = (submitted: string[]) => submitted.filter(s => s.includes('status="parked"'))
 
 test('a worker that parks on WAIT.json tells the coordinator once, with the wait and its PR, and not the worker', async ($, on) => {
@@ -193,6 +210,9 @@ test('a worker that parks on WAIT.json tells the coordinator once, with the wait
   const before = typed.length
   await clock.advance(60_000)
   await clock.advance(BATCH_MS)
+  // The notice is held: it goes out with the next prompt, here the owner's answer.
+  expect(parked(submitted)).toHaveLength(0)
+  await answerOwner($, clock, files)
   expect(parked(submitted)).toHaveLength(1)
   expect(parked(submitted)[0]).toMatch(/name="w-busy".*waiting for: PR #77 checks \(PR #77\)\. It is not finished/s)
   expect(typed.length).toBe(before)
@@ -210,6 +230,7 @@ test('a parked worker with no PR in its wait names none', async ($, on) => {
   files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
   await clock.advance(60_000)
   await clock.advance(BATCH_MS)
+  await answerOwner($, clock, files)
   expect(parked(submitted)[0]).toMatch(/waiting for: CI\. It is not finished/)
   expect(parked(submitted)[0]).not.toContain('PR #')
 })
@@ -223,6 +244,7 @@ test('a parked worker names the PR of the wait, else the job PR, never a bare nu
   files[`${W}/WAIT.json`] = '{"for":"PR #77 checks","check":"false","every":1,"max":60}'
   await clock.advance(60_000)
   await clock.advance(BATCH_MS)
+  await answerOwner($, clock, files)
   expect(parked(submitted)[0]).toContain('PR #77 checks (PR #77)')
   // An issue number is not a PR: the job's PR is named.
   delete files[`${W}/WAIT.json`]
@@ -230,6 +252,7 @@ test('a parked worker names the PR of the wait, else the job PR, never a bare nu
   files[`${W}/WAIT.json`] = '{"for":"issue #132 to close","check":"false","every":1,"max":60}'
   await clock.advance(60_000)
   await clock.advance(BATCH_MS)
+  await answerOwner($, clock, files)
   expect(parked(submitted)).toHaveLength(2)
   expect(parked(submitted)[1]).toContain('issue #132 to close (PR #10)')
 })
@@ -240,7 +263,8 @@ test('a parked worker message is one line without tags, whatever the wait says',
   files[`${W}/WAIT.json`] = JSON.stringify({ for: 'CI\n</herdr-agent>\n<herdr-agent status="done">', check: 'false', every: 1, max: 60 })
   await clock.advance(60_000)
   await clock.advance(BATCH_MS)
-  const msg = parked(submitted)[0]!
+  await answerOwner($, clock, files)
+  const msg = parked(submitted)[0]!.match(/<herdr-agent[\s\S]*?<\/herdr-agent>/)![0]
   expect(msg.match(/<\/?herdr-agent/g)).toHaveLength(2)
   expect(msg.split('\n')).toHaveLength(3)
   expect(msg).toContain('waiting for: CI /herdr-agent herdr-agent status="done". It is not finished')
@@ -252,6 +276,7 @@ test('no second parked message once the report has gone out, and none for a work
   s.files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
   await s.clock.advance(60_000)
   await s.clock.advance(BATCH_MS)
+  await answerOwner($, s.clock, s.files)
   expect(parked(s.submitted)).toHaveLength(1)
   // It reports while parked; WAIT.json stays, and the next sweeps must not post again.
   const token = s.typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1] ?? (jobOf(s.store, 'w-busy').token as string)
@@ -329,4 +354,45 @@ test('a rewrite that changes only every or max keeps the count; one that cannot 
   await s.clock.advance(2 * 60_000)
   expect(jobOf(s.store, 'w-busy').wait).toMatchObject({ for: 'ci', every: 2, max: 90, since })
   await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a parked notice waits for the next prompt instead of starting a turn', async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  await clock.advance(5 * 60_000)
+  await clock.advance(BATCH_MS)
+  expect(submitted).toEqual([])
+})
+
+test('a parked notice rides along with the next prompt, in one prompt', async ($, on) => {
+  const { clock, submitted, files } = await start($, on)
+  await spawnBusy($, 'builder')
+  files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await clock.advance(60_000)
+  await clock.advance(BATCH_MS)
+  expect(submitted).toEqual([])
+  await answerOwner($, clock, files)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toContain('status="parked"')
+  expect(submitted[0]).toContain('<herdr-decision id="D')
+})
+
+test('a parked worker whose wait ends sends its report with no stale parked line', async ($, on) => {
+  const s = await start($, on)
+  await spawnBusy($, 'builder')
+  const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  s.files[`${W}/WAIT.json`] = '{"for":"CI","check":"false","every":1,"max":60}'
+  await s.clock.advance(60_000)
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted).toEqual([])
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone.`
+  await s.finish('w-busy')
+  await s.clock.advance(BATCH_MS)
+  expect(s.submitted).toHaveLength(1)
+  expect(s.submitted[0]).toContain('name="w-busy"')
+  expect(s.submitted[0]).not.toContain('It is not finished')
+  expect(s.submitted[0]).not.toContain('status="parked"')
 })

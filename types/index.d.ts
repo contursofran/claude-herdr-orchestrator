@@ -103,7 +103,7 @@ export type Todo = { id: number; kind: 'do' | 'know'; text: string; from: string
 // worker's report: a batch with one ends with the worker count.
 // `worker` (and, for a report, its `token`) says whose it is: a newer report of the same worker and
 // token replaces one still held, and a stop drops what is held for the worker.
-export type OutboxItem = { text: string; report?: true; worker?: string; token?: string }
+export type OutboxItem = { text: string; report?: true; worker?: string; token?: string; quiet?: true }
 
 // One line of the band above the prompt; `state` is the status its CLI reported to hc, or
 // 'reported' once the report reached the session, 'waiting' while it waits on WAIT.json.

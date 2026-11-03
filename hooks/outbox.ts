@@ -36,12 +36,14 @@ export function turnRunning() {
 }
 
 // Queues a prompt for the coordinator. A batch with a report ends with the worker count (see flush).
+// A `quiet` item never starts a turn: it is held and goes out with the next item that is not quiet.
 // `from` names the worker (and report token) it is about: a report still held for the same worker and
 // token is replaced, so one batch carries only the newest text of a rewritten report.
-export async function post($: EngineInterface, text: string, report = false, from?: { worker: string; token?: string }) {
+export async function post($: EngineInterface, text: string, report = false, from?: { worker: string; token?: string }, quiet = false) {
   const item: OutboxItem = {
     text,
     ...(report ? { report: true as const } : {}),
+    ...(quiet ? { quiet: true as const } : {}),
     ...(from?.worker ? { worker: from.worker } : {}),
     ...(from?.token ? { token: from.token } : {}),
   }
@@ -87,7 +89,7 @@ async function kick($: EngineInterface) {
   if (flushing) return
   flushing = true
   try {
-    while ((await read($, outbox)).length > 0) {
+    while ((await read($, outbox)).some(i => !i.quiet)) {
       await $.clock.sleep(BATCH_MS)
       // A turn is running: its end starts the loop again.
       if (busy) return
@@ -108,7 +110,11 @@ async function kick($: EngineInterface) {
 async function flush($: EngineInterface): Promise<boolean> {
   let items: OutboxItem[] = []
   await update($, outbox, list => {
-    items = list
+    // Only quiet items are held: they wait for a prompt that is not quiet.
+    if (list.every(i => i.quiet)) return list
+    // A worker's report takes the place of its held notice (it would say "not finished" beside the report).
+    const reporting = new Set(list.filter(i => i.report && i.worker).map(i => i.worker))
+    items = list.filter(i => !(i.quiet && i.worker && reporting.has(i.worker)))
     return []
   })
   if (items.length === 0) return true
