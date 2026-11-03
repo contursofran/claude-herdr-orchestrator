@@ -1,10 +1,23 @@
 // Role `panel`: the right panel, which follows the tab (#274): an orchestrator's tab draws its board, a worker's tab that worker.
 // The strip's copy moves the panel here on arrival at the tab (`panelMove` in panelmodel.js); this copy only draws.
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
+import { closeOverlay, exec, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { boardSpace, counts, liveLine, mergedText, projectName, rowAction, rowLive, stripItems } from './model.js'
+import {
+  boardSpace,
+  branchDiff,
+  counts,
+  ctxText,
+  liveLine,
+  mergedText,
+  modeText,
+  nextRows,
+  projectName,
+  rowAction,
+  rowLive,
+  stripItems,
+} from './model.js'
 import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { interruptButton } from './interrupt.js'
@@ -42,6 +55,59 @@ const warning = text =>
     .text_color(theme().working)
     .child(svg(icon('warn')).size(11).flex_none())
     .child(div().min_w_0().truncate().child(text))
+
+/** The review's verdict: amber when changes are needed, quiet when approved. */
+const verdictText = review =>
+  div()
+    .min_w_0()
+    .truncate()
+    .text_size(11)
+    .text_color(review.verdict === 'changes' ? theme().working : color.dim)
+    .child(review.text)
+
+/** `Review · from review-213 · 2 blockers`, then one line per blocker, in amber. */
+const reviewBlock = review => {
+  const n = review.blockers.length
+  return div()
+    .flex()
+    .flex_col()
+    .gap(4)
+    .text_size(11)
+    .text_color(theme().working)
+    .child(
+      div()
+        .truncate()
+        .child(
+          ['Review', review.from && `from ${review.from}`, review.verdict === 'changes' && n && `${n} blocker${n === 1 ? '' : 's'}`]
+            .filter(Boolean)
+            .join(' · '),
+        ),
+    )
+    .children(review.blockers.map(b => div().min_w_0().child(`· ${b}`)))
+}
+
+/** `CI failed · 2 tests ↗` in red; the arrow and the press open the run when the board has its address. */
+const ciFailed = (r, id) => {
+  const f = r.ciFailure
+  const text = div().min_w_0().truncate().text_color(theme().blocked)
+  if (!f.url) return div().flex().text_size(11).child(text.child(f.summary))
+  return div()
+    .flex()
+    .text_size(11)
+    .child(
+      div()
+        .id(id)
+        .min_w_0()
+        .truncate()
+        .cursor_pointer()
+        .text_color(theme().blocked)
+        .on_mouse_down('left', (_e, cx) => {
+          cx.stop_propagation()
+          exec('open', [f.url]).catch(() => {})
+        })
+        .child(`${f.summary} ↗`),
+    )
+}
 
 function row(r, board, now, ui) {
   const merged = mergedText(r, now)
@@ -100,6 +166,8 @@ function row(r, board, now, ui) {
     )
     .when(Boolean(r.conflictsWith && !r.unattended), el => el.child(warning(`conflicts with ${r.conflictsWith}`)))
     .when(Boolean(r.shares), el => el.child(warning(r.shares)))
+    .when(Boolean(r.review), el => el.child(verdictText(r.review)))
+    .when(Boolean(r.ciFailure), el => el.child(ciFailed(r, `panel-ci-${r.key}`)))
     .when(Boolean(r.blocked), el =>
       el.child(
         div()
@@ -281,15 +349,77 @@ function backButton(board, ui) {
     .child(`‹ ${projectName(board)} board`)
 }
 
+/** A worker's view of its PR's failed CI: counts, the job and its run time, the first failing test, how many more, Open log. */
+function ciFailureBlock(f, key) {
+  const line = (text, c) => div().min_w_0().truncate().text_size(11).text_color(c).child(text)
+  return div()
+    .flex()
+    .flex_col()
+    .gap(4)
+    .child(div().text_color(look.head).child('CI failed'))
+    .when(Boolean(f.counts), el => el.child(line(f.counts, theme().blocked)))
+    .child(line(f.job, color.dim))
+    .when(Boolean(f.first), el => el.child(line(f.first, color.text)))
+    .when(Boolean(f.more), el => el.child(line(f.more, color.dim)))
+    .when(Boolean(f.url), el =>
+      el.child(
+        div()
+          .flex()
+          .child(link({ link: { url: f.url } }, 'Open log ↗', `panel-ci-log-${key}`)),
+      ),
+    )
+}
+
+/** `Branch vs main  +142 \u221231`, a row per file with its status letter and +/\u2212, and Open diff: the PR's files when the task has a PR. */
+function diffBlock(diff, row, name) {
+  const line = (text, c) => div().min_w_0().truncate().text_size(11).text_color(c).child(text)
+  return div()
+    .flex()
+    .flex_col()
+    .gap(4)
+    .child(
+      div()
+        .flex()
+        .items_center()
+        .gap(8)
+        .child(div().text_color(look.head).child(diff.title))
+        .child(div().text_size(11).text_color(color.dim).child(diff.total)),
+    )
+    .children(
+      diff.files.map(f =>
+        div()
+          .flex()
+          .items_center()
+          .gap(8)
+          .text_size(11)
+          .child(div().flex_none().w(10).text_color(color.dim).child(f.status))
+          .child(div().flex_1().min_w_0().truncate().child(f.path))
+          .child(div().flex_none().text_color(color.dim).child(f.delta)),
+      ),
+    )
+    .when(Boolean(diff.more), el => el.child(line(diff.more, color.dim)))
+    .when(Boolean(row?.link), el =>
+      el.child(
+        div()
+          .flex()
+          .child(link({ link: { url: `${row.link.url}/files` } }, 'Open diff ↗', `panel-diff-${name}`)),
+      ),
+    )
+}
+
 /** A worker's tab: who it is, how far it got, what it is on and its PR, from what the board has. */
 export function workerView(board, worker, ui = { open: new Set() }) {
   const t = theme()
   const r = workerRow(board, worker)
   const names = rowStageNames(r, board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES)
   const about = [worker.repo?.split('/').pop(), worker.note].filter(Boolean).join(' · ')
+  const runs = [worker.provider, worker.model].filter(Boolean).join(' ')
+  const where = [worker.worktree?.split('/').pop(), worker.branch].filter(Boolean).join(' · ')
   const live = worker.state === 'working' ? liveLine(worker, Date.now()) : null
   const target = { session: board.session, worker: worker.name }
   const back = backButton(board, ui)
+  const ctx = ctxText(worker)
+  const diff = branchDiff(worker)
   return frame('hrd-panel-worker')
     .child(
       div()
@@ -322,6 +452,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
               ),
             )
             .child(div().flex_1())
+            .when(Boolean(ctx), el => el.child(div().flex_none().text_size(11).text_color(color.dim).child(ctx)))
             .child(
               div()
                 .flex_none()
@@ -331,6 +462,9 @@ export function workerView(board, worker, ui = { open: new Set() }) {
             ),
         )
         .when(Boolean(about), el => el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child(about)))
+        .when(Boolean(runs || where), el =>
+          el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child([runs, where].filter(Boolean).join(' · '))),
+        )
         .when(Boolean(live), el =>
           el.child(
             div()
@@ -386,6 +520,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
                 .when(Boolean(r.conflictsWith), inner => inner.child(warning(`conflicts with ${r.conflictsWith}`)))
                 .when(Boolean(r.shares), inner => inner.child(warning(r.shares))),
             )
+            .when(Boolean(r.ciFailure), inner => inner.child(ciFailureBlock(r.ciFailure, r.key)))
             .when(Boolean(r.link), inner =>
               inner.child(
                 div()
@@ -398,10 +533,23 @@ export function workerView(board, worker, ui = { open: new Set() }) {
                       .flex_none()
                       .child(link(r, `${r.link.text} ↗`, `panel-pr-${r.key}`)),
                   )
+                  .when(Boolean(r.review), el =>
+                    el.child(
+                      div()
+                        .flex_none()
+                        .text_size(11)
+                        .text_color(r.review.verdict === 'changes' ? theme().working : color.dim)
+                        .child(r.review.text.split(' · ')[0]),
+                    ),
+                  )
                   .child(div().min_w_0().truncate().text_size(11).child(r.who.text)),
               ),
+            )
+            .when(Boolean(r.review && (r.review.blockers.length || r.review.verdict === 'changes')), inner =>
+              inner.child(reviewBlock(r.review)),
             ),
-        ),
+        )
+        .when(Boolean(diff), el => el.child(diffBlock(diff, r, worker.name))),
     )
     .child(
       div()
@@ -451,7 +599,12 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
             .flex_col()
             .gap(2)
             .child(div().truncate().font_bold().child(projectName(board)))
-            .child(div().text_size(11).text_color(color.dim).child('Board')),
+            .child(
+              div()
+                .text_size(11)
+                .text_color(color.dim)
+                .child(modeText(board) ? `Board \u00b7 ${modeText(board)}` : 'Board'),
+            ),
         )
         .when(Boolean(chip), el => el.child(chip))
         .child(closeButton(ui)),
@@ -472,6 +625,7 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
         .child(sectionHead(`Work · ${counts(board).working} running`, stuck.length > 0 ? null : stageHeads(names)))
         .children(work.map(r => row(r, board, now, ui)))
         .when(work.length === 0, el => el.child(div().px(8).py(6).text_color(color.dim).child('Nothing running.')))
+        .when(nextRows(board).length > 0, el => el.child(sectionHead('Next')).children(nextRows(board).map(r => row(r, board, now, ui))))
         .children(history('Merged', merged, board, now, ui)),
     )
 }

@@ -1,13 +1,83 @@
 import { expect } from 'claude-code/testing'
 import { actionFile, answerAction, doneAction } from '../app/mods/herdr-agents/model.js'
 import { BATCH_MS } from '../hooks/defaults'
-import { spawn, start, stopAll, test } from './harness'
+import { command, spawn, start, stopAll, test } from './harness'
 
 // The board for apps outside Claude Code: a snapshot file per session, and action files.
 
 const DIR = '/home/t/.herdr-agents/board'
 const FILE = `${DIR}/session-1234.json`
 const INBOX = `${DIR}/session-1234.actions`
+
+test('/hrd-orchestrate flips coordinator.orchestrating on the board', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(false)
+  await command($, 'hrd-orchestrate')
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(true)
+})
+
+test('/hrd-orchestrate starts the coordinator turn: playbook and goal go out once as a prompt after the command', async ($, on) => {
+  const { clock, submitted } = await start($, on)
+  const result = await command($, 'hrd-orchestrate', 'ship the ready issues')
+  expect(result.context).toBeUndefined()
+  expect(submitted).toEqual([])
+  await clock.advance(3000)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toMatch(/^<herdr-context>You are now the coordinator of this folder\./)
+  expect(submitted[0]).toContain('Goal: ship the ready issues')
+  expect(submitted[0]).toContain('You coordinate worker agents')
+})
+
+test('/hrd-orchestrate after a finished wrap-up turns wrap-up off, so it stays orchestrating', async ($, on) => {
+  const { clock, files } = await start($, on)
+  const orchestrating = () => JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating
+  await spawn($, ['w-a'])
+  await command($, 'hrd-orchestrate')
+  await command($, 'hrd-wrap-up')
+  await stopAll($, clock, ['w-a'])
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(false)
+  await command($, 'hrd-orchestrate')
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(true)
+})
+
+test('a finished wrap-up (nothing running) ends orchestrating; one with workers running waits for them', async ($, on) => {
+  const { clock, files, submitted } = await start($, on)
+  const orchestrating = () => JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating
+  await spawn($, ['w-a'])
+  await command($, 'hrd-orchestrate')
+  await command($, 'hrd-wrap-up')
+  await clock.advance(3000)
+  expect(submitted.join('\n')).toContain('<herdr-context>The owner is wrapping up')
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(true)
+  await stopAll($, clock, ['w-a'])
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(false)
+})
+
+test('/hrd-wrap-up with no workers at all ends orchestrating', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await command($, 'hrd-orchestrate')
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(true)
+  await command($, 'hrd-wrap-up')
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(false)
+})
+
+test("a worker's board row carries its provider, model and worktree from its profile", async ($, on) => {
+  const { clock, files } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'b-1', profile: 'builder', cwd: '/repo-b1', task: 'x' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'd-1', profile: 'debugger', cwd: '/repo-d1', task: 'x' })
+  await clock.advance(3000)
+  const workers = JSON.parse(files[FILE] ?? '{}').workers as { name: string }[]
+  expect(workers.find(w => w.name === 'b-1')).toMatchObject({ provider: 'claude', model: 'sonnet', worktree: '/repo-b1' })
+  expect(workers.find(w => w.name === 'd-1')).toMatchObject({ provider: 'claude', model: 'opus', worktree: '/repo-d1' })
+})
 
 test('the board is written for outside apps, and their action files answer and tick', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
@@ -25,7 +95,7 @@ test('the board is written for outside apps, and their action files answer and t
 
   const board = JSON.parse(files[FILE] ?? '{}')
   expect(board.version).toBe(1)
-  expect(board.coordinator).toEqual({ terminal: 't1' })
+  expect(board.coordinator).toEqual({ terminal: 't1', orchestrating: false })
   expect(board.stageNames).toEqual(['plan', 'build', 'rev', 'CI', 'you'])
   expect(board.workers.map((w: { name: string }) => w.name)).toEqual(['w-busy'])
   expect(board.summary.needs).toBe(2)
@@ -79,7 +149,7 @@ test('the board says null for the coordinator terminal outside hc, and keeps the
   const { clock, files } = await start($, on, {}, {}, { HC_TERMINAL_ID: '' })
   await clock.advance(3000)
   const board = JSON.parse(files[FILE] ?? '{}')
-  expect(board.coordinator).toEqual({ terminal: null })
+  expect(board.coordinator).toEqual({ terminal: null, orchestrating: false })
   expect(Object.keys(board)).toEqual(
     expect.arrayContaining(['version', 'session', 'cwd', 'at', 'stageNames', 'summary', 'workers', 'tasks', 'needs', 'status', 'actions']),
   )

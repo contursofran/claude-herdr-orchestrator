@@ -13,24 +13,36 @@ export const PROFILES: Record<string, Profile> = {
   planner: {
     kind: 'claude',
     args: ['--agent', 'herdr-agents:planner', '--effort', 'high', '--permission-mode', 'auto'],
+    model: 'opus',
     note: 'Claude planner agent (Opus high)',
   },
   builder: {
     kind: 'claude',
     args: ['--agent', 'herdr-agents:builder', '--effort', 'medium', '--permission-mode', 'auto'],
+    model: 'sonnet',
     note: 'Claude builder agent (Sonnet medium)',
   },
   reviewer: {
     kind: 'claude',
     args: ['--agent', 'herdr-agents:reviewer', '--effort', 'high', '--permission-mode', 'auto'],
+    model: 'opus',
     note: 'Claude reviewer agent (Opus high)',
   },
   // No subagent: the full toolset, for root-cause hunts and fixes that failed twice.
   debugger: {
     kind: 'claude',
     args: ['--model', 'opus', '--effort', 'medium', '--permission-mode', 'auto'],
+    model: 'opus',
     note: 'Claude Opus medium, full tools (debugging, tricky fixes)',
   },
+}
+
+// The model a profile runs: its `model`, else the value after --model (or -m) in its args.
+export function modelOf(p: Profile | undefined): string | undefined {
+  if (!p) return undefined
+  if (p.model) return p.model
+  const i = p.args.findIndex(a => a === '--model' || a === '-m')
+  return i >= 0 ? p.args[i + 1] : undefined
 }
 
 // The built-in profiles are the playbook's steps: a profile of the same name in

@@ -810,6 +810,98 @@ test('spawn with a branch fetches, creates the worktree next to the repo and sta
   expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBe('Build it.')
 })
 
+// A reused worktree: its folder exists, so no git worktree add is needed.
+const depsGit = (runs: any) =>
+  answerGit(
+    runs,
+    git('-C /repo rev-parse --show-toplevel', '/repo\n'),
+    git('-C /repo rev-parse --path-format=absolute --git-common-dir', '/repo/.git\n'),
+    git('-C /repo-wt/fix-x rev-parse --path-format=absolute --git-common-dir', '/repo/.git\n'),
+    git('-C /repo-wt/fix-x branch --show-current', 'fix-x\n'),
+  )
+
+test('a new worktree with package-lock.json gets npm ci, and the task says so', async ($, on) => {
+  const { runs, shell, files } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  runs.set('npm ci', [{ exitCode: 0 }])
+  await spawnBranch($)
+  await settled()
+  expect(shell).toContain('npm ci')
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBe(
+    "Dependencies are installed (npm ci); run formatters and tests with the repo's pinned versions.\n\nBuild it.",
+  )
+})
+
+test('the install runs in the worktree, never the main checkout', async ($, on) => {
+  const { runs, shellCwds, files } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  runs.set('npm ci', [{ exitCode: 0 }])
+  await spawnBranch($)
+  await settled()
+  expect(shellCwds.get('npm ci')).toBe('/repo-wt/fix-x')
+})
+
+test('a worker stopped during its install opens no tab', async ($, on) => {
+  const { runs, calls, files, gate, clock, closed } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  runs.set('npm ci', [{ exitCode: 0 }])
+  const release = gate(argv => argv[0] === 'npm')
+  await spawnBranch($)
+  await clock.settle()
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-tree' })
+  release()
+  await settled()
+  expect(calls.some(c => c.join(' ').startsWith('hc run'))).toBe(false)
+  expect(closed).not.toContain('w-tree')
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBeUndefined()
+})
+
+test('a failed install does not stop the worker and the task says it failed', async ($, on) => {
+  const { runs, calls, files } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/pnpm-lock.yaml'] = ''
+  runs.set('pnpm install --frozen-lockfile', [{ exitCode: 1, stderr: 'ERR_PNPM_BAD' }])
+  await spawnBranch($)
+  await settled()
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toMatch(
+    /^Installing dependencies failed \(pnpm install --frozen-lockfile exited 1: ERR_PNPM_BAD\)\. Run it yourself.*\n\nBuild it\.$/s,
+  )
+  expect(calls.some(c => c.join(' ').startsWith('hc run --json --bg --no-parent --name w-tree'))).toBe(true)
+})
+
+test('an install that throws still starts the worker', async ($, on) => {
+  const { runs, calls, files } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  runs.set('npm ci', [{ exitCode: 0, reject: 'npm not found' }])
+  await spawnBranch($)
+  await settled()
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toMatch(/^Installing dependencies failed \(.*npm not found.*\)/)
+  expect(calls.some(c => c.join(' ').startsWith('hc run --json --bg --no-parent --name w-tree'))).toBe(true)
+})
+
+test('no lockfile, or a node_modules already there, means no install and an unchanged task; an existing cwd is never installed into', async ($, on) => {
+  const { runs, shell, files } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package.json'] = '{}'
+  await spawnBranch($)
+  await settled()
+  expect(shell.some(c => /^(npm|pnpm|yarn|bun) /.test(c))).toBe(false)
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBe('Build it.')
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  files['/repo-wt/fix-x/node_modules/.bin/x'] = ''
+  await spawnBranch($, {}, 'w-tree2')
+  await settled()
+  expect(shell.some(c => /^(npm|pnpm|yarn|bun) /.test(c))).toBe(false)
+  files['/repo/wt/package-lock.json'] = '{}'
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-cwd', profile: 'builder', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(shell).not.toContain('npm ci')
+})
+
 test('a branch with a slash gets a folder with a dash, and an existing local branch is used', async ($, on) => {
   const { runs, shell } = await start($, on)
   answerGit(

@@ -140,6 +140,8 @@ export async function start(
   const screens: Record<string, string> = {}
   // What `gh pr view` reports for each PR, by owner/name#123; the test sets it.
   const prs: Record<string, unknown> = {}
+  // What `gh run view --log-failed` prints for each run id; the test sets it. A run with none exits 1.
+  const runLogs: Record<string, string> = {}
   // How many more `hc send` calls report started: false, by worker; the test sets it.
   const stalls: Record<string, number> = {}
   // Workers whose CLI sits on what it is sent, as Claude does until its session.start hooks are done: hc says idle
@@ -153,6 +155,8 @@ export async function start(
   // and the process.spawn ones; `hcEnvs` is the env each of them carried.
   const calls: string[][] = []
   const hcEnvs: (Record<string, string> | undefined)[] = []
+  // The cwd each non-hc command ran in, by its joined argv.
+  const shellCwds = new Map<string, string | undefined>()
   // Any call to the old `herdr` CLI: the mod makes none, and the fake answers it with exit 127.
   const herdrCalls: string[][] = []
   // The commands the mod runs that are not hc's (git, herdr-app, install.sh, the bridge's file moves), joined by spaces, in order;
@@ -368,7 +372,10 @@ export async function start(
       calls.push([...e.argv])
       hcEnvs.push(e.init?.env)
     } else if (cmd === 'herdr') herdrCalls.push([...e.argv])
-    else shell.push(e.argv.join(' '))
+    else {
+      shell.push(e.argv.join(' '))
+      shellCwds.set(e.argv.join(' '), e.init?.cwd)
+    }
     // The commands the test answers, in order: the last answer repeats.
     const told = runs.get(e.argv.join(' '))
     if (told) {
@@ -538,6 +545,7 @@ export async function start(
       const pr = prs[`${e.argv[5]}#${name}`]
       return pr ? exit(0, JSON.stringify(pr)) : exit(1)
     }
+    if (cmd === 'gh' && sub === 'run' && verb === 'view') return name in runLogs ? exit(0, runLogs[name]) : exit(1)
     // The file moves and removals the bridge makes, on the files above.
     if (cmd === 'mkdir') return exit(0)
     const [from = '', to = ''] = e.argv.slice(2).filter(a => !a.startsWith('-'))
@@ -633,6 +641,7 @@ export async function start(
     reads,
     unwritable,
     prs,
+    runLogs,
     stalls,
     holds,
     turns,
@@ -640,6 +649,7 @@ export async function start(
     store,
     calls,
     hcEnvs,
+    shellCwds,
     herdrCalls,
     shell,
     runs,

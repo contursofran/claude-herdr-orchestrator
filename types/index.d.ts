@@ -45,6 +45,8 @@ export type Job = {
   reportStatus?: string
   // the status in the last report's header (done, blocked, failed), when it had one; reportStatus is deliver's
   headerStatus?: string
+  // a reviewer's last verdict and the blockers its report listed (a newer review replaces it); `head` is the commit it reviewed
+  review?: { verdict: 'approve' | 'changes'; blockers: string[]; head?: string; at: number }
   // what a builder was started for (a new worktree: feature; an existing folder: fix), for the time comment
   kind?: 'feature' | 'fix'
   // the clock of the time comment: when the work it covers began (startedAt when unset) and how long the
@@ -111,10 +113,17 @@ export type Row = {
   note?: string
   since?: number
   repo?: string
+  // The CLI (the profile's kind), its model, and the folder and branch it works in.
+  provider?: string
+  model?: string
+  worktree?: string
+  branch?: string
   // What it is doing mid-turn (see hooks/live.ts).
   command?: string | null
   commandAt?: number | null
   outputAt?: number
+  // Its context fill after its last turn, in whole percent (see workerContext).
+  context?: number
 }
 
 // The GitHub repo (owner/name) of each folder this session and its workers used, from its git
@@ -139,6 +148,20 @@ export type Pr = {
   conflict?: boolean
   base?: string
   files?: string[]
+  failure?: CiFailure
+}
+
+// The first failed check of a PR's CI at one head commit: its job, run time in seconds and run address, and what its log says
+// of the tests (null / empty when the log gave none). `tests` holds a few names, `more` how many failing tests it leaves out.
+export type CiFailure = {
+  head: string
+  job: string
+  url: string | null
+  seconds: number | null
+  failed: number | null
+  passed: number | null
+  tests: string[]
+  more: number
 }
 
 // The board's own state (boarddata.ts). `items` are in arrival order and only Clear done removes
@@ -151,7 +174,23 @@ export type BoardState = {
   cleared: Record<string, number>
   status?: string
   prs: Record<string, Pr>
+  // the coordinator's Ready list in its order, from set_next: what starts next
+  next?: NextItem[]
+  // each worker's branch against the default branch, by worker name (see branchdiff.ts)
+  diffs?: Record<string, BranchDiff>
 }
+
+// `base` is the branch it is read against; `files` are the first few, `more` the ones left out; `add` and `del` count every file.
+export type BranchDiff = {
+  base: string
+  add: number
+  del: number
+  files: { path: string; status: string; add: number; del: number }[]
+  more: number
+}
+
+// One issue on the board's Next list. `planned`: a planner already wrote its plan.
+export type NextItem = { repo?: string; issue: number; title: string; planned?: boolean }
 
 // The context reset in progress (see maybeReset): the coordinator was asked at
 // `at` to save its state, and the mod compacts once it has.
@@ -160,7 +199,7 @@ export type Reset = { stage: 'saving'; at: number }
 // A worker profile: the CLI hc starts (`kind`), its flags, extra environment, and a
 // short description for the spawn tool and the guides.
 // `label` names the model and effort in a time comment ("Sonnet 5.5 medium"); it is worked out from args when unset.
-export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string; label?: string }
+export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string; label?: string; model?: string }
 
 // herdr-agents.json, the user's and a folder's. Every key is optional; see the README.
 export type Settings = {

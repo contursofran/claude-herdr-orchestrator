@@ -7,7 +7,9 @@ const hcCalls = []
 globalThis.__fakeGpui.hc = async args => (hcCalls.push(args), { code: 0, stdout: '' })
 
 const m = await import('../mods/herdr-agents/panelmodel.js')
+const model = await import('../mods/herdr-agents/model.js')
 const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
+const { workRows } = await import('../mods/herdr-agents/model.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
 
 app.theme = {
@@ -254,6 +256,14 @@ test("a worker's tab draws that worker, and any other tab the board", () => {
   app.terminals = []
 })
 
+test("a worker's tab names its provider, model, worktree and branch, and omits them on an older board", () => {
+  const full = { ...worker, provider: 'claude', model: 'sonnet', worktree: '/w/claude-herdr-wt/fix-1', branch: 'fix-1-branch' }
+  const text = textOf(workerView(board(), full))
+  assert.ok(text.includes('claude sonnet · fix-1 · fix-1-branch'))
+  const old = textOf(workerView(board(), worker))
+  assert.ok(!old.includes('claude sonnet'))
+})
+
 test('a worker with no task says so, and a blocked one says why', () => {
   const text = textOf(workerView(board(), { ...worker, state: 'blocked', note: 'permission prompt' }))
   assert.ok(text.includes('No task on the board for this worker.'))
@@ -492,4 +502,185 @@ test('shared files read as the design has them, on the row and in the worker vie
   assert.equal(rows[2].shares, '')
   assert.ok(textOf(panelView(b)).includes('touches pin-panel.ts like #215'))
   assert.ok(textOf(workerView(b, { name: 'w1', state: 'working' })).includes('touches pin-panel.ts like #215'))
+})
+
+test('the review reads as the design has it: on the row, beside the PR link, and with one line per blocker', () => {
+  const review = { from: 'review-213', verdict: 'changes', blockers: ['a.ts:3 wrong total', 'b.ts:9 no test'], head: null }
+  const b = board({
+    workers: [{ name: 'w1', state: 'working' }],
+    tasks: [
+      task('#7', { tab: 'w1', workers: ['w1'], pr: 7, url: 'https://github.com/o/r/pull/7', review }),
+      task('ok', { review: { from: 'r', verdict: 'approve', blockers: [] } }),
+      task('old'),
+      task('odd', { review: { verdict: 'maybe' } }),
+    ],
+  })
+  const rows = m.panelSections(b).work
+  assert.equal(rows[0].review.text, 'changes needed · 2 blockers')
+  assert.equal(rows[1].review.text, 'approved')
+  assert.equal(rows[2].review, null)
+  assert.equal(rows[3].review, null)
+  assert.ok(textOf(panelView(b)).includes('changes needed · 2 blockers'))
+  const view = textOf(workerView(b, { name: 'w1', state: 'working' })).join('\n')
+  assert.ok(view.includes('changes needed'))
+  assert.ok(view.includes('Review · from review-213 · 2 blockers'))
+  assert.ok(view.includes('a.ts:3 wrong total'))
+  assert.ok(view.includes('b.ts:9 no test'))
+})
+
+test('a single blocker is singular, and a verdict of changes with no lines shows no list', () => {
+  const rows = workRows({
+    tasks: [
+      { key: 'a', review: { from: 'r', verdict: 'changes', blockers: ['x'] } },
+      { key: 'b', review: { from: 'r', verdict: 'changes', blockers: [] } },
+    ],
+  })
+  assert.equal(rows[0].review.text, 'changes needed · 1 blocker')
+  assert.equal(rows[1].review.text, 'changes needed')
+})
+
+const FAIL = {
+  job: 'test',
+  url: 'https://github.com/o/r/actions/runs/7',
+  seconds: 185,
+  failed: 3,
+  passed: 46,
+  tests: ['a > one', 'a > two'],
+  more: 1,
+}
+
+test('a failed CI reads as the design has it on the row and in the worker view', () => {
+  const b = board({ tasks: [task('one', { tab: 'fix-1', workers: ['fix-1'], ciFailure: FAIL }), task('old')] })
+  const [one, old] = m.panelSections(b).work
+  assert.equal(one.ciFailure.summary, 'CI failed · 3 tests')
+  assert.equal(old.ciFailure, null)
+  const row = textOf(panelView(b))
+  assert.ok(row.includes('CI failed · 3 tests ↗'))
+  const view = workerView(b, { name: 'fix-1', state: 'working' })
+  const text = textOf(view)
+  for (const line of ['3 failed · 46 passed', 'test · 3m 5s', 'a > one', '+2 more failing tests', 'Open log ↗'])
+    assert.ok(text.includes(line), line)
+  assert.ok(!text.includes('a > two'))
+  assert.ok(findId(view, 'panel-ci-log-one'))
+  assert.ok(findId(panelView(b), 'panel-ci-one'))
+})
+
+test('two failures, both named, still say there is one more than the first shown', () => {
+  const ci = { job: 'test', url: null, seconds: null, failed: 2, passed: 1, tests: ['a > one', 'a > two'], more: 0 }
+  const b = board({ tasks: [task('one', { tab: 'fix-1', ciFailure: ci })] })
+  const text = textOf(workerView(b, { name: 'fix-1', state: 'working' }))
+  assert.ok(text.includes('a > one'))
+  assert.ok(text.includes('+1 more failing test'))
+  assert.ok(!text.includes('+1 more failing tests'))
+})
+
+test('a failed CI with less on the board says less, and one without a run has no link', () => {
+  const b = board({
+    tasks: [
+      task('one', {
+        tab: 'fix-1',
+        ciFailure: { job: 'build', url: null, seconds: null, failed: null, passed: null, tests: ['t'], more: 0 },
+      }),
+    ],
+  })
+  const f = m.panelSections(b).work[0].ciFailure
+  assert.deepEqual(f, {
+    summary: 'CI failed · 1 test',
+    url: null,
+    counts: '1 failed',
+    job: 'build',
+    first: 't',
+    more: '',
+  })
+  assert.ok(textOf(panelView(b)).includes('CI failed · 1 test'))
+  assert.ok(!textOf(panelView(b)).includes('↗'))
+  assert.equal(findId(workerView(b, { name: 'fix-1', state: 'working' }), 'panel-ci-log-one'), null)
+  const bare = m.panelSections(board({ tasks: [task('x', { ciFailure: { job: 'build', tests: [], more: 0 } })] })).work[0].ciFailure
+  assert.equal(bare.summary, 'CI failed')
+})
+
+test('pressing the failed CI opens its run, and the press stops there', () => {
+  const b = board({ tasks: [task('one', { ciFailure: FAIL })] })
+  app.execs.length = 0
+  let stopped = false
+  findId(panelView(b), 'panel-ci-one').node.calls.on_mouse_down[1](null, { stop_propagation: () => (stopped = true) })
+  assert.deepEqual(app.execs, [['open', FAIL.url]])
+  assert.ok(stopped)
+})
+
+test('the head says whether the session is orchestrating or solo, and plain Board when the board does not say', () => {
+  const head = coordinator => textOf(panelView(board({ coordinator }), 0))
+  assert.ok(head({ orchestrating: true }).includes('Board · orchestrating'))
+  assert.ok(head({ orchestrating: false }).includes('Board · solo'))
+  assert.ok(!head({}).includes('Board ·'))
+})
+
+test('the Next list sits between Work and Merged, the first row next in line', () => {
+  const b = board({
+    tasks: [task('m', { isMerged: true, isFinished: true, who: { text: 'merged', kind: 'dim' }, mergedAt: 1 })],
+    next: [
+      { key: 'acme/x#218', issue: 218, title: 'PR links', url: 'https://github.com/acme/x/issues/218', planned: true },
+      { key: 'acme/x#219', issue: 219, title: 'Card keys', url: 'https://github.com/acme/x/issues/219' },
+      { issue: 'bad', title: 'dropped' },
+    ],
+  })
+  const text = textOf(panelView(b))
+  const at = s => text.indexOf(s)
+  assert.ok(at('Next') > at('Nothing running.') && at('Next') < at('Merged'))
+  assert.deepEqual(
+    text.filter(s => /^(PR links|Card keys|dropped|issue #\d+ ↗|ready.*)$/.test(s)),
+    ['PR links', 'issue #218 ↗', 'ready · next in line', 'Card keys', 'issue #219 ↗', 'ready'],
+  )
+  // Planned shows in the P column; nothing else is marked.
+  const [first, second] = model.nextRows(b)
+  assert.deepEqual(first.stages, ['done', null, null, null, null])
+  assert.deepEqual(second.stages, [null, null, null, null, null])
+  // An older board has no Next section.
+  assert.equal(textOf(panelView(board())).includes('Next'), false)
+})
+
+const DIFF = {
+  base: 'main',
+  add: 142,
+  del: 31,
+  files: [
+    { path: 'app/panel.js', status: 'M', add: 120, del: 30 },
+    { path: 'app/new.js', status: 'A', add: 22, del: 1 },
+  ],
+  more: 3,
+}
+
+test("a worker's context and branch diff read as the design has them, and an older board draws neither", () => {
+  assert.equal(model.ctxText({ context: 41 }), 'ctx 41%')
+  assert.equal(model.ctxText({ context: 0 }), 'ctx 0%')
+  for (const bad of [{}, { context: null }, { context: 'x' }, { context: 101 }, { context: 4.5 }, null])
+    assert.equal(model.ctxText(bad), '')
+  assert.deepEqual(model.branchDiff({ diff: DIFF }), {
+    title: 'Branch vs main',
+    total: '+142 −31',
+    files: [
+      { path: 'app/panel.js', status: 'M', delta: '+120 −30' },
+      { path: 'app/new.js', status: 'A', delta: '+22 −1' },
+    ],
+    more: '+3 more files',
+  })
+  assert.equal(model.branchDiff({ diff: { ...DIFF, more: 1 } }).more, '+1 more file')
+  for (const bad of [{}, { diff: null }, { diff: { base: 'main' } }, null]) assert.equal(model.branchDiff(bad), null)
+
+  const b = board({ tasks: [task('one', { tab: 'fix-1', pr: 7, url: 'https://github.com/o/app/pull/7' })] })
+  const text = textOf(workerView(b, { ...worker, context: 41, diff: DIFF }))
+  for (const want of ['ctx 41%', 'Branch vs main', '+142 −31', 'app/panel.js', 'M', 'A', '+22 −1', '+3 more files', 'Open diff ↗'])
+    assert.ok(text.includes(want), want)
+  const old = textOf(workerView(b, worker))
+  assert.ok(!old.some(t => /ctx|Branch vs/.test(t)))
+})
+
+test('Open diff opens the PR files, and a worker with no PR has the rows only', () => {
+  app.execs.length = 0
+  const b = board({ tasks: [task('one', { tab: 'fix-1', pr: 7, url: 'https://github.com/o/app/pull/7' })] })
+  findId(workerView(b, { ...worker, diff: DIFF }), 'panel-diff-fix-1').node.calls.on_mouse_down[1](null, { stop_propagation() {} })
+  assert.deepEqual(app.execs, [['open', 'https://github.com/o/app/pull/7/files']])
+  const bare = workerView(board(), { ...worker, diff: DIFF })
+  assert.ok(textOf(bare).includes('Branch vs main'))
+  assert.equal(findId(bare, 'panel-diff-fix-1'), null)
 })

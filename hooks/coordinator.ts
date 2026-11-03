@@ -4,6 +4,7 @@ import type { Reset } from '../types'
 import { refresh } from './board'
 import { config, resetSettings, smallTasks, target, turnedOff, userConfigPath } from './config'
 import { AUTO_END, AUTO_START, SAVE_WAIT_MS, WRAP_UP } from './defaults'
+import { post } from './outbox'
 import { pinned } from './owner'
 import { cmd, session } from './session'
 import { active, jobs } from './state'
@@ -14,6 +15,11 @@ import { active, jobs } from './state'
 // The context reset under way (see maybeReset), and whether /hrd-orchestrate ran here.
 const resetAtom = atom({ plugin: 'herdr-agents', key: 'reset' } as const, null as Reset | null)
 const orchestrating = atom({ plugin: 'herdr-agents', key: 'orchestrating' } as const, false)
+
+// Whether /hrd-orchestrate ran here (the board shows it; only this file may read the atom).
+export function isOrchestrating($: EngineInterface) {
+  return read($, orchestrating)
+}
 
 // What the coordinator does after two failed fix rounds.
 export function afterFailedRounds(off: Set<string>) {
@@ -53,7 +59,7 @@ export async function playbook($: EngineInterface, statePath: string) {
   return [
     'You coordinate worker agents for the repo(s) in this folder: you plan, start and check them and land their PRs; you write little code yourself.',
     '- Rules: read AGENTS.md or CLAUDE.md first. They name the base branch, the checks, the PR format, who merges and what needs the owner; workers read them too.',
-    `- State: keep ${statePath} current. The mod rewrites its block between ${AUTO_START} and ${AUTO_END} (running and waiting workers, recent reports) on every change; never edit that block. You own Ready (planned items that can start now, at least 3), Decisions and Next: update them when they change, not after every report. A fresh context carries on from the file alone.`,
+    `- State: keep ${statePath} current. The mod rewrites its block between ${AUTO_START} and ${AUTO_END} (running and waiting workers, recent reports) on every change; never edit that block. You own Ready (planned items that can start now, at least 3), Decisions and Next: update them when they change, not after every report. Put Ready on the board with set_next, in the order it starts, whenever it changes. A fresh context carries on from the file alone.`,
     "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report. Its status is done, blocked, failed (also a worker that did not start) or gone (its tab is gone).",
     "- Worktrees: give spawn `branch` (and `repo` when the folder holds several) and the mod creates the worker's worktree off the base branch (fetched from origin first, if the repo has one) at ../<repo>-wt/<branch>; give `cwd` instead only to reuse a worktree (a fix round). Never two writers in one.",
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
@@ -68,21 +74,24 @@ export async function playbook($: EngineInterface, statePath: string) {
   ].join('\n')
 }
 
-// Turns wrap-up on or off and, in a session that has started workers, tells its model.
-export async function toggleWrapUp($: EngineInterface, on: boolean) {
+// Turns wrap-up on or off. In a session that has started workers its model is told with a prompt:
+// at once from the app, through the outbox from a command (the host rejects a submit made inside a
+// command hook; the outbox sends it once the turn is idle).
+export async function toggleWrapUp($: EngineInterface, on: boolean, fromCommand = false) {
   await setWrapUp($, on)
   const live = Object.values(await jobs($)).filter(active)
   if (Object.keys(await jobs($)).length > 0) {
-    void $.prompt.submit({
-      text: on
-        ? `<herdr-context>The owner is wrapping up: start no new workers (a reviewer for an open PR is allowed). Let the ${live.length} running finish, send them fixes with message and merge what is ready. When the last one has reported, update the state file and stop.</herdr-context>`
-        : `<herdr-context>The owner ended the wrap-up: keep ${await target($)} workers busy again from the Ready list.</herdr-context>`,
-    })
+    const note = on
+      ? `<herdr-context>The owner is wrapping up: start no new workers (a reviewer for an open PR is allowed). Let the ${live.length} running finish, send them fixes with message and merge what is ready. When the last one has reported, update the state file and stop.</herdr-context>`
+      : `<herdr-context>The owner ended the wrap-up: keep ${await target($)} workers busy again from the Ready list.</herdr-context>`
+    if (fromCommand) await post($, note)
+    else void $.prompt.submit({ text: note })
   }
   const names = live.map(j => j.name).join(', ')
-  return on
+  const text = on
     ? `Wrapping up: no new herdr workers start. ${live.length ? `${live.length} still running finish: ${names}.` : 'None are running.'} ${cmd('wrap-up')} off ends it.`
     : 'Wrap-up off: workers start again.'
+  return text
 }
 
 // The live workers, for the compaction summary to keep.
@@ -167,12 +176,17 @@ export async function maybeReset($: EngineInterface, tokens: number) {
   }
 }
 
+// The playbook and goal go to the model as a prompt of its own through the outbox: the host rejects
+// a $.prompt.submit made from inside a command hook, so it is sent once the turn is idle. Wrap-up
+// is turned off, or the next refresh would end the orchestrating again.
 export async function orchestrate($: EngineInterface, args: string) {
   const goal = args.trim()
   const { statePath } = await resetSettings($)
+  await setWrapUp($, false)
   await update($, orchestrating, () => true)
-  void $.prompt.submit({
-    text: [
+  await post(
+    $,
+    [
       '<herdr-context>You are now the coordinator of this folder.',
       await playbook($, statePath),
       goal
@@ -180,6 +194,13 @@ export async function orchestrate($: EngineInterface, args: string) {
         : 'Goal: none given. Read the state file and the open issues, then propose the first ones to the owner with ask_owner.',
       '</herdr-context>',
     ].join('\n'),
-  })
-  return { text: `Coordinating${goal ? `: ${goal}` : ''}. State file: ${statePath}. ${cmd('wrap-up')} stops new work.` }
+  )
+  return `Coordinating${goal ? `: ${goal}` : ''}. State file: ${statePath}. ${cmd('wrap-up')} stops new work.`
+}
+
+// A finished wrap-up (on, nothing running) ends orchestrating, so the board shows solo again.
+export async function endFinishedWrapUp($: EngineInterface, wrapping: boolean) {
+  if (!wrapping || !(await read($, orchestrating))) return
+  if (Object.values(await jobs($)).some(active)) return
+  await update($, orchestrating, () => false)
 }
