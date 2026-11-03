@@ -67,8 +67,9 @@ function prNumbers(value: string): number[] {
 
 // The blockers a review report lists: the lines under a `Blockers` heading (`**Blockers**`, `## Blockers`,
 // `Blockers:`), up to the next heading, a `Nits` line or a blank line after the list began. Each is one
-// short line without its list marker or number. Tolerant: no such heading means none.
-const BLOCKERS_HEAD = /^\s*(?:#+\s*)?\**\s*blockers?\b[^:\n]*?\**\s*:?\**\s*(.*)$/i
+// short line without its list marker or number. The heading line holds only the title, or the title, `:` and
+// one inline blocker: a sentence that starts with "Blockers" is not one. Tolerant: no such heading means none.
+const BLOCKERS_HEAD = /^\s*(?:#+\s*)?\**\s*blockers?\s*(?:\**\s*:\s*\**\s*(.*?)|\**)\s*$/i
 const LIST_ITEM = /^\s*(?:[-*]|\d+[.)])\s+/
 export const BLOCKERS = 4
 export const BLOCKER_CHARS = 100

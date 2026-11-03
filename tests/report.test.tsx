@@ -154,6 +154,12 @@ test('blockers are read from the list under a Blockers heading, however it is wr
   expect(parseBlockers('**Blockers:** one thing' + nits)).toEqual(['one thing'])
 })
 
+test('a sentence starting with Blockers, or a heading with more text after it, is not the Blockers heading', () => {
+  expect(parseBlockers('Blockers from the last review are fixed.\n\n**Blockers**\n1. a.ts:2 bad')).toEqual(['a.ts:2 bad'])
+  expect(parseBlockers('**Blockers** (need a fix round)\n1. a.ts:1 bad')).toEqual([])
+  expect(parseBlockers('**Blockers**: a.ts:1 bad')).toEqual(['a.ts:1 bad'])
+})
+
 test('no Blockers list, or "none", gives no blockers; many and long ones are capped', () => {
   expect(parseBlockers('Looks good.\n**Nits**\n1. x')).toEqual([])
   expect(parseBlockers('**Blockers**\nNone.\n\n**Nits**\n1. x')).toEqual([])
