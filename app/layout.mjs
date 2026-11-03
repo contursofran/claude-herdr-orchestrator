@@ -253,7 +253,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents and Spaces lists, pin bar and answer card blocks, sheet and version block were brought up to date.'
+          ? 'Layout "coordinator" exists; only its agents and Spaces lists, answer card blocks, sheet and version block were brought up to date.'
           : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {

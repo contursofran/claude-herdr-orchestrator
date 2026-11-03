@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { deriveBar, newBarState, pins, slimLine } from '../mods/herdr-agents/model.js'
+import { pins } from '../mods/herdr-agents/model.js'
 import { clearStaleSheet } from '../mods/herdr-agents/cardstate.js'
 import {
   SHEET_MAX_H,
@@ -301,22 +301,6 @@ test('sheetSize: 470 px at most and shorter in a short window, so the strip and 
   assert.equal(sheetSize({ width: 900, height: 1000 }).narrow, true)
   assert.equal(sheetSize({ width: 200, height: 1000 }).w, 300)
   assert.deepEqual(sheetSize(null), { w: SHEET_W, h: SHEET_MAX_H, narrow: false, meta: true })
-})
-
-test('the pin bar goes slim at the same row while the sheet is open, and says how many are new; no flash starts', () => {
-  const b = board()
-  b.needs = b.needs.filter(n => n.kind === 'know').slice(0, 2)
-  const list = pins(b)
-  assert.equal(slimLine(list), '2 pins · nothing new · last: Index added')
-  assert.equal(slimLine(list, true), '2 pins · 2 new · last: Index added')
-  const open = deriveBar(newBarState(), b, { now: 1, slim: true })
-  assert.equal(open.view.mode, 'slim')
-  assert.equal(open.flashStart, null)
-  assert.equal(open.view.slim, '2 pins · 2 new · last: Index added')
-  const closed = deriveBar(open.state, b, { now: 2 })
-  assert.equal(closed.view.mode, 'full', 'closing the sheet brings the full row back')
-  assert.notEqual(closed.flashStart, null, 'the unread pin still flashes once, when it is shown')
-  assert.equal(deriveBar(newBarState(), { ...b, needs: [] }, { slim: true }).view.mode, 'empty', 'no pins: still the quiet empty row')
 })
 
 test('clearStaleSheet forgets a sheet left open by the last run, and only that', () => {

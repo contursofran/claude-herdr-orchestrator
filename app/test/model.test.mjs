@@ -18,22 +18,15 @@ import {
   boardIdIn,
   cancelAction,
   counts,
-  currentPin,
   debugLine,
-  deriveBar,
   doneAction,
-  emptyLine,
   flashing,
   hiddenKeys,
   isUnseen,
-  keyStep,
   labelOf,
   listOrder,
-  markRead,
-  newBarState,
   arrivalNotice,
   newArrivals,
-  newPinIds,
   nextPick,
   observeArrivals,
   openNeeds,
@@ -41,17 +34,12 @@ import {
   otherCount,
   pickAt,
   pickNumber,
-  pinStepDir,
-  pinbarMode,
   pins,
   pruneRead,
   queueAction,
   readKey,
   resolveBoard,
-  segments,
   settleSent,
-  slimLine,
-  stepPin,
   stripItems,
   takeDue,
 } from '../mods/herdr-agents/model.js'
@@ -290,18 +278,21 @@ test('pins are the open know items, in board order; ask, do and closed ones are 
   assert.deepEqual(pins(null), [])
 })
 
-test('a board with only a to-do has no pin: the bar is empty and the strip keeps the tab', () => {
+test('a board with only a to-do has no pin; the strip keeps the tab', () => {
   const b = pinBoard([{ key: 'T1', kind: 'do', isOpen: true, text: 'Merge #7', at: 5 }])
   assert.deepEqual(pins(b), [])
-  assert.equal(pinbarMode(pins(b)), 'empty')
   assert.deepEqual(
     stripItems(b).map(i => i.key),
     ['T1'],
     'the strip tab stays',
   )
-  const { view } = deriveBar(newBarState(), b)
-  assert.equal(view.mode, 'empty')
-  assert.deepEqual(view.waiting, [])
+})
+
+test('pruneRead drops marks of sessions with no board and keeps the same object when nothing goes', () => {
+  const read = { 'a:K1': true, 'b:K1': true }
+  const next = pruneRead(read, [{ session: 'a' }])
+  assert.deepEqual(next, { 'a:K1': true })
+  assert.equal(pruneRead(read, [{ session: 'a' }, { session: 'b' }]), read)
 })
 
 test('pin fields fall back: title from the first line of text, summary from the rest, no tag, key as the last title', () => {
@@ -341,62 +332,12 @@ test('unread comes from the read map; hidden keys are left out', () => {
   )
 })
 
-test('currentPin: the newest unread; the later one on equal times; a picked pin while it exists', () => {
-  const b = pinBoard([know('K1', { at: 300 }), know('K2', { at: 200 }), know('K3', { at: 300 })])
-  assert.equal(currentPin(pins(b)).key, 'K3', 'equal at: the later in board order')
-  const read = { [readKey('s', 'K3')]: true, [readKey('s', 'K1')]: true }
-  assert.equal(currentPin(pins(b, read)).key, 'K2', 'read ones are skipped')
-  assert.equal(currentPin(pins(b, read), readKey('s', 'K1')).key, 'K1', 'picked, though read')
-  assert.equal(currentPin(pins(b), readKey('s', 'gone')).key, 'K3', 'a picked pin that is gone falls back')
-})
-
-test('pinbarMode: empty without pins, slim when all read, full otherwise or when one is picked', () => {
-  assert.equal(pinbarMode(pins(pinBoard([]))), 'empty')
-  assert.equal(pinbarMode(pins(pinBoard([{ key: 'D1', kind: 'ask', isOpen: true }]))), 'empty')
-  const b = pinBoard([know('K1'), know('K2')])
-  const all = { [readKey('s', 'K1')]: true, [readKey('s', 'K2')]: true }
-  assert.equal(pinbarMode(pins(b, all)), 'slim')
-  assert.equal(pinbarMode(pins(b, { [readKey('s', 'K1')]: true })), 'full')
-  assert.equal(pinbarMode(pins(b, all), readKey('s', 'K1')), 'full')
-})
-
-test('slimLine: count, nothing new, last title', () => {
-  const b = pinBoard([know('K1', { title: 'Old', at: 1 }), know('K2', { title: 'New', at: 2 })])
-  assert.equal(slimLine(pins(b)), '2 pins · nothing new · last: New')
-  assert.equal(slimLine(pins(pinBoard([know('K1', { title: 'Only' })]))), '1 pin · nothing new · last: Only')
-  assert.equal(slimLine([]), '')
-})
-
-test('segments mark the current, unread and read pins in board order', () => {
-  const b = pinBoard([know('K1', { at: 1 }), know('K2', { at: 3 }), know('K3', { at: 2 })])
-  const list = pins(b, { [readKey('s', 'K1')]: true })
-  assert.deepEqual(
-    segments(list, currentPin(list)).map(s => s.kind),
-    ['read', 'current', 'unread'],
-  )
-})
-
-test('newPinIds: nothing is new on the first call; later ones are the ids not seen before', () => {
-  const list = pins(pinBoard([know('K1'), know('K2')]))
-  assert.deepEqual(newPinIds(null, list), [])
-  assert.deepEqual(newPinIds(new Set([readKey('s', 'K1')]), list), [readKey('s', 'K2')])
-})
-
 test('ageText: now, minutes, hours, days', () => {
   assert.equal(ageText(1000, 1000 + 30_000), 'now')
   assert.equal(ageText(0, 5000), '')
   assert.equal(ageText(1000, 1000 + 5 * 60_000), '5m')
   assert.equal(ageText(1000, 1000 + 3 * 3_600_000), '3h')
   assert.equal(ageText(1000, 1000 + 2 * 86_400_000), '2d')
-})
-
-test('pruneRead drops marks of sessions with no board and keeps the same object when nothing goes', () => {
-  const read = { 'a:K1': true, 'b:K1': true }
-  const next = pruneRead(read, [{ session: 'a' }])
-  assert.deepEqual(next, { 'a:K1': true })
-  assert.equal(pruneRead(read, [{ session: 'a' }, { session: 'b' }]), read)
-  assert.equal(markRead(read, 'a:K1'), read)
-  assert.deepEqual(markRead(read, 'a:K2'), { 'a:K1': true, 'b:K1': true, 'a:K2': true })
 })
 
 test('done action and action file name', () => {
@@ -469,51 +410,6 @@ test('hiddenKeys: a sent action stops hiding its item after SENT_HIDE_MS; queued
   const queue = queueAction([], { id: 'f1', session: 's', action: doneAction('K1'), now: 0 })
   assert.deepEqual([...hiddenKeys(queue, sent, 1000 + SENT_HIDE_MS - 1)].sort(), ['s:K1', 's:K2'])
   assert.deepEqual([...hiddenKeys(queue, sent, 1000 + SENT_HIDE_MS)].sort(), ['s:K1'])
-})
-
-const bar = (prev, board, extra = {}) => deriveBar(prev, board, { now: 1000, ...extra })
-
-test('deriveBar: no board is the empty view and keeps the state', () => {
-  const s = newBarState()
-  const r = bar(s, null)
-  assert.equal(r.view.mode, 'empty')
-  assert.equal(r.state, s)
-})
-
-test('deriveBar: a pin flashes once; the same pin does not flash again', () => {
-  const b = pinBoard([know('K1')])
-  const r1 = bar(newBarState(), b)
-  assert.equal(r1.flashStart, 's:K1')
-  assert.equal(bar(r1.state, b).flashStart, null)
-  assert.equal(bar(r1.state, pinBoard([know('K1'), know('K2', { at: 200 })])).flashStart, 's:K2')
-})
-
-test('deriveBar: a read pin or the slim bar does not flash', () => {
-  const b = pinBoard([know('K1')])
-  assert.equal(bar(newBarState(), b, { read: { 's:K1': true } }).flashStart, null)
-})
-
-test('deriveBar: the selection resets on a new board and when a new pin arrives, not otherwise', () => {
-  const b = pinBoard([know('K1'), know('K2')])
-  const picked = { ...bar(newBarState(), b).state, sel: 's:K1' }
-  assert.equal(bar(picked, b).state.sel, 's:K1', 'kept')
-  const away = bar(picked, pinBoard([], 'other'))
-  assert.equal(away.state.sel, null, 'other board')
-  assert.equal(bar(away.state, b).state.sel, null, 'back on the first board the old pick is not revived')
-  assert.equal(bar(picked, pinBoard([know('K1'), know('K2'), know('K3')])).state.sel, null, 'new pin')
-})
-
-test('deriveBar: the first draw of a board never resets by "new pins"; waiting titles come from the pin; a key that is no pin (a card answer) is left out', () => {
-  const b = pinBoard([know('K1', { title: 'Retry' })])
-  const waiting = [
-    { id: 'f1', session: 's', key: 'K1' },
-    { id: 'f2', session: 's', key: 'Zed' },
-    { id: 'f3', session: 'x', key: 'K1' },
-  ]
-  const r = bar(newBarState(), b, { waiting, hidden: new Set(['s:K1']) })
-  assert.deepEqual(r.view.waiting, [{ id: 'f1', title: 'Retry' }])
-  assert.equal(r.view.mode, 'empty', 'hidden pins are left out')
-  assert.equal(bar(newBarState(), b, { now: 100 + 5 * 60000 }).view.meta, 'w-api · 5m')
 })
 
 // --- S12: the agents list's Orchestrators section ---
@@ -854,83 +750,6 @@ test('nextPick: a click on the selected tab deselects, a key never does', () => 
   assert.deepEqual(nextPick(now, 's', 'D7', false), now, 'a key keeps it selected')
   assert.deepEqual(nextPick(now, 's', 'D8', true), { session: 's', key: 'D8' })
   assert.deepEqual(nextPick(now, 'other', 'D7', true), { session: 'other', key: 'D7' }, 'same key on another board is another tab')
-})
-
-test('stepPin moves to the next or previous pin and wraps; with fewer than two there is nowhere to go', () => {
-  const list = pins(pinBoard([know('K1'), know('K2'), know('K3')]))
-  const id = k => readKey('s', k)
-  assert.equal(stepPin(list, list[0], 1), id('K2'))
-  assert.equal(stepPin(list, list[2], 1), id('K1'), 'next wraps to the first')
-  assert.equal(stepPin(list, list[0], -1), id('K3'), 'previous wraps to the last')
-  assert.equal(stepPin(list, null, 1), id('K2'), 'no current counts as the first')
-  assert.equal(stepPin(list.slice(0, 1), list[0], 1), null)
-  assert.equal(stepPin([], null, -1), null)
-})
-
-test('pinStepDir reads the key commands', () => {
-  assert.equal(pinStepDir('herdr-agents.nextpin'), 1)
-  assert.equal(pinStepDir('herdr-agents.prevpin'), -1)
-  assert.equal(pinStepDir('herdr-agents.pick1'), null)
-})
-
-test('emptyLine: No pins, then what is working; zeros and a missing summary leave it out', () => {
-  assert.equal(emptyLine({ summary: { busy: 2 } }), 'No pins · 2 working')
-  assert.equal(emptyLine({ summary: { busy: 0 } }), 'No pins')
-  assert.equal(emptyLine({}), 'No pins')
-})
-
-test('deriveBar tells the bar about several pins and carries the empty line', () => {
-  const two = deriveBar(newBarState(), { ...pinBoard([know('K1'), know('K2')]), summary: { busy: 1 } })
-  assert.equal(two.view.many, true)
-  assert.equal(two.view.segments[0].title.length > 0, true)
-  const one = deriveBar(newBarState(), pinBoard([know('K1')]))
-  assert.equal(one.view.many, false)
-  const none = deriveBar(newBarState(), { ...pinBoard([]), summary: { busy: 2 } })
-  assert.equal(none.view.empty, 'No pins · 2 working')
-})
-
-test('keyStep: moves from the pin shown, marks it read, and a second press before the redraw moves on', () => {
-  const list = pins(pinBoard([know('K1'), know('K2'), know('K3')]))
-  const marked = []
-  const shown = { mode: 'full', list, current: list[0] }
-  const one = keyStep(shown, 1, id => marked.push(id))
-  assert.equal(one.sel, list[1].id)
-  assert.deepEqual(marked, [list[1].id], 'the pin moved to is marked read')
-  const two = keyStep(one.shown, 1, id => marked.push(id))
-  assert.equal(two.sel, list[2].id, 'two presses before a redraw move two pins')
-  assert.deepEqual(marked, [list[1].id, list[2].id])
-})
-
-test('keyStep does nothing, and marks nothing, unless the row shows a full or slim pin bar', () => {
-  const list = pins(pinBoard([know('K1'), know('K2')]))
-  const marked = []
-  for (const mode of ['undo', 'empty'])
-    assert.equal(
-      keyStep({ mode, list, current: list[0] }, 1, id => marked.push(id)),
-      null,
-      mode,
-    )
-  assert.equal(
-    keyStep(null, 1, id => marked.push(id)),
-    null,
-    'no board',
-  )
-  assert.equal(
-    keyStep({ mode: 'full', list: list.slice(0, 1), current: list[0] }, 1, id => marked.push(id)),
-    null,
-    'one pin',
-  )
-  assert.deepEqual(marked, [])
-})
-
-test('keyStep from the slim row (2+ pins, all read) starts at the newest pin, the one a click on the row opens', () => {
-  const read = ['K1', 'K2', 'K3'].reduce((r, k) => markRead(r, readKey('s', k)), {})
-  const list = pins(pinBoard([know('K1', { at: 100 }), know('K2', { at: 300 }), know('K3', { at: 200 })]), read)
-  assert.equal(pinbarMode(list), 'slim')
-  const shown = { mode: 'slim', list, current: null }
-  // The newest is K2 (list index 1): next is K3, previous is K1. From the first pin they would be K2 and K3.
-  assert.equal(keyStep(shown, 1, () => {}).sel, readKey('s', 'K3'))
-  assert.equal(keyStep(shown, -1, () => {}).sel, readKey('s', 'K1'))
 })
 
 // ---- S10: sound and notification ----

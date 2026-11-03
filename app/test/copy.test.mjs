@@ -8,7 +8,7 @@ const { COPIED_MS, CopyState, commandsIn, copyKey, copyTargets, pinMarkdown } = 
 const { card } = await import('../mods/herdr-agents/card.js')
 const { CardState } = await import('../mods/herdr-agents/cardstate.js')
 const { SheetState, sheetBlock } = await import('../mods/herdr-agents/sheet.js')
-const { cardHint, cardKeyAction, panelHeight } = await import('../mods/herdr-agents/model.js')
+const { cardHint, cardKeyAction } = await import('../mods/herdr-agents/model.js')
 const { sheetHint, sheetKeyAction, sheetMore } = await import('../mods/herdr-agents/sheetmodel.js')
 
 /** A cx that records copies and redraws, and holds the timer until `fire()`. */
@@ -225,14 +225,6 @@ test('pin_for_owner tells the agent to put a command in backticks, with no new f
 
 const mouse = (root, id, name, e) => findId(root, id).node.calls[name].at(-1)(e)
 const ARGS = { id: 's:K1', list: [], width: 900, height: 200, overlay: 'o1', session: 's' }
-
-test('panelHeight leaves room for the Copy rows, up to three', () => {
-  const none = panelHeight('', 900)
-  assert.equal(panelHeight('Rotate the key', 900), none + 36, 'the whole-text row')
-  assert.equal(panelHeight('Run `a`', 900), none + 36)
-  assert.equal(panelHeight('Run `a` `b` `c`', 900), none + 108)
-  assert.equal(panelHeight('Run `a` `b` `c` `d` `e`', 900), none + 108, 'more rows scroll')
-})
 
 test('sheetMore counts the Copy rows of a pin text', () => {
   const view = { face: 'ask', options: [], pinText: 'x', why: '' }

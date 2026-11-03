@@ -65,7 +65,7 @@ class Install(unittest.TestCase):
         with open(os.path.join(self.app, "layouts", "coordinator.json")) as f:
             work = json.load(f)["children"][0]["children"]
         self.assertEqual([c["id"] for c in work], ["tabs", "work-body", "hrd-strip"])
-        floating = work[2]["children"][0]["floating"]
+        floating = work[1]["children"][0]["floating"]
         self.assertEqual([c["id"] for c in floating], ["hrd-sheet"])  # the strip draws the answer card: no block for it
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
 

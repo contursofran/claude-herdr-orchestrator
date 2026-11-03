@@ -82,6 +82,7 @@ export default class HerdrAgents extends View {
     this.pin = host ? new PinCtl() : null
     if (host) this.pin.outbox.release() // what the last copy queued and never sent would go out stale
     // Once per app run: overlays stay open across a layout switch, and a Done asked for on `main` waits for this copy.
+    // The key keeps its old name (from when the pin bar copy ran this): renaming it would repeat the clean-up once after an upgrade.
     if (host && firstThisRun('hrd.pinbarStarted')) {
       clearStaleOverlays(shared, setShared)
       clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
