@@ -1,4 +1,5 @@
 import type { Job, Pr, Row } from '../types'
+import { INTERRUPTED_NOTE } from './defaults'
 import { ago } from './format'
 import { active } from './state'
 
@@ -191,7 +192,7 @@ export function groupTasks({ jobs, rows, items, prs, now, repoOf }: Input): Task
       said = `${what(working)} is working (${ago(now - working.startedAt) === 'now' ? 'just started' : ago(now - working.startedAt)}).${also}`
     } else if (waiting) {
       who = { text: waitingOnCi ? 'ci' : 'waits', kind: 'dim' }
-      said = `${what(waiting)} waits: ${waiting.wait?.for ?? 'WAIT.json'}.${also}`
+      said = `${what(waiting)} waits: ${waiting.wait?.for ?? (waiting.interrupted ? INTERRUPTED_NOTE : 'WAIT.json')}.${also}`
     } else if (ask) {
       who = { text: ask.key, kind: 'dim' }
       said = `It waits for your answer to ${ask.key}.`

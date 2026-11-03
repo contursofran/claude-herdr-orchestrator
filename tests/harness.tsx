@@ -207,6 +207,7 @@ export async function start(
     }
   }
   const gone = new Gone()
+  const interruptOutcome: Record<string, string> = {}
   const find = (ref: string) => [...terms.values()].find(t => t.name === ref || t.address === ref)
   // The terminal a ref names, unless hc no longer knows it.
   const known = (ref: string) => {
@@ -499,6 +500,10 @@ export async function start(
         if (onKeys[t.name]) status[t.name] = onKeys[t.name]!
         return ok({ status: status[t.name] ?? null, turn: 0 })
       }
+      if (sub === 'interrupt') {
+        if (!t) return missing()
+        return ok({ key: 'esc', outcome: interruptOutcome[t.name] ?? 'stopped' })
+      }
       if (sub === 'kill') {
         if (!t) return missing()
         if (!t.finished) {
@@ -660,6 +665,7 @@ export async function start(
     gone,
     gate,
     emit,
+    interruptOutcome,
     finish,
     kill,
     heartbeat,

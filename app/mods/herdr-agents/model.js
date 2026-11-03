@@ -64,7 +64,9 @@ export function drawnKey(role, boards, session, open = null) {
       ]),
     )
   if (role === 'panel')
-    return JSON.stringify(list.map(b => [b.session, b.coordinator?.terminal, b.cwd, b.stageNames, b.tasks, b.workers, counts(b)]))
+    return JSON.stringify(
+      list.map(b => [b.session, b.coordinator?.terminal, liveKey(b.coordinator), b.cwd, b.stageNames, b.tasks, b.workers, counts(b)]),
+    )
   if (role === 'board') {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
@@ -355,6 +357,16 @@ export function agentLive(boards, terminals, address, now) {
   return null
 }
 
+/** What an Interrupt button in the agents list presses: a worker on its board, or an orchestrator's terminal. */
+export function interruptTarget(boards, terminals, address) {
+  const name = (terminals ?? []).find(t => t.address === address)?.name
+  for (const b of boards ?? []) {
+    if (b.coordinator?.terminal === address) return { terminal: address }
+    if (name && (b.workers ?? []).some(x => x?.name === name)) return { session: b.session, worker: name }
+  }
+  return null
+}
+
 /** How often a copy that draws ages looks at them. */
 export const AGE_TICK_MS = 60_000
 
@@ -364,7 +376,7 @@ export const AGE_TICK_MS = 60_000
 export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set(), session = null } = {}) {
   const known = at => (at ? [at] : [])
   // The clocks of a board's agents, which move on their own, and of its merged rows.
-  const liveTimes = b => (b?.workers ?? []).flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
+  const liveTimes = b => [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
   const mergeTimes = b => workRows(b).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
   if (role === 'board') {
     const board = boards.find(b => b.session === session)

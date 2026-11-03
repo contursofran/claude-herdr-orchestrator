@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { app, findId, textOf } from './fake-gpui.mjs'
 
+// Taken when the mod is imported, so it is set before that.
+const hcCalls = []
+globalThis.__fakeGpui.hc = async args => (hcCalls.push(args), { code: 0, stdout: '' })
+
 const m = await import('../mods/herdr-agents/panelmodel.js')
 const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
@@ -389,4 +393,37 @@ test("a working worker's row and its view say what it is doing, and a blocked on
   const blocked = live('blocked', running)
   assert.doesNotMatch(textOf(panelView(blocked)).join(' '), /running npm test/)
   assert.doesNotMatch(textOf(workerView(blocked, blocked.workers[0])).join(' '), /running npm test/)
+})
+
+test('a quiet orchestrator says so in the head, and Interrupt goes straight to hc', async () => {
+  const NOW = 10_000_000
+  const termsBefore = app.terminals
+  app.terminals = [{ address: COORD, status: 'working' }]
+  const quiet = board({ coordinator: { terminal: COORD, outputAt: NOW - 8 * 60_000 } })
+  const tree = panelView(quiet, NOW)
+  assert.ok(textOf(tree).includes('no output · 8m'))
+  findId(tree, 'panel-interrupt').node.calls.on_mouse_down[1](null, { stop_propagation() {} })
+  await new Promise(r => setImmediate(r))
+  assert.deepEqual(hcCalls, [['interrupt', COORD]])
+
+  // Not quiet, and not mid-turn: no button.
+  assert.equal(findId(panelView(board({ coordinator: { terminal: COORD, outputAt: NOW } }), NOW), 'panel-interrupt'), null)
+  app.terminals = [{ address: COORD, status: 'idle' }]
+  assert.equal(findId(panelView(quiet, NOW), 'panel-interrupt'), null)
+  app.terminals = termsBefore
+})
+
+test("a working worker's view offers Interrupt with its line, through its board", async () => {
+  const now = Date.now()
+  const live = { name: 'fix-1', state: 'working', command: 'npm test', commandAt: now - 60_000, outputAt: now }
+  const sent = () => Object.values(app.files).filter(v => String(v).includes('"action":"interrupt"'))
+  const tree = workerView(board(), live)
+  assert.ok(textOf(tree).includes('running npm test · 1m'))
+  findId(tree, 'panel-interrupt').node.calls.on_mouse_down[1](null, { stop_propagation() {} })
+  await new Promise(r => setImmediate(r))
+  assert.deepEqual(sent(), [JSON.stringify({ action: 'interrupt', worker: 'fix-1' })])
+
+  // No line, or done with its turn: nothing to interrupt.
+  assert.equal(findId(workerView(board(), { name: 'fix-1', state: 'working' }), 'panel-interrupt'), null)
+  assert.equal(findId(workerView(board(), { ...live, state: 'waiting' }), 'panel-interrupt'), null)
 })

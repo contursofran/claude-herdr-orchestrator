@@ -12,7 +12,7 @@ import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } fro
 import { session } from './session'
 import { jobs } from './state'
 import { groupTasks, STAGES, type ItemRef, type Task } from './tasks'
-import { stopWorker } from './workers'
+import { interruptWorker, stopWorker } from './workers'
 
 // What the Herdr app draws: the work by issue or PR and what needs the person, as plain data
 // (written out by bridge.ts, format in docs/board-schema.json), and the actions the app sends back.
@@ -221,6 +221,7 @@ export type BoardAction =
   | { action: 'clearDone'; what?: 'items' | 'tasks' }
   | { action: 'wrapUp'; on: boolean }
   | { action: 'stop'; worker: string }
+  | { action: 'interrupt'; worker: string }
 
 // Does it and says what came of it; throws when the item is not open or the action unknown.
 export async function boardAct($: EngineInterface, a: BoardAction): Promise<string> {
@@ -272,6 +273,11 @@ export async function boardAct($: EngineInterface, a: BoardAction): Promise<stri
       const stopped = await stopWorker($, { worker: a.worker })
       if ('deny' in stopped) throw new Error(stopped.deny)
       return `stopped ${a.worker}`
+    }
+    case 'interrupt': {
+      const done = await interruptWorker($, { worker: a.worker }, true)
+      if ('deny' in done) throw new Error(done.deny)
+      return `interrupted ${a.worker}`
     }
     default:
       throw new Error(`unknown action ${JSON.stringify((a as { action?: unknown }).action)}`)

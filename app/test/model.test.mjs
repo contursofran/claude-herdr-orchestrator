@@ -1232,3 +1232,12 @@ test('the agents list and the panel redraw when a clock changes, and their ages 
   assert.deepEqual(agedTimes('panel', { boards: b({ commandAt: 5, outputAt: 6 }) }), [5, 6])
   assert.deepEqual(agedTimes('board', { boards: b({ commandAt: 5 }), session: 's' }), [5])
 })
+
+test('interruptTarget: a worker through its board, an orchestrator by its terminal', async () => {
+  const { interruptTarget } = await import('../mods/herdr-agents/model.js')
+  const boards = [{ session: 's', coordinator: { terminal: 't1' }, workers: [{ name: 'fix-1', state: 'working' }] }]
+  const terminals = [{ address: 't1' }, { address: 't2', name: 'fix-1' }, { address: 't3', name: 'other' }]
+  assert.deepEqual(interruptTarget(boards, terminals, 't1'), { terminal: 't1' })
+  assert.deepEqual(interruptTarget(boards, terminals, 't2'), { session: 's', worker: 'fix-1' })
+  assert.equal(interruptTarget(boards, terminals, 't3'), null)
+})

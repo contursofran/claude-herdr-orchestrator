@@ -7,7 +7,8 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agentLive, listOrder, parkedNote } from "./model.js";
+import { interruptButton } from "./interrupt.js";
+import { agentLive, interruptTarget, listOrder, parkedNote } from "./model.js";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
 
 function find(node, id) {
@@ -251,7 +252,11 @@ export class AgentsList {
       const note = parked
         ? [h_flex().id(`ag-wait-${a.address}`).px(8).pb(4).flex_none().text_size(11).text_color(t.dim).child(div().flex_1().min_w(0).truncate().child(`\u23f8 ${parked}`))]
         : live
-          ? [h_flex().id(`ag-live-${a.address}`).pl(30).pr(8).pb(4).flex_none().text_size(11).text_color(live.warn ? t.working : t.dim).child(div().flex_1().min_w(0).truncate().child(live.text))]
+          ? [
+              h_flex().id(`ag-live-${a.address}`).pl(30).pr(8).pb(4).flex_none().text_size(11).text_color(live.warn ? t.working : t.dim).child(div().flex_1().min_w(0).truncate().child(live.text)),
+              // Only one gone quiet gets the button: one running a command or talking is going somewhere.
+              ...(live.quiet ? [h_flex().pl(30).pr(8).pb(4).flex_none().child(interruptButton(`ag-interrupt-${a.address}`, interruptTarget(boards.list(), all, a.address), live.warn))] : []),
+            ]
           : [];
       if (this.folded.has(a.address)) return [r, ...note];
       return [r, ...note, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];

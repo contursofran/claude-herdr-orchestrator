@@ -82,6 +82,13 @@ export async function registerTools($: EngineInterface) {
     isDeferred: false,
   })
   await $.tool.register({
+    name: 'interrupt',
+    description:
+      "End a working worker's turn with its stop key, keeping the worker and its context, when it is going the wrong way or has gone quiet. Then send what it should do instead with message; its report comes from that turn. Refused for a worker that is not mid-turn, or that already wrote its report.",
+    inputSchema: { type: 'object', properties: { worker: { type: 'string' } }, required: ['worker'] },
+    isDeferred: false,
+  })
+  await $.tool.register({
     name: 'ask_owner',
     description: [
       'Pin a question only the person can answer (a product rule, a design choice, an approval) where they will see it, with a toast.',

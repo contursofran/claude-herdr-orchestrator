@@ -185,6 +185,14 @@
         },
         {
           "type": "object",
+          "required": ["action", "worker"],
+          "properties": {
+            "action": { "const": "interrupt" },
+            "worker": { "type": "string", "description": "A worker's name: as the interrupt tool does, and its coordinator is told." }
+          }
+        },
+        {
+          "type": "object",
           "required": ["action", "on"],
           "properties": { "action": { "const": "wrapUp" }, "on": { "type": "boolean" } }
         }

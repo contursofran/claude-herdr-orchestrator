@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Board, Job, Links, Row } from '../types'
 import { config, target, wrappingUp } from './config'
-import { LINGER_MS, QUIET_MAX_MS } from './defaults'
+import { INTERRUPTED_NOTE, LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { lastStatus } from './hc'
 import { workerLiveFields } from './live'
 import { openQuestions, pingQuiet } from './owner'
@@ -71,7 +71,7 @@ export async function refresh($: EngineInterface) {
     if (j.status === 'starting') state = 'starting'
     if (j.status === 'running') state = lastStatus.get(j.name) ?? 'working'
     if (waitsAfterReport(j)) state = 'blocked'
-    if (j.status === 'running' && j.wait && state !== 'blocked' && state !== 'gone') state = 'waiting'
+    if (j.status === 'running' && (j.wait || j.interrupted) && state !== 'blocked' && state !== 'gone') state = 'waiting'
     rows.push({
       name: j.name,
       profile: j.profile,
@@ -80,6 +80,7 @@ export async function refresh($: EngineInterface) {
       endedAt: j.endedAt,
       // The start time, not a clock: a ticking note would rewrite the board file on every tick (#151). The app works the clock out.
       ...(j.status === 'running' && j.wait ? { note: j.wait.for, since: j.wait.since } : {}),
+      ...(j.status === 'running' && j.interrupted ? { note: INTERRUPTED_NOTE } : {}),
       ...(byCwd[j.cwd] ? { repo: byCwd[j.cwd] } : {}),
       ...(state === 'working' ? await workerLiveFields($, j.dir, now) : {}),
     })
