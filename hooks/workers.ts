@@ -180,16 +180,19 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
 // not delivered, or undefined once work started. A statusless CLI (started: null) counts as delivered; the
 // quiet-screen rule catches it if it never works. The whole call has a deadline, SEND_DEADLINE_MS: the waits add
 // up to 3 x 90 s, the sends and reads to some 20 s more, and slow `hc get` calls would stretch that without it.
+// An `hc send` that times out (30 s) may still land: the core types it later. So after one, the text is never
+// typed again: a later try only presses enter when the screen shows it, and otherwise waits for work to start.
 async function send($: EngineInterface, name: string, text: string, force = false): Promise<string | undefined> {
   const deadline = (await $.clock.now()) + SEND_DEADLINE_MS
   const late = async () => (await $.clock.now()) >= deadline
   // A terminal in its first seconds refuses with `unavailable` and nothing typed: try again with a growing pause, for SEND_RETRY_MS in all.
-  const typeIt = async () => {
+  const typeIt = async (): Promise<HcSend | 'timeout'> => {
     let pause = 1000
     for (let waited = 0; ; waited += pause, pause *= 2) {
       try {
         return await hc<HcSend>($, ['send', name, text, ...(force ? ['--force'] : [])], 30_000)
       } catch (err) {
+        if (kindOf(err) === 'timeout') return 'timeout'
         if (kindOf(err) !== 'unavailable' || waited + pause > SEND_RETRY_MS || (await late())) throw err
         await $.clock.sleep(pause)
       }
@@ -215,15 +218,24 @@ async function send($: EngineInterface, name: string, text: string, force = fals
     // The placeholder counts only in the input box at the bottom: the transcript above may show an earlier prompt's.
     return screen.includes(text.slice(0, 40)) || /\[Pasted /i.test(screen.split('\n').slice(-8).join('\n'))
   }
+  // Set once a send timed out: the text may be typed already, so it is not typed again.
+  let mayLand = false
+  const notDelivered = (why: string) =>
+    mayLand
+      ? `its prompt may still arrive: hc send timed out and ${why}, so it was not typed again`
+      : `its prompt was not delivered: ${why}`
   for (let i = 0; i < PROMPT_TRIES; i++) {
-    if (i > 0 && (await late())) return `its prompt was not delivered: no work started within ${SEND_DEADLINE_MS / 60_000} minutes`
+    if (i > 0 && (await late())) return notDelivered(`no work started within ${SEND_DEADLINE_MS / 60_000} minutes`)
     try {
       if (i > 0 && (await onScreen())) {
         await hc($, ['keys', name, 'enter'])
-      } else {
+      } else if (!mayLand) {
         const sent = await typeIt()
-        if (sent.started !== false) return undefined
-        turn = sent.turn
+        if (sent === 'timeout') mayLand = true
+        else {
+          if (sent.started !== false) return undefined
+          turn = sent.turn
+        }
       }
       if (await startsInTime()) return undefined
     } catch (err) {
@@ -233,7 +245,7 @@ async function send($: EngineInterface, name: string, text: string, force = fals
       throw err
     }
   }
-  return `its prompt was not delivered: no work started after ${PROMPT_TRIES} tries`
+  return notDelivered(`no work started after ${PROMPT_TRIES} tries`)
 }
 
 // Whether RESULT.md is this prompt's report (see reportRule).

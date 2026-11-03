@@ -32,9 +32,21 @@ const NO_CALLER = { HC_TERMINAL_ID: '' }
 // Runs the hc CLI and returns its JSON (--json goes right after the subcommand, before any `--` that
 // starts a program's own arguments), typed by the caller (`T`); a non-zero exit throws with
 // hc's message, and its error `kind` (not_found, blocked, finished…) and `hint` on the error.
-// An hc that is not installed rejects in $.process.run, which callers treat as any CLI error.
+// An hc that is not installed rejects in $.process.run, which callers treat as any CLI error. A call that ran
+// out of `timeoutMs` rejects too; it throws with kind 'timeout' (recognised by the time it took, or a message that
+// says timed out), because the core may still finish what the call asked for: a timed-out `hc send` can still type.
 export async function hc<T = unknown>($: EngineInterface, args: string[], timeoutMs = 90_000): Promise<T> {
-  const ran = await $.process.run(['hc', args[0]!, '--json', ...args.slice(1)], { timeoutMs, env: NO_CALLER })
+  const began = await $.clock.now()
+  let ran
+  try {
+    ran = await $.process.run(['hc', args[0]!, '--json', ...args.slice(1)], { timeoutMs, env: NO_CALLER })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if ((await $.clock.now()) - began >= timeoutMs || /timed? ?out/i.test(message)) {
+      throw Object.assign(new Error(`hc ${args[0]}: no answer within ${timeoutMs / 1000} s`), { kind: 'timeout' })
+    }
+    throw err
+  }
   if (ran.exitCode !== 0) {
     let e: { kind?: string; message?: string; hint?: string } | undefined
     try {
