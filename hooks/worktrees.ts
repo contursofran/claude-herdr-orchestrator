@@ -237,3 +237,32 @@ export async function createWorktree($: EngineInterface, top: string, branch: st
   // A failure here is not fatal: the worktree works without an upstream.
   if (collided && remote) await gitWhileLocked($, ['-C', top, 'branch', `--set-upstream-to=${start}`, branch])
 }
+
+// Lockfile → the install that follows it exactly. The first lockfile found wins.
+const INSTALLS: [lock: string, argv: string[]][] = [
+  ['package-lock.json', ['npm', 'ci']],
+  ['pnpm-lock.yaml', ['pnpm', 'install', '--frozen-lockfile']],
+  ['yarn.lock', ['yarn', 'install', '--frozen-lockfile']],
+  ['bun.lock', ['bun', 'install', '--frozen-lockfile']],
+  ['bun.lockb', ['bun', 'install', '--frozen-lockfile']],
+]
+
+// Installs a worktree's dependencies when it has a lockfile and no node_modules, so a builder runs the pinned
+// Prettier and the like. Never throws and never fails the spawn: the result is a line for the worker's task
+// ('' when there is nothing to install). Repos without a lockfile cost one exists check per lockfile name.
+export async function installDeps($: EngineInterface, cwd: string): Promise<string> {
+  try {
+    if (await $.fs.exists(`${cwd}/node_modules`)) return ''
+    for (const [lock, argv] of INSTALLS) {
+      if (!(await $.fs.exists(`${cwd}/${lock}`))) continue
+      const cmd = argv.join(' ')
+      const r = await $.process.run(argv, { cwd, timeoutMs: 300_000 })
+      if (r.exitCode === 0) return `Dependencies are installed (${cmd}); run formatters and tests with the repo's pinned versions.`
+      const why = (r.stderr || r.stdout).trim().split('\n').slice(-3).join(' ').slice(0, 300)
+      return `Installing dependencies failed (${cmd} exited ${r.exitCode}${why ? `: ${why}` : ''}). Run it yourself before formatting or testing.`
+    }
+    return ''
+  } catch (err) {
+    return `Installing dependencies failed (${err instanceof Error ? err.message : String(err)}). Run the install yourself before formatting or testing.`
+  }
+}
