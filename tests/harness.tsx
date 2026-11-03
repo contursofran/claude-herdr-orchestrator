@@ -155,6 +155,8 @@ export async function start(
   // and the process.spawn ones; `hcEnvs` is the env each of them carried.
   const calls: string[][] = []
   const hcEnvs: (Record<string, string> | undefined)[] = []
+  // The cwd each non-hc command ran in, by its joined argv.
+  const shellCwds = new Map<string, string | undefined>()
   // Any call to the old `herdr` CLI: the mod makes none, and the fake answers it with exit 127.
   const herdrCalls: string[][] = []
   // The commands the mod runs that are not hc's (git, herdr-app, install.sh, the bridge's file moves), joined by spaces, in order;
@@ -370,7 +372,10 @@ export async function start(
       calls.push([...e.argv])
       hcEnvs.push(e.init?.env)
     } else if (cmd === 'herdr') herdrCalls.push([...e.argv])
-    else shell.push(e.argv.join(' '))
+    else {
+      shell.push(e.argv.join(' '))
+      shellCwds.set(e.argv.join(' '), e.init?.cwd)
+    }
     // The commands the test answers, in order: the last answer repeats.
     const told = runs.get(e.argv.join(' '))
     if (told) {
@@ -644,6 +649,7 @@ export async function start(
     store,
     calls,
     hcEnvs,
+    shellCwds,
     herdrCalls,
     shell,
     runs,

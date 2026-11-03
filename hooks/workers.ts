@@ -1086,6 +1086,8 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     if (tree) await createWorktree($, tree.top, tree.branch, tree.base, cwd)
     // Worktrees (new or reused) get an install when they have a lockfile and no node_modules; a folder the coordinator named is left as it is.
     const deps = job.kind === 'feature' ? await installDeps($, cwd) : ''
+    // The install can take minutes: a stop meanwhile ends the start before any tab is opened.
+    if ((await latestJob($, worker))?.status !== 'starting') return
     await $.fs.write(`${dir}/TASK.md`, deps ? `${deps}\n\n${task}` : task)
     await excludeFromGit($, cwd)
     // A temp folder of its own, so a fixed name cannot collide with another worker's (#157). The folder must exist.
