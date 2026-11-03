@@ -186,7 +186,11 @@ npm run check                   # formatting, type check, both manifests, tests
 
 `install.sh` copies both mods to `~/.claude/mods/`, creates `~/.claude/herdr-agents.json` if missing, and adds to `~/.claude/settings.json` what loads the mods (`CLAUDE_CODE_PLUGIN_DIRS`) and allows their tools. After the first install, start new Claude Code sessions: `/reload-plugins` does not pick up new plugin folders. From then on, running sessions reload each update by themselves, and `/hrd-update` pulls and installs from inside a session.
 
-`npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. CI runs the same on every pull request except `typecheck`, which needs the API types a local Claude Code writes. `main` takes changes only through pull requests, and only once CI passes. After a change, run `./install.sh` again and bump `version` in `.claude-plugin/plugin.json` so running sessions reload the mod and marketplace users get the update. For a version worth announcing, tag it and publish a GitHub release saying what changed (`gh release create v<version>`).
+`npm run check` runs `format:check`, `typecheck`, `validate` and `test`, each also on its own; run it before opening a pull request. CI runs the same on every pull request except `typecheck`, which needs the API types a local Claude Code writes. `main` takes changes only through pull requests, and only once CI passes. After a change, run `./install.sh` again; running sessions reload the mod from `main`. Don't bump `version` in a feature pull request: the version only changes in a release.
+
+#### Releasing
+
+A release is one step, run from an up-to-date, clean `main` for a finished batch of changes (at most about once a day unless a fix can't wait): `scripts/release.sh X.Y.Z` (or `--minor`, `--patch`). It bumps `version` in `.claude-plugin/plugin.json` and opens a pull request titled `Version X.Y.Z`, whose body is the notes: one line per pull request merged since the last tag, with its number. Once CI passes and that pull request merges, run `scripts/release.sh --finish X.Y.Z`: it tags the merge commit `vX.Y.Z`, pushes the tag and runs `gh release create` with the same notes. `--dry-run` on either run prints every step and changes nothing. The release notes need `gh` signed in.
 
 While you work, run only the test files you touched, with `npm run test:file -- tests/bridge.test.tsx`: the whole suite takes about a minute.
 
