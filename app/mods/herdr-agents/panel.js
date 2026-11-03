@@ -363,6 +363,8 @@ export function workerView(board, worker, ui = { open: new Set() }) {
   const r = workerRow(board, worker)
   const names = rowStageNames(r, board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES)
   const about = [worker.repo?.split('/').pop(), worker.note].filter(Boolean).join(' · ')
+  const runs = [worker.provider, worker.model].filter(Boolean).join(' ')
+  const where = [worker.worktree?.split('/').pop(), worker.branch].filter(Boolean).join(' · ')
   const live = worker.state === 'working' ? liveLine(worker, Date.now()) : null
   const target = { session: board.session, worker: worker.name }
   const back = backButton(board, ui)
@@ -407,6 +409,9 @@ export function workerView(board, worker, ui = { open: new Set() }) {
             ),
         )
         .when(Boolean(about), el => el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child(about)))
+        .when(Boolean(runs || where), el =>
+          el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child([runs, where].filter(Boolean).join(' · '))),
+        )
         .when(Boolean(live), el =>
           el.child(
             div()
