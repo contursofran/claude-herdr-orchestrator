@@ -2,7 +2,7 @@ import { expect } from 'claude-code/testing'
 import { BATCH_MS, BLOCKED_COUNTS_MS } from '../hooks/defaults'
 import { working } from '../hooks/state'
 import type { Job } from '../types'
-import { start, stopAll, test } from './harness'
+import { command, start, stopAll, test } from './harness'
 import { W, turnEnd, check, codex, spawnBusy, jobOf, spawnArgs, reportW } from './workerkit'
 
 // Stops and held messages: job writes that survive what lands meanwhile, reported jobs still watched (Job.tail), and a stop that is final.
@@ -535,6 +535,7 @@ const counted = (store: Map<string, unknown>, clock: { now: () => number }) =>
 
 test('a blocked worker counts for 3 minutes, then not, and again once it leaves the prompt', async ($, on) => {
   const { clock, submitted, emit, store } = await start($, on)
+  await command($, 'hrd-orchestrate')
   await spawnBusy($, 'builder')
   await emit('w-busy', 'blocked')
   await clock.advance(BATCH_MS)

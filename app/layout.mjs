@@ -1,4 +1,4 @@
-// Makes layouts/coordinator.json from layouts/main.json: the same window with the pin bar under the tabs, the strip
+// Makes layouts/coordinator.json from layouts/main.json: the same window with the strip
 // under the work area (the strip draws the answer card above its tabs) and the version at the right of the status bar. Written only if absent, and never switched to
 // (layout.clone would switch the owner's window).
 //
@@ -71,6 +71,23 @@ export function addSheet(layout) {
   if (!main) return false
   main.floating = [...(main.floating ?? []), sheetBlock()]
   return true
+}
+
+/** Removes the pin bar's `hrd-pins` block from `layout`, in place, so the tabs sit right above the work area. true if it was there. */
+export function removePinBar(layout) {
+  let removed = false
+  const walk = node => {
+    const kids = node?.children
+    if (!Array.isArray(kids)) return
+    const keep = kids.filter(c => c?.id !== 'hrd-pins')
+    if (keep.length !== kids.length) {
+      removed = true
+      node.children = keep
+    }
+    node.children.forEach(walk)
+  }
+  walk(layout)
+  return removed
 }
 
 const VERSION_WIDTH = 190
@@ -159,7 +176,7 @@ export function repointSpaces(layout) {
   return true
 }
 
-/** `main` with (`version` is the app's, for `cloned_from`) the pin bar after `tabs` and the strip after `work-body`, both in the `work` column, and the `agents` block on this mod's list. Throws if main has another shape. */
+/** `main` with (`version` is the app's, for `cloned_from`) the strip after `work-body` in the `work` column, and the `agents` block on this mod's list. Throws if main has another shape. */
 export function coordinatorLayout(main, version) {
   const layout = structuredClone(main)
   const find = (node, id) => {
@@ -170,14 +187,13 @@ export function coordinatorLayout(main, version) {
     }
     return null
   }
-  if (find(layout, 'hrd-pins') || find(layout, 'hrd-strip')) throw new Error('layouts/main.json already has the pin bar or strip')
+  if (find(layout, 'hrd-strip')) throw new Error('layouts/main.json already has the strip')
   const work = find(layout, 'work')
   const kids = work?.children
   const tabs = kids?.findIndex(c => c.id === 'tabs')
   const body = kids?.findIndex(c => c.id === 'work-body')
   if (!kids || tabs < 0 || body < 0 || body < tabs) throw new Error('layouts/main.json has no work column with tabs and work-body')
   kids.splice(body + 1, 0, block('hrd-strip', 34, 'strip'))
-  kids.splice(tabs + 1, 0, block('hrd-pins', 38, 'pinbar'))
   repointAgents(layout)
   repointSpaces(layout)
   removeCard(layout)
@@ -190,7 +206,7 @@ export function coordinatorLayout(main, version) {
 }
 
 /** Writes <home>/layouts/coordinator.json unless it exists. Returns 'written', 'exists' or 'updated'. A file that exists keeps
- *  everything but what `repointAgents`, `repointSpaces`, `removeCard`, `addSheet`, `addVersion`, `addUsage` and `addPanel` bring up to date (then 'updated'). */
+ *  everything but what `repointAgents`, `repointSpaces`, `removePinBar`, `removeCard`, `addSheet`, `addVersion`, `addUsage` and `addPanel` bring up to date (then 'updated'). */
 export function writeCoordinatorLayout(home) {
   const target = join(home, 'layouts', 'coordinator.json')
   if (existsSync(target)) {
@@ -201,8 +217,9 @@ export function writeCoordinatorLayout(home) {
       return 'exists'
     }
     // All the edits run: `||` would skip the later ones.
-    const [repointed, uncarded, sheeted, versioned, spaced, usaged, paneled] = [
+    const [repointed, unpinned, uncarded, sheeted, versioned, spaced, usaged, paneled] = [
       repointAgents(layout),
+      removePinBar(layout),
       removeCard(layout),
       addSheet(layout),
       addVersion(layout),
@@ -210,7 +227,7 @@ export function writeCoordinatorLayout(home) {
       addUsage(layout),
       addPanel(layout),
     ]
-    if (!repointed && !uncarded && !sheeted && !versioned && !spaced && !usaged && !paneled) return 'exists'
+    if (!repointed && !unpinned && !uncarded && !sheeted && !versioned && !spaced && !usaged && !paneled) return 'exists'
     writeFileSync(`${target}.tmp`, `${JSON.stringify(layout, null, 2)}\n`)
     renameSync(`${target}.tmp`, target)
     return 'updated'
@@ -236,7 +253,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       result === 'written'
         ? 'Layout "coordinator" added; switch to it yourself (layout.switch {name: "coordinator"}).'
         : result === 'updated'
-          ? 'Layout "coordinator" exists; only its agents and Spaces lists, answer card block, sheet and version block were brought up to date.'
+          ? 'Layout "coordinator" exists; only its agents and Spaces lists, answer card blocks, sheet and version block were brought up to date.'
           : 'Layout "coordinator" exists; left as it is.',
     )
   } catch (e) {
