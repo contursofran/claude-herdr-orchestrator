@@ -16,6 +16,8 @@ export type Job = {
   queued?: string[]
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
+  // its turn was ended with the stop key (see interruptWorker), and nothing has told it what to do since
+  interrupted?: boolean
   // set while a reported job's turn is not over, so it is still watched: 'early' = reported before its
   // turn ended; 'blocked' = reported as blocked (no RESULT.md), or blocked after an early report.
   // A 'blocked' worker with no report that works again goes back to 'running'.

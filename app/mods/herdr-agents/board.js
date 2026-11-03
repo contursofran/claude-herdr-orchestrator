@@ -13,6 +13,14 @@ export class Boards extends BoardReader {
   }
 }
 
+/** Presses an agent's stop key. A worker's goes through its board, as the mod has to know why its turn ended. An orchestrator's goes
+ *  straight to hc, since its own turn is the thing that may be stuck. */
+export async function interruptAgent(target) {
+  if (target.worker) return send(target.session, { action: 'interrupt', worker: target.worker })
+  const ran = await hc(['interrupt', target.terminal])
+  if (ran.code !== 0) throw new Error(ran.stderr?.trim() || `hc exited with ${ran.code}`)
+}
+
 /**
  * Writes one action file for a board: into outgoing/ first, then `mv` into <session>.actions/ so the plugin never reads a
  * half-written file. Returns the file name, which is the id the board reports the outcome under (`board.actions`).

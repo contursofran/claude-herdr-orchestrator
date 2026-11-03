@@ -16,7 +16,7 @@ import { session } from './session'
 import { dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
 import { refreshSpawnTool, registerTools } from './tools'
-import { checkReports, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep, sweepNeeded } from './workers'
+import { checkReports, interruptWorker, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep, sweepNeeded } from './workers'
 import type { SpawnArgs } from './workers'
 import { pruneMerged } from './worktrees'
 
@@ -103,6 +103,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__herdr-agents__spawn' }, ($, e) => spawnWorker($, e as unknown as SpawnArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__message' }, ($, e) => messageWorker($, e as unknown as { worker: string; text: string }))
   on('tool.call', { tool: 'mcp__herdr-agents__stop' }, ($, e) => stopWorker($, e as unknown as { worker: string }))
+  on('tool.call', { tool: 'mcp__herdr-agents__interrupt' }, ($, e) => interruptWorker($, e as unknown as { worker: string }))
   on('tool.call', { tool: 'mcp__herdr-agents__ask_owner' }, ($, e) => askOwner($, e as unknown as AskArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__decided' }, ($, e) => settle($, e as unknown as DecidedArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__pin_for_owner' }, ($, e) => pinForOwner($, e as unknown as PinArgs))

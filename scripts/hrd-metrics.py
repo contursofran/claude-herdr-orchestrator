@@ -95,7 +95,7 @@ PRICES = {
 RATE_KEYS = ("inp", "out", "cr", "cw5", "cw1h")
 
 SPAWN = "mcp__herdr-agents__spawn"
-BOUNDARY = {SPAWN, "mcp__herdr-agents__message", "mcp__herdr-agents__stop"}
+BOUNDARY = {SPAWN, "mcp__herdr-agents__message", "mcp__herdr-agents__interrupt", "mcp__herdr-agents__stop"}
 # Claude Code puts "The herdr-agents plugin sent a message:" before a plugin prompt; the tag may come bare too.
 PROMPT_TAG = re.compile(r'\s*(?:The herdr-agents plugin sent a message:\s*)?<herdr-agent((?:\s+[\w-]+="[^"]*")*)\s*>')
 ATTR = re.compile(r'([\w-]+)="([^"]*)"')

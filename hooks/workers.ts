@@ -136,6 +136,7 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
     reportStatus: undefined,
     reportFile: undefined,
     noticed: undefined,
+    interrupted: undefined,
     // A prompt after a report whose time was posted starts the next report's time from now. A wake-up from
     // a wait is not that: the same work goes on, so its time keeps running.
     ...(job.timed ? { timeFrom: await $.clock.now(), parkedMs: 0, timed: undefined } : {}),
@@ -317,7 +318,12 @@ async function settle($: EngineInterface, job: Job, mode: 'finish' | 'resume', s
   if (status === 'blocked') return await deliver($, current, 'blocked')
   if (status === 'error') return await deliver($, current, 'error', QUIET_MS, 'its CLI reported an error')
   // A resume wait only ends once the worker works again; its turn's end is the one to wait for next.
-  if (mode === 'resume') return arm($, current, 'finish')
+  if (mode === 'resume') {
+    // Working again after an interrupt, with no message from the mod: the owner typed in its tab, so it waits for nothing now.
+    if (!current.interrupted) return arm($, current, 'finish')
+    const { after } = await updateJob($, job.name, j => (j.token === job.token ? { ...j, interrupted: undefined } : undefined))
+    return arm($, after ?? current, 'finish')
+  }
   const now = await $.clock.now()
   await waiting($, current, status, now)
   // A WAIT.json that woke the worker prompted it again, and that prompt armed its own wait.
@@ -493,7 +499,8 @@ export async function sweep($: EngineInterface, closeMinutes: number) {
         quiet.set(job.name, { token: current.token, screen: seen, since: now })
         return
       }
-      if (now - q.since >= (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) await deliver($, current, status, now - q.since)
+      if (now - q.since < (inBackground(seen) ? QUIET_BUSY_MS : QUIET_MS)) return
+      await deliver($, current, status, now - q.since, current.interrupted ? 'it was interrupted and no correction came' : undefined)
     })
     steps.push(step)
   }
@@ -1224,7 +1231,8 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     if (after) return { result: `${e.worker} is still starting; the message is handed to it with its task.` }
   }
   const heldResult = { result: `${e.worker} (${kind}) is mid-task, so the message is held and sent the moment it reports.` }
-  if (job.status === 'running') {
+  // An interrupted worker has no turn to fold a message into: it goes in as a new prompt, below.
+  if (job.status === 'running' && !job.interrupted) {
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
     if (kind === 'claude') {
@@ -1242,7 +1250,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   await serial(job.name, async () => {
     const latest = await latestJob($, job.name)
     if (!latest) return
-    if (latest.status === 'running') {
+    if (latest.status === 'running' && !latest.interrupted) {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
         const why = await typeIn()
@@ -1271,18 +1279,78 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
         return
       }
     }
+    const about = latest.interrupted
+      ? 'Your last turn was interrupted on purpose: this replaces what you were doing, and the rest of your task stands.'
+      : 'It is not your earlier task again: it answers or follows your last report.'
     await prompt(
       $,
       latest,
       text.length <= MESSAGE_CHARS
-        ? `New message from your coordinator (also saved in ${path}). It is not your earlier task again: it answers or follows your last report.\n\n${text}\n\nDo what it says.`
-        : `New message from your coordinator in ${path}, a file you have not read yet. It is not your earlier task again: it answers or follows your last report. Read it now and do what it says.`,
+        ? `New message from your coordinator (also saved in ${path}). ${about}\n\n${text}\n\nDo what it says.`
+        : `New message from your coordinator in ${path}, a file you have not read yet. ${about} Read it now and do what it says.`,
       false,
       force,
     )
     result = { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
   })
   return result ?? { deny: `could not send to ${e.worker}; try again` }
+}
+
+// Ends a working worker's turn with its stop key and keeps the worker and its context. Nothing is reported for the turn: the job
+// stays running, marked interrupted, so a message goes in as a new prompt with a new report token and only that turn's report counts.
+// With no message, the quiet-screen rule says so after QUIET_MS. A report it already wrote is not undone, so that case is refused.
+// `byOwner`: pressed on the board, so the coordinator did not ask for it and is told.
+export async function interruptWorker($: EngineInterface, e: { worker: string }, byOwner = false) {
+  const known = (await jobs($))[e.worker]
+  if (!known) return { deny: `no worker ${e.worker}` }
+  if (known.closed || known.stopped) return { deny: `${e.worker}'s tab is closed.` }
+  if (known.status === 'starting') return { deny: `${e.worker} is still starting; it has no turn to interrupt.` }
+  let result: { result: string } | { deny: string } = { deny: `could not interrupt ${e.worker}; try again` }
+  // In the job's own step, so that a wait or the sweep acts on this turn's end only once the job says what ended it.
+  await serial(e.worker, async () => {
+    const job = await latestJob($, e.worker)
+    if (!job) return
+    let outcome: string
+    try {
+      const now = await hc<HcTerminal>($, ['get', e.worker])
+      const state = now.status?.state
+      if (now.state !== 'live') return void (result = { deny: `${e.worker}'s terminal has ended.` })
+      // The stop key at a prompt would answer it, and on an idle CLI hc still says stopped, so only a working one gets it.
+      if (state === 'blocked')
+        return void (result = { deny: `${e.worker} waits at a prompt in its tab; it has no running turn to interrupt.` })
+      if (state && state !== 'working') return void (result = { deny: `${e.worker} is not mid-turn (${state}); use message.` })
+      if (job.status === 'running' && (await reported($, job)))
+        return void (result = { deny: `${e.worker} already wrote its report, which arrives in a moment; use message after it.` })
+      outcome = (await hc<{ outcome: string }>($, ['interrupt', e.worker])).outcome
+    } catch (err) {
+      return void (result = { deny: `could not interrupt ${e.worker}: ${err instanceof Error ? err.message : String(err)}` })
+    }
+    let dropped: string[] = []
+    if (job.status === 'running') {
+      // Its WAIT.json goes too, or the sweep would wake it to carry on with what it was stopped from.
+      await $.process.run(['rm', '-f', `${job.dir}/WAIT.json`])
+      const { before } = await updateJob($, e.worker, j =>
+        j.token === job.token && j.status === 'running' ? { ...j, interrupted: true, wait: undefined, queued: [] } : undefined,
+      )
+      dropped = before?.queued ?? []
+    }
+    const said =
+      outcome === 'stopped'
+        ? `Interrupted ${e.worker}: its turn ended and it waits.`
+        : `Pressed the stop key on ${e.worker}, but hc still reports it (${outcome}). Codex does while a background command runs, though its turn did stop; read its tab if unsure.`
+    const held = dropped.length ? ` ${dropped.length} message(s) held for it were dropped, not sent: ${dropped.join(', ')}.` : ''
+    const next = `Send what it should do instead with message: its report comes from that turn. With no message it is reported as stopped after ${QUIET_MS / 60_000} min.`
+    result = { result: `${said}${held} ${next}` }
+    if (byOwner)
+      await post(
+        $,
+        `<herdr-agent name="${job.name}" profile="${job.profile}" status="interrupted">\nThe owner pressed Interrupt on it. ${said}${held} ${next}\n</herdr-agent>`,
+        false,
+        { worker: job.name },
+      )
+  })
+  void refresh($)
+  return result
 }
 
 export async function stopWorker($: EngineInterface, e: { worker: string }) {

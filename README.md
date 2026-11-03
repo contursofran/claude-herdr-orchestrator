@@ -86,7 +86,7 @@ Tests: `npm run test:app`.
 
 ## What's in the repo
 
-- **`herdr-agents`** (the mod): the `spawn`, `message` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for what needs you, and everything above.
+- **`herdr-agents`** (the mod): the `spawn`, `message`, `interrupt` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for what needs you, and everything above.
 - **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
 - **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus high), `builder` (Sonnet medium) and `reviewer` (Opus high); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 
@@ -198,7 +198,7 @@ While you work, run only the test files you touched, with `npm run test:file -- 
 | --- | --- |
 | `config.ts` | The settings files, the built-in profiles, the state file's path. |
 | `defaults.ts` | Default settings and tuning values. |
-| `workers.ts` | `spawn`, `message`, `stop`: starting workers, watching them, delivering `RESULT.md`, `WAIT.json` waits. |
+| `workers.ts` | `spawn`, `message`, `interrupt`, `stop`: starting workers, watching them, delivering `RESULT.md`, `WAIT.json` waits. |
 | `stateblock.ts` | The Workers block the mod keeps in the state file: running and waiting workers, recent reports. |
 | `archive.ts` | The copy of each delivered report in `~/.herdr-agents/reports`, which outlives a pruned worktree. |
 | `report.ts` | The report header workers write at the top of `RESULT.md`, and its parsing. |

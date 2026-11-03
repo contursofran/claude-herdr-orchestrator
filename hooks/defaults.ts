@@ -28,6 +28,8 @@ export const MESSAGE_CHARS = 4000
 // How long a worker may sit with an unchanged screen, not working and without
 // RESULT.md, before it is reported as stopped.
 export const QUIET_MS = 5 * 60_000
+// What an interrupted worker's row says it waits for.
+export const INTERRUPTED_NOTE = 'a correction, after an interrupt'
 // The same for a worker whose status lines show background work of its own (a shell,
 // a monitor, a subagent): a dev server it left running must not hide it for good.
 export const QUIET_BUSY_MS = 60 * 60_000

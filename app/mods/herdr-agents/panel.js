@@ -7,6 +7,7 @@ import { openCard } from './cardctl.js'
 import { boardSpace, counts, liveLine, mergedText, projectName, rowAction, rowLive, stripItems } from './model.js'
 import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
+import { interruptButton } from './interrupt.js'
 import { cell, link, popupShell } from './popup.js'
 import { color, font, popup as look } from './tokens.js'
 
@@ -135,9 +136,21 @@ const closeButton = ui =>
     .child(svg('mods/pane/close.svg').size(12))
 
 /** What the orchestrator is doing, from Herdr's own status, with the design's dot: amber only while working. */
-function statusChip(board) {
+function statusChip(board, now) {
   const status = terminals().find(x => x?.address === board.coordinator?.terminal)?.status
   if (!status) return null
+  // Quiet mid-turn, it says so and offers the way out.
+  const live = status === 'working' ? liveLine(board.coordinator, now) : null
+  if (live?.quiet) {
+    return div()
+      .flex_none()
+      .flex()
+      .items_center()
+      .gap(8)
+      .text_size(11)
+      .child(liveText(live, live.text))
+      .child(interruptButton('panel-interrupt', { terminal: board.coordinator.terminal }, live.warn))
+  }
   return div()
     .flex_none()
     .flex()
@@ -253,6 +266,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
   const names = rowStageNames(r, board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES)
   const about = [worker.repo?.split('/').pop(), worker.note].filter(Boolean).join(' · ')
   const live = worker.state === 'working' ? liveLine(worker, Date.now()) : null
+  const target = { session: board.session, worker: worker.name }
   const back = backButton(board, ui)
   return frame('hrd-panel-worker')
     .child(
@@ -295,7 +309,19 @@ export function workerView(board, worker, ui = { open: new Set() }) {
             ),
         )
         .when(Boolean(about), el => el.child(div().min_w_0().truncate().text_size(11).text_color(color.dim).child(about)))
-        .when(Boolean(live), el => el.child(div().text_size(11).child(liveText(live, live?.text))))
+        .when(Boolean(live), el =>
+          el.child(
+            div()
+              .flex()
+              .items_center()
+              .justify_between()
+              .gap(8)
+              .text_size(11)
+              .child(liveText(live, live?.text))
+              // Here too for a long command, which never reads as quiet and may be what hangs.
+              .child(interruptButton('panel-interrupt', target, live?.warn)),
+          ),
+        )
         .when(Boolean(r), el =>
           el.child(
             div()
@@ -380,7 +406,7 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
   const root = frame('hrd-panel')
   if (!board) return root.child(div().p(14).text_color(color.dim).child('No board for this tab.'))
   const { look: stuck, work, merged } = panelSections(board)
-  const chip = statusChip(board)
+  const chip = statusChip(board, now)
   const names = board.stageNames?.length === 5 ? board.stageNames : STAGE_NAMES
   return root
     .child(
