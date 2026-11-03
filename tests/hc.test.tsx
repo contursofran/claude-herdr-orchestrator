@@ -572,6 +572,7 @@ const prunable = async ($: Parameters<typeof start>[0], on: Parameters<typeof st
     { exitCode: 0, stdout: 'worktree /repo\nbranch refs/heads/main\n\nworktree /repo/wt\nbranch refs/heads/fix-x\n' },
   ])
   h.runs.set('git -C /repo/wt status --porcelain', [{ exitCode: 0, stdout: '' }])
+  h.runs.set('git -C /repo/wt remote -v', [{ exitCode: 0, stdout: 'origin\tgit@github.com:acme/app-client.git (fetch)\n' }])
   h.runs.set(PR, [{ exitCode: 0, stdout: '12 abc123\n' }])
   h.runs.set('git -C /repo/wt rev-parse HEAD', [{ exitCode: 0, stdout: 'abc123\n' }])
   h.runs.set('git --git-dir=/repo/.git worktree remove /repo/wt', [{ exitCode: 0 }])
@@ -602,6 +603,41 @@ test("prune closes the mod's own idle workers in a merged worktree", async ($, o
   expect(shell).toContain('git --git-dir=/repo/.git worktree remove /repo/wt')
   expect(closed).toEqual(['w-done'])
   expect(removed).toEqual(['w-done'])
+})
+
+// A repo with no origin remote: merged means the branch is an ancestor of the main checkout's branch.
+const noRemote = async ($: Parameters<typeof start>[0], on: Parameters<typeof start>[1], isAncestor: number) => {
+  const h = await prunable($, on)
+  h.runs.set('git -C /repo/wt remote -v', [{ exitCode: 0, stdout: '' }])
+  h.runs.set('git -C /repo/wt merge-base --is-ancestor fix-x main', [{ exitCode: isAncestor }])
+  await h.clock.settle()
+  await h.clock.advance(60_000)
+  await h.clock.settle()
+  return h
+}
+
+test('prune removes a no-remote worktree whose branch is in the base', async ($, on) => {
+  const { shell } = await noRemote($, on, 0)
+  expect(shell).toContain('git --git-dir=/repo/.git worktree remove /repo/wt')
+  expect(shell).toContain('git --git-dir=/repo/.git branch -D fix-x')
+  expect(shell.some(c => c.startsWith('gh '))).toBe(false)
+})
+
+test('prune keeps a no-remote worktree whose branch is not in the base', async ($, on) => {
+  const { shell } = await noRemote($, on, 1)
+  expect(removes(shell)).toBe(false)
+})
+
+test('prune keeps a no-remote worktree where a terminal of someone else works', async ($, on) => {
+  const h = await prunable($, on)
+  h.runs.set('git -C /repo/wt remote -v', [{ exitCode: 0, stdout: '' }])
+  h.runs.set('git -C /repo/wt merge-base --is-ancestor fix-x main', [{ exitCode: 0 }])
+  h.addTerm('stranger', '/repo/wt', {})
+  h.status.stranger = 'working'
+  await h.clock.settle()
+  await h.clock.advance(60_000)
+  await h.clock.settle()
+  expect(removes(h.shell)).toBe(false)
 })
 
 test('prune keeps a worktree whose job is still running while its worker sits idle between turns', async ($, on) => {
