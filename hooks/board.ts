@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Board, Job, Links, Row } from '../types'
+import { endFinishedWrapUp } from './coordinator'
 import { PROFILES, config, modelOf, target, wrappingUp } from './config'
 import { INTERRUPTED_NOTE, LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { lastStatus } from './hc'
@@ -92,6 +93,7 @@ export async function refresh($: EngineInterface) {
       ...(await workerContext($, j.dir)),
     })
   }
+  await endFinishedWrapUp($, await wrappingUp($, settings))
   const held = await read($, board)
   if (rows.length === 0 && held.rows.length === 0) return
   const want = await target($, settings)

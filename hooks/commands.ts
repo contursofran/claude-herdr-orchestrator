@@ -40,9 +40,9 @@ export async function runCommand($: EngineInterface, command: string, args: stri
   if (!command.startsWith(prefix)) return undefined
   switch (command.slice(prefix.length)) {
     case 'orchestrate':
-      return orchestrate($, args)
+      return { text: await orchestrate($, args) }
     case 'wrap-up':
-      return { text: await toggleWrapUp($, !/^(off|resume)$/i.test(args.trim())) }
+      return { text: await toggleWrapUp($, !/^(off|resume)$/i.test(args.trim()), true) }
     case 'notes':
       return writeNotes($)
     case 'update':
