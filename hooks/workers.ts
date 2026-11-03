@@ -1140,7 +1140,7 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
       const sq = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`
       const prior = p.env?.CLAUDE_ENV_FILE ?? (await $.env.get('CLAUDE_ENV_FILE')) ?? ''
       const chain = prior ? `[ -f ${sq(prior)} ] && . ${sq(prior)}\n` : ''
-      await $.fs.write(pin[0][1], `${chain}export TMPDIR=${sq(tmp)}\n`)
+      await $.fs.write(pin[0]![1], `${chain}export TMPDIR=${sq(tmp)}\n`)
     }
     // These come last, so a profile's env cannot drop them. A worker's own session
     // reads the role (see session.start).

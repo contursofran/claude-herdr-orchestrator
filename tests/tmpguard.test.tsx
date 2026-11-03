@@ -10,12 +10,12 @@ const IN_WORKER = { HERDR_AGENTS_ROLE: 'worker', HERDR_AGENTS_LIVE: LIVE }
 // Write and Edit in a worker can't target a temp folder every session shares (#157).
 const write = async (...[$, on, env, tool, file]: [...Parameters<TestBody>, Record<string, string>, 'Write' | 'Edit', string]) => {
   const reached: string[] = []
-  on('tool.call', { tool }, (_, e) => {
-    reached.push((e as unknown as { file_path: string }).file_path)
+  on('tool.call', { tool } as never, (_: unknown, e: unknown) => {
+    reached.push((e as { file_path: string }).file_path)
     return { result: {} } as never
   })
   await start($, on, {}, {}, env)
-  const out = await $.tool.call({ tool, file_path: file } as never)
+  const out = await ($.tool.call as (a: unknown) => Promise<unknown>)({ tool, file_path: file })
   await settled()
   return { reached, out: JSON.stringify(out ?? null) }
 }
