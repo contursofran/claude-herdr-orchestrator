@@ -1,6 +1,6 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS, JOBS_KEEP_MS } from '../hooks/defaults'
-import { spawn, start, stopAll, test } from './harness'
+import { command, spawn, start, stopAll, test } from './harness'
 
 // The outbox (outbox.ts): the prompts for the coordinator that come close together go out as one,
 // after a quiet BATCH_MS and once the coordinator's turn has ended. The batch's tick checks read
@@ -11,6 +11,7 @@ const turnEnd = (turnId: string) => ({ turnId, answer: '', durationMs: 1, isAbor
 
 test('two reports that land together reach the coordinator as one prompt, with one worker count', async ($, on) => {
   const { clock, emit, submitted, typed, files } = await start($, on)
+  await command($, 'hrd-orchestrate')
   await spawn($, ['w-a', 'w-b'])
   for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])

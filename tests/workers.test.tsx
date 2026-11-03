@@ -740,6 +740,7 @@ test('a starting job is not swept as gone and an old RESULT.md in its folder is 
 
 test('a starting worker counts toward the target and holds its name', async ($, on) => {
   const { clock, gate } = await start($, on)
+  await command($, 'hrd-orchestrate')
   await spawn($, ['w-a'], '/repo-a', clock)
   const release = gate(hcRun)
   await $.tool.call({ ...spawnArgs, worker: 'w-b', cwd: '/repo-b' })

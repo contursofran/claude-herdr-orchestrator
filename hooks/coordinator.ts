@@ -7,18 +7,13 @@ import { AUTO_END, AUTO_START, SAVE_WAIT_MS, WRAP_UP } from './defaults'
 import { pinned } from './owner'
 import { cmd, session } from './session'
 import { active, jobs } from './state'
+import { isOrchestrating, setOrchestrating } from './target'
 
 // The coordinator's side: the playbook it follows, the worker target and wrap-up,
 // and keeping its context small.
 
-// The context reset under way (see maybeReset), and whether /hrd-orchestrate ran here.
+// The context reset under way (see maybeReset).
 const resetAtom = atom({ plugin: 'herdr-agents', key: 'reset' } as const, null as Reset | null)
-const orchestrating = atom({ plugin: 'herdr-agents', key: 'orchestrating' } as const, false)
-
-// Whether /hrd-orchestrate ran here (the board shows it; only this file may read the atom).
-export function isOrchestrating($: EngineInterface) {
-  return read($, orchestrating)
-}
 
 // What the coordinator does after two failed fix rounds.
 export function afterFailedRounds(off: Set<string>) {
@@ -61,6 +56,7 @@ export async function playbook($: EngineInterface, statePath: string) {
     `- State: keep ${statePath} current. The mod rewrites its block between ${AUTO_START} and ${AUTO_END} (running and waiting workers, recent reports) on every change; never edit that block. You own Ready (planned items that can start now, at least 3), Decisions and Next: update them when they change, not after every report. Put Ready on the board with set_next, in the order it starts, whenever it changes. A fresh context carries on from the file alone.`,
     "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report. Its status is done, blocked, failed (also a worker that did not start) or gone (its tab is gone).",
     "- Worktrees: give spawn `branch` (and `repo` when the folder holds several) and the mod creates the worker's worktree off the base branch (fetched from origin first, if the repo has one) at ../<repo>-wt/<branch>; give `cwd` instead only to reuse a worktree (a fix round). Never two writers in one.",
+    '- Roles: `builder` does all code changes; `reviewer` reviews every builder PR.',
     `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
     '- A worker going the wrong way or quiet too long: interrupt it, then message the correction, which keeps its context; its report comes from that turn. stop loses the context.',
     `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
@@ -161,7 +157,7 @@ export async function maybeReset($: EngineInterface, tokens: number) {
     if ('skip' in result && result.skip) return
     await update($, resetAtom, () => null)
     $.ui.toast('herdr-agents: context compacted')
-    const coordinating = await read($, orchestrating)
+    const coordinating = await isOrchestrating($)
     await $.prompt.submit({
       text: `<herdr-context>The conversation was compacted to keep the context small. Read ${statePath} before acting on the next report.${coordinating ? `\n${await playbook($, statePath)}` : ''}</herdr-context>`,
     })
@@ -175,7 +171,7 @@ export async function maybeReset($: EngineInterface, tokens: number) {
 export async function orchestrate($: EngineInterface, args: string) {
   const goal = args.trim()
   const { statePath } = await resetSettings($)
-  await update($, orchestrating, () => true)
+  await setOrchestrating($)
   // The host rejects a submit made from inside a command hook; the flip above is what the board needs.
   $.prompt
     .submit({
