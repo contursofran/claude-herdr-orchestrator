@@ -1,10 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Board, Job, Links, Row } from '../types'
+import { endFinishedWrapUp } from './coordinator'
 import { PROFILES, config, modelOf, target, wrappingUp } from './config'
 import { INTERRUPTED_NOTE, LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { lastStatus } from './hc'
-import { workerLiveFields } from './live'
+import { workerContext, workerLiveFields } from './live'
 import { openQuestions, pingQuiet } from './owner'
 import { session } from './session'
 import { active, jobs } from './state'
@@ -89,8 +90,10 @@ export async function refresh($: EngineInterface) {
       ...(j.status === 'running' && j.interrupted ? { note: INTERRUPTED_NOTE } : {}),
       ...(byCwd[j.cwd] ? { repo: byCwd[j.cwd] } : {}),
       ...(state === 'working' ? await workerLiveFields($, j.dir, now) : {}),
+      ...(await workerContext($, j.dir)),
     })
   }
+  await endFinishedWrapUp($, await wrappingUp($, settings))
   const held = await read($, board)
   if (rows.length === 0 && held.rows.length === 0) return
   const want = await target($, settings)

@@ -833,6 +833,32 @@ test('a new worktree with package-lock.json gets npm ci, and the task says so', 
   )
 })
 
+test('the install runs in the worktree, never the main checkout', async ($, on) => {
+  const { runs, shellCwds, files } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  runs.set('npm ci', [{ exitCode: 0 }])
+  await spawnBranch($)
+  await settled()
+  expect(shellCwds.get('npm ci')).toBe('/repo-wt/fix-x')
+})
+
+test('a worker stopped during its install opens no tab', async ($, on) => {
+  const { runs, calls, files, gate, clock, closed } = await start($, on)
+  depsGit(runs)
+  files['/repo-wt/fix-x/package-lock.json'] = '{}'
+  runs.set('npm ci', [{ exitCode: 0 }])
+  const release = gate(argv => argv[0] === 'npm')
+  await spawnBranch($)
+  await clock.settle()
+  await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-tree' })
+  release()
+  await settled()
+  expect(calls.some(c => c.join(' ').startsWith('hc run'))).toBe(false)
+  expect(closed).not.toContain('w-tree')
+  expect(files['/repo-wt/fix-x/.herdr-agents/w-tree/TASK.md']).toBeUndefined()
+})
+
 test('a failed install does not stop the worker and the task says it failed', async ($, on) => {
   const { runs, calls, files } = await start($, on)
   depsGit(runs)
