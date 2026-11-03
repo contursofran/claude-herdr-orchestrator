@@ -357,6 +357,18 @@ export function agentLive(boards, terminals, address, now) {
   return null
 }
 
+/** The mode of a board: `orchestrating`, `solo`, or null when the board doesn't say (an older one). */
+export function modeText(board) {
+  const o = board?.coordinator?.orchestrating
+  return o === true ? 'orchestrating' : o === false ? 'solo' : null
+}
+
+/** The mode of the orchestrator on a terminal, found by the board's coordinator terminal. */
+export function agentMode(boards, address) {
+  const b = (boards ?? []).find(x => x.coordinator?.terminal === address)
+  return b ? modeText(b) : null
+}
+
 /** What an Interrupt button in the agents list presses: a worker on its board, or an orchestrator's terminal. */
 export function interruptTarget(boards, terminals, address) {
   const name = (terminals ?? []).find(t => t.address === address)?.name
@@ -1010,6 +1022,53 @@ export function workRows(board) {
       conflictsWith: typeof t.conflictsWith === 'string' && t.conflictsWith ? t.conflictsWith : null,
       shares: sharesText(t.shares),
       review: reviewOf(t.review),
+      ciFailure: ciFailureOf(t),
+    }))
+}
+
+/** A task's failed CI as the panel draws it, or null: `summary` for the board row (`CI failed · 2 tests`), the rest for a worker's view.
+ *  Anything the board leaves out (an older plugin, a log that could not be read) is left out of the lines too. */
+function ciFailureOf(t) {
+  const f = t.ciFailure
+  if (!f || typeof f !== 'object' || typeof f.job !== 'string') return null
+  const count = n => (Number.isInteger(n) && n >= 0 ? n : null)
+  const tests = (Array.isArray(f.tests) ? f.tests : []).filter(x => typeof x === 'string' && x)
+  const failed = count(f.failed) ?? (tests.length || null)
+  const passed = count(f.passed)
+  // The worker's view shows only the first test, so every other failure is "more" (the board's `more` counts only those past the named ones).
+  const more = tests.length && failed ? Math.max(0, failed - 1) : 0
+  const secs = Number.isFinite(f.seconds) && f.seconds >= 0 ? f.seconds : null
+  return {
+    summary: failed ? `CI failed · ${failed} test${failed === 1 ? '' : 's'}` : 'CI failed',
+    url: typeof f.url === 'string' && /^https?:\/\//.test(f.url) ? f.url : null,
+    counts: failed ? `${failed} failed${passed === null ? '' : ` · ${passed} passed`}` : '',
+    job: secs === null ? f.job : `${f.job} · ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`}`,
+    first: tests[0] ?? '',
+    more: more ? `+${more} more failing test${more === 1 ? '' : 's'}` : '',
+  }
+}
+
+/** The board's Next list as rows the panel draws like its work rows: the issue's link, its plan mark, and `ready`, the first one
+ *  `ready · next in line`. [] for a board without one (an older plugin). */
+export function nextRows(board) {
+  return (Array.isArray(board?.next) ? board.next : [])
+    .filter(x => x && typeof x === 'object' && Number.isInteger(x.issue) && typeof x.title === 'string')
+    .map((x, i) => ({
+      key: `next-${x.key ?? x.issue}`,
+      label: '',
+      title: x.title,
+      who: { text: i === 0 ? 'ready · next in line' : 'ready', kind: 'dim' },
+      stages: [x.planned === true ? 'done' : null, null, null, null, null],
+      item: null,
+      tab: null,
+      workers: [],
+      now: '',
+      link: typeof x.url === 'string' && /^https?:\/\//.test(x.url) ? { text: `issue #${x.issue}`, url: x.url, onLabel: false } : null,
+      isMerged: false,
+      isFinished: false,
+      mergedAt: null,
+      conflictsWith: null,
+      shares: '',
     }))
 }
 

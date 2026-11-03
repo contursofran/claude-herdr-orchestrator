@@ -1,11 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
-import type { BoardItem, BoardState, Pr } from '../types'
+import type { BoardItem, BoardState, CiFailure, NextItem, Pr } from '../types'
 import { appModShown } from './appmod'
 import { readBoard } from './board'
 import { ciOf, type Check } from './ci'
-import { toggleWrapUp } from './coordinator'
-import { PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
+import { failedJob, parseLog, runIdOf } from './failure'
+import { isOrchestrating, toggleWrapUp } from './coordinator'
+import { NEXT_MAX, PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
 import { linker } from './links'
 import { ownLiveFields } from './live'
 import { sharedFiles } from './overlap'
@@ -77,12 +78,85 @@ export async function gather($: EngineInterface) {
     if (c !== undefined && t.jobs.length <= c && t.isFinished) return false
     return !t.isFinished || now - lastAt(t) < TASK_RECENT_MS
   })
-  return { v, board, now, open, todos, items, isLive, endOf, tasks }
+  return { v, board, now, open, todos, items, isLive, endOf, tasks, all }
+}
+
+export type NextArgs = { items?: { issue?: unknown; title?: unknown; planned?: unknown }[] }
+
+// set_next: the coordinator's Ready list, in order, for the board's Next section (D44). Each call replaces the list. An issue a
+// worker starts on leaves it by itself (see nextOnBoard), so a call is needed only when the order or the items change.
+export async function setNext($: EngineInterface, e: NextArgs) {
+  if (!Array.isArray(e.items)) return { deny: 'items must be a list, in the order they start; an empty list clears it' }
+  if (e.items.length > NEXT_MAX) return { deny: `at most ${NEXT_MAX} items: the next few to start, not the backlog` }
+  const links = await linker($, (await readBoard($)).rows)
+  const own = links.repoIn('', session.cwd)
+  const next: NextItem[] = []
+  for (const [i, it] of e.items.entries()) {
+    const ref = String(it?.issue ?? '').trim()
+    const title = String(it?.title ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!/^(?:[\w.-]+(?:\/[\w.-]+)?\s*)?#\d{1,6}$/.test(ref) || !title)
+      return { deny: `item ${i + 1}: give issue as #123 or owner/repo#123, and its title` }
+    const [repo = '', n = ''] = (links.refsIn(ref, own)[0] ?? '').split('#')
+    if (next.some(x => (x.repo ?? '') === repo && x.issue === Number(n))) continue
+    next.push({
+      ...(repo ? { repo } : {}),
+      issue: Number(n),
+      title: title.slice(0, 120),
+      ...(it?.planned === true ? { planned: true } : {}),
+    })
+  }
+  await update($, state, s => ({ ...s, next }))
+  if (!next.length) return { result: 'Cleared the Next list on the board.' }
+  return {
+    result: `The board's Next list is now ${next.map(x => `${x.repo ?? ''}#${x.issue}`).join(', ')}. An issue leaves it once a worker starts on it; call set_next again when the order or the items change.`,
+  }
+}
+
+// The Next list as the board shows it: an issue some task already has, running or done, has left it.
+function nextOnBoard(next: NextItem[], tasks: Task[]) {
+  const taken = (x: NextItem) => tasks.some(t => t.refs.includes(x.issue) && (!x.repo || !t.repo || t.repo === x.repo))
+  return next
+    .filter(x => !taken(x))
+    .map(x => ({
+      key: `${x.repo ?? ''}#${x.issue}`,
+      label: `issue #${x.issue}`,
+      title: x.title,
+      repo: x.repo ?? null,
+      issue: x.issue,
+      url: x.repo ? `https://github.com/${x.repo}/issues/${x.issue}` : null,
+      planned: x.planned === true,
+    }))
 }
 
 // The GitHub state of the open PRs the table lists: merged, and its checks. One poll at a
 // time; when gh fails for all of them the status line says so.
 let polling = false
+/** `{ failure }` for an open PR whose CI failed: the same read when its head is the one already read, else the failed job and,
+ *  from its log, the failing tests. One log read per failing head; a log that can't be read leaves the job without test names. */
+async function failureOf($: EngineInterface, k: string, checks: Check[], head: string, held?: CiFailure) {
+  if (ciOf(checks) !== 'fail') return {}
+  if (held && held.head === head) return { failure: held }
+  const failure = failedJob(checks, head)
+  if (!failure) return {}
+  const run = runIdOf(failure.url)
+  if (run) {
+    try {
+      const ran = await $.process.run(['gh', 'run', 'view', run, '-R', k.split('#')[0] ?? '', '--log-failed'], { timeoutMs: 30_000 })
+      if (ran.exitCode === 0) Object.assign(failure, parseLog(ran.stdout))
+    } catch {}
+  }
+  return { failure }
+}
+
+/** The failure as the board shows it: without the head it was read at. */
+function failureForBoard(f?: CiFailure) {
+  if (!f) return null
+  const { head: _head, ...shown } = f
+  return shown
+}
+
 export async function pollPrs($: EngineInterface) {
   // Polls while the app mod draws the boards: its pop-up's CI column reads these PRs.
   if (polling || !(await appModShown($))) return
@@ -101,7 +175,7 @@ export async function pollPrs($: EngineInterface) {
       const [repo = '', n = ''] = k.split('#')
       try {
         const ran = await $.process.run(
-          ['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup,mergeable,baseRefName,files'],
+          ['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup,mergeable,baseRefName,files,headRefOid'],
           { timeoutMs: 20_000 },
         )
         if (ran.exitCode !== 0) {
@@ -115,6 +189,7 @@ export async function pollPrs($: EngineInterface) {
           mergeable?: string
           baseRefName?: string
           files?: { path: string }[]
+          headRefOid?: string
         }
         const mergedAt = pr.mergedAt ? Date.parse(pr.mergedAt) : NaN
         got[k] = {
@@ -128,6 +203,7 @@ export async function pollPrs($: EngineInterface) {
                 conflict: pr.mergeable === 'UNKNOWN' ? (v.prs[k]?.conflict ?? false) : pr.mergeable === 'CONFLICTING',
                 base: pr.baseRefName ?? 'base',
                 files: (pr.files ?? []).map(f => f.path),
+                ...(await failureOf($, k, pr.statusCheckRollup ?? [], pr.headRefOid ?? '', v.prs[k]?.failure)),
               }
             : {}),
         }
@@ -161,6 +237,7 @@ export async function boardInputs($: EngineInterface) {
     b.target,
     b.context,
     await read($, state),
+    await isOrchestrating($),
     await openQuestions($),
     await pinnedItems($),
     await answered($),
@@ -170,7 +247,7 @@ export async function boardInputs($: EngineInterface) {
 
 // The board as plain data for the Herdr app and Discord (see bridge.ts and docs/board-schema.json).
 export async function boardSnapshot($: EngineInterface) {
-  const { v, board, now, open, todos, items, isLive, endOf, tasks } = await gather($)
+  const { v, board, now, open, todos, items, isLive, endOf, tasks, all } = await gather($)
   const busy = board.rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length
   const shares = sharedFiles(tasks, v.prs)
   const prOf = (t: Task) => (t.repo && t.pr ? v.prs[`${t.repo}#${t.pr}`] : undefined)
@@ -185,7 +262,7 @@ export async function boardSnapshot($: EngineInterface) {
     cwd: session.cwd,
     at: now,
     // The hc terminal this coordinator runs in (null outside hc); an app finds the board by it.
-    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null, ...ownLiveFields(now) },
+    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null, orchestrating: await isOrchestrating($), ...ownLiveFields(now) },
     stageNames: [...STAGES],
     summary: {
       busy,
@@ -222,10 +299,12 @@ export async function boardSnapshot($: EngineInterface) {
       isFinished: t.isFinished,
       isMerged: t.isMerged,
       mergedAt: t.mergedAt ?? null,
+      ciFailure: prOf(t)?.state === 'OPEN' && prOf(t)?.ci === 'fail' ? failureForBoard(prOf(t)?.failure) : null,
       conflictsWith: prOf(t)?.state === 'OPEN' && prOf(t)?.conflict ? (prOf(t)?.base ?? null) : null,
       shares: shares.get(t.key) ?? [],
       review: reviewOf(t),
     })),
+    next: nextOnBoard(v.next ?? [], all),
     needs: items.map(it => {
       const d = open.find(x => `D${x.id}` === it.key)
       const t = todos.find(x => `T${x.id}` === it.key)

@@ -7,6 +7,7 @@ const hcCalls = []
 globalThis.__fakeGpui.hc = async args => (hcCalls.push(args), { code: 0, stdout: '' })
 
 const m = await import('../mods/herdr-agents/panelmodel.js')
+const model = await import('../mods/herdr-agents/model.js')
 const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
 const { workRows } = await import('../mods/herdr-agents/model.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
@@ -528,4 +529,104 @@ test('a single blocker is singular, and a verdict of changes with no lines shows
   })
   assert.equal(rows[0].review.text, 'changes needed · 1 blocker')
   assert.equal(rows[1].review.text, 'changes needed')
+})
+
+const FAIL = {
+  job: 'test',
+  url: 'https://github.com/o/r/actions/runs/7',
+  seconds: 185,
+  failed: 3,
+  passed: 46,
+  tests: ['a > one', 'a > two'],
+  more: 1,
+}
+
+test('a failed CI reads as the design has it on the row and in the worker view', () => {
+  const b = board({ tasks: [task('one', { tab: 'fix-1', workers: ['fix-1'], ciFailure: FAIL }), task('old')] })
+  const [one, old] = m.panelSections(b).work
+  assert.equal(one.ciFailure.summary, 'CI failed · 3 tests')
+  assert.equal(old.ciFailure, null)
+  const row = textOf(panelView(b))
+  assert.ok(row.includes('CI failed · 3 tests ↗'))
+  const view = workerView(b, { name: 'fix-1', state: 'working' })
+  const text = textOf(view)
+  for (const line of ['3 failed · 46 passed', 'test · 3m 5s', 'a > one', '+2 more failing tests', 'Open log ↗'])
+    assert.ok(text.includes(line), line)
+  assert.ok(!text.includes('a > two'))
+  assert.ok(findId(view, 'panel-ci-log-one'))
+  assert.ok(findId(panelView(b), 'panel-ci-one'))
+})
+
+test('two failures, both named, still say there is one more than the first shown', () => {
+  const ci = { job: 'test', url: null, seconds: null, failed: 2, passed: 1, tests: ['a > one', 'a > two'], more: 0 }
+  const b = board({ tasks: [task('one', { tab: 'fix-1', ciFailure: ci })] })
+  const text = textOf(workerView(b, { name: 'fix-1', state: 'working' }))
+  assert.ok(text.includes('a > one'))
+  assert.ok(text.includes('+1 more failing test'))
+  assert.ok(!text.includes('+1 more failing tests'))
+})
+
+test('a failed CI with less on the board says less, and one without a run has no link', () => {
+  const b = board({
+    tasks: [
+      task('one', {
+        tab: 'fix-1',
+        ciFailure: { job: 'build', url: null, seconds: null, failed: null, passed: null, tests: ['t'], more: 0 },
+      }),
+    ],
+  })
+  const f = m.panelSections(b).work[0].ciFailure
+  assert.deepEqual(f, {
+    summary: 'CI failed · 1 test',
+    url: null,
+    counts: '1 failed',
+    job: 'build',
+    first: 't',
+    more: '',
+  })
+  assert.ok(textOf(panelView(b)).includes('CI failed · 1 test'))
+  assert.ok(!textOf(panelView(b)).includes('↗'))
+  assert.equal(findId(workerView(b, { name: 'fix-1', state: 'working' }), 'panel-ci-log-one'), null)
+  const bare = m.panelSections(board({ tasks: [task('x', { ciFailure: { job: 'build', tests: [], more: 0 } })] })).work[0].ciFailure
+  assert.equal(bare.summary, 'CI failed')
+})
+
+test('pressing the failed CI opens its run, and the press stops there', () => {
+  const b = board({ tasks: [task('one', { ciFailure: FAIL })] })
+  app.execs.length = 0
+  let stopped = false
+  findId(panelView(b), 'panel-ci-one').node.calls.on_mouse_down[1](null, { stop_propagation: () => (stopped = true) })
+  assert.deepEqual(app.execs, [['open', FAIL.url]])
+  assert.ok(stopped)
+})
+
+test('the head says whether the session is orchestrating or solo, and plain Board when the board does not say', () => {
+  const head = coordinator => textOf(panelView(board({ coordinator }), 0))
+  assert.ok(head({ orchestrating: true }).includes('Board · orchestrating'))
+  assert.ok(head({ orchestrating: false }).includes('Board · solo'))
+  assert.ok(!head({}).includes('Board ·'))
+})
+
+test('the Next list sits between Work and Merged, the first row next in line', () => {
+  const b = board({
+    tasks: [task('m', { isMerged: true, isFinished: true, who: { text: 'merged', kind: 'dim' }, mergedAt: 1 })],
+    next: [
+      { key: 'acme/x#218', issue: 218, title: 'PR links', url: 'https://github.com/acme/x/issues/218', planned: true },
+      { key: 'acme/x#219', issue: 219, title: 'Card keys', url: 'https://github.com/acme/x/issues/219' },
+      { issue: 'bad', title: 'dropped' },
+    ],
+  })
+  const text = textOf(panelView(b))
+  const at = s => text.indexOf(s)
+  assert.ok(at('Next') > at('Nothing running.') && at('Next') < at('Merged'))
+  assert.deepEqual(
+    text.filter(s => /^(PR links|Card keys|dropped|issue #\d+ ↗|ready.*)$/.test(s)),
+    ['PR links', 'issue #218 ↗', 'ready · next in line', 'Card keys', 'issue #219 ↗', 'ready'],
+  )
+  // Planned shows in the P column; nothing else is marked.
+  const [first, second] = model.nextRows(b)
+  assert.deepEqual(first.stages, ['done', null, null, null, null])
+  assert.deepEqual(second.stages, [null, null, null, null, null])
+  // An older board has no Next section.
+  assert.equal(textOf(panelView(board())).includes('Next'), false)
 })
