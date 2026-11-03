@@ -23,4 +23,6 @@ export default class ArrivalsRole {
     this.boards.start(cx, () => this.arrivals.observe(this.boards.list()))
     cx.spawn(async () => this.arrivals.start())
   }
+
+  close() {}
 }

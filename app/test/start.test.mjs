@@ -213,6 +213,12 @@ const startVersion = async file => {
   return { copy, counts, spawned }
 }
 
+test('closing an arrivals copy does not throw', async () => {
+  newRun()
+  const copy = await startCopy('arrivals')
+  await copy.close()
+})
+
 test('the version copy reads its file once, with no timer, no boards and no shared state', async () => {
   const { copy, counts, spawned } = await startVersion('{"version":"1.2.3","commit":"abc1234"}')
   assert.deepEqual(state.reads, ['/home/mods/herdr-agents/version.json'])
