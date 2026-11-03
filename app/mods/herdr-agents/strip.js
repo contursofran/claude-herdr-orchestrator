@@ -87,6 +87,7 @@ export class StripState {
     this.waiting = null // the last command that came before it
     this.width = null // the strip's, from its last layout
     this.panelLast = null // the arrival the right panel last moved for, and whether it moved off the board
+    this.panelSettling = false // a draw is set for when a move waiting on a space switch is due
   }
 
   /** Lets Herdr's top bar restore the board when a space comes back: it hides any panel not on this list. */
@@ -97,13 +98,26 @@ export class StripState {
   /** Called from the draw, so the panel follows focus with no polling; the commands wait for the draw to end. */
   followPanel(cx, board) {
     const state = panelState(layout())
-    const move = panelMove(focused(), board, terminals(), state, this.width, this.panelLast, panelHeld())
+    const now = Date.now()
+    const move = panelMove(focused(), board, terminals(), state, this.width, this.panelLast, panelHeld(), now)
     this.panelLast = move
+    if (move.until > now) this.settlePanel(cx, move.until - now)
     if (!move.commands.length && (state === null || panelAllowed())) return
     cx.spawn(async cx => {
       await cx.sleep(0)
       this.allowPanel()
       for (const [name, args] of move.commands) run(name, args)
+      cx.notify()
+    })
+  }
+
+  /** One draw when a move waiting for the space's own panel is due: nothing else may draw the strip by then. */
+  settlePanel(cx, ms) {
+    if (this.panelSettling) return
+    this.panelSettling = true
+    cx.spawn(async cx => {
+      await cx.sleep(ms)
+      this.panelSettling = false
       cx.notify()
     })
   }

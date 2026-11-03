@@ -1,5 +1,7 @@
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +15,17 @@ MANIFEST = """{
   "dependencies": { "x": { "version": "9.9.9" } }
 }
 """
+
+
+def temp_clone(d):
+    """A copy of release.sh with its own manifest, so a run never reads or edits the live plugin.json."""
+    os.makedirs(os.path.join(d, "clone", "scripts"))
+    os.makedirs(os.path.join(d, "clone", ".claude-plugin"))
+    script = os.path.join(d, "clone", "scripts", "release.sh")
+    shutil.copy(SCRIPT, script)
+    with open(os.path.join(d, "clone", ".claude-plugin", "plugin.json"), "w") as f:
+        f.write(MANIFEST)
+    return script
 
 
 def call(snippet, stdin=""):
@@ -64,11 +77,11 @@ class Release(unittest.TestCase):
                     f.write("#!/bin/sh\n" + body + "\n")
                 os.chmod(p, 0o755)
             env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "LOG": log}
-            with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
-                now = json.load(f)["version"]
-            major, minor, _ = now.split(".")
-            want = f"{major}.{int(minor) + 1}.0"
-            r = subprocess.run([SCRIPT, "--minor", "--dry-run"], env=env, capture_output=True, text=True)
+            script = temp_clone(d)
+            manifest = os.path.join(d, "clone", ".claude-plugin", "plugin.json")
+            now = "0.23.0"
+            want = "0.24.0"
+            r = subprocess.run([script, "--minor", "--dry-run"], env=env, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn(f"Releasing {want}", r.stdout)
             self.assertIn("- Fix a thing (#5)", r.stdout)
@@ -78,7 +91,7 @@ class Release(unittest.TestCase):
             self.assertNotIn("commit", logged)
             self.assertNotIn("push", logged)
             self.assertNotIn("pr create", logged)
-            with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
+            with open(manifest) as f:
                 self.assertEqual(json.load(f)["version"], now)
 
     def finish(self, merged=True, dry_run=False, ancestor=True, state=None, title="Version 0.24.0"):
@@ -107,7 +120,7 @@ class Release(unittest.TestCase):
                 "PRTITLE": title,
                 "ANCESTOR": "1" if ancestor else "0",
             }
-            args = [SCRIPT, "--finish", "0.24.0"] + (["--dry-run"] if dry_run else [])
+            args = [temp_clone(d), "--finish", "0.24.0"] + (["--dry-run"] if dry_run else [])
             r = subprocess.run(args, env=env, capture_output=True, text=True)
             with open(log) as f:
                 return r, f.read()
