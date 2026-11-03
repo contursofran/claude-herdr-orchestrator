@@ -4,8 +4,8 @@ import { session } from './session'
 import { active, dropOldJobs, jobs } from './state'
 
 // Every `pruneMinutes`, and on the prune command: removes the linked worktrees of the
-// repos this session's workers used once their branch's PR is merged on GitHub (in a repo with no origin remote, once the
-// branch is an ancestor of the main checkout's branch), the
+// repos this session's workers used once their branch's PR is merged on GitHub (in a repo with no origin
+// remote, once the branch has commits of its own and is an ancestor of the main checkout's branch), the
 // tree is clean, no terminal there is working or blocked and no job of this session that has not reported is
 // still living there (a worker idle between turns is not finished). Closes those workers' terminals
 // and deletes the local branch. Ignored files (node_modules, target) go with the tree;
@@ -80,6 +80,9 @@ export async function pruneMerged($: EngineInterface): Promise<string[]> {
         if (!remotes.includes('origin')) {
           // No remote to ask: the branch is merged when the base already holds all of it.
           if (!base || branch === base) continue
+          // A fresh branch (tip == base) is an ancestor too: keep one whose reflog shows only its creation, or none.
+          const reflog = (await run(['git', '-C', path, 'reflog', 'show', `refs/heads/${branch}`])) ?? ''
+          if (!reflog.split('\n').some(l => l.trim() && !/: branch: Created from/.test(l))) continue
           if ((await run(['git', '-C', path, 'merge-base', '--is-ancestor', branch, base])) === undefined) continue
           if (!(await removeTree(path, common, branch, here))) continue
           done.push(`${path.split('/').pop()} (${branch})`)

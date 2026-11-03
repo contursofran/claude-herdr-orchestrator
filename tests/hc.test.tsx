@@ -606,9 +606,18 @@ test("prune closes the mod's own idle workers in a merged worktree", async ($, o
 })
 
 // A repo with no origin remote: merged means the branch is an ancestor of the main checkout's branch.
-const noRemote = async ($: Parameters<typeof start>[0], on: Parameters<typeof start>[1], isAncestor: number) => {
+const REFLOG = 'git -C /repo/wt reflog show refs/heads/fix-x'
+const created = 'abc123 fix-x@{1}: branch: Created from HEAD'
+const committed = 'def456 fix-x@{0}: commit: work'
+const noRemote = async (
+  $: Parameters<typeof start>[0],
+  on: Parameters<typeof start>[1],
+  isAncestor: number,
+  reflog: { exitCode: number; stdout?: string } = { exitCode: 0, stdout: `${committed}\n${created}\n` },
+) => {
   const h = await prunable($, on)
   h.runs.set('git -C /repo/wt remote -v', [{ exitCode: 0, stdout: '' }])
+  h.runs.set(REFLOG, [reflog])
   h.runs.set('git -C /repo/wt merge-base --is-ancestor fix-x main', [{ exitCode: isAncestor }])
   await h.clock.settle()
   await h.clock.advance(60_000)
@@ -623,6 +632,24 @@ test('prune removes a no-remote worktree whose branch is in the base', async ($,
   expect(shell.some(c => c.startsWith('gh '))).toBe(false)
 })
 
+test('prune keeps a fresh no-remote branch whose reflog shows only its creation', async ($, on) => {
+  const { shell } = await noRemote($, on, 0, { exitCode: 0, stdout: `${created}\n` })
+  expect(removes(shell)).toBe(false)
+})
+
+test('prune removes a fast-forward-merged no-remote branch that had commits', async ($, on) => {
+  const { shell } = await noRemote($, on, 0, {
+    exitCode: 0,
+    stdout: 'def456 fix-x@{0}: merge main: Fast-forward\nabc fix-x@{1}: commit: work\n' + created + '\n',
+  })
+  expect(shell).toContain('git --git-dir=/repo/.git branch -D fix-x')
+})
+
+test('prune keeps a no-remote branch with a missing reflog', async ($, on) => {
+  const { shell } = await noRemote($, on, 0, { exitCode: 128, stdout: '' })
+  expect(removes(shell)).toBe(false)
+})
+
 test('prune keeps a no-remote worktree whose branch is not in the base', async ($, on) => {
   const { shell } = await noRemote($, on, 1)
   expect(removes(shell)).toBe(false)
@@ -632,6 +659,7 @@ test('prune keeps a no-remote worktree where a terminal of someone else works', 
   const h = await prunable($, on)
   h.runs.set('git -C /repo/wt remote -v', [{ exitCode: 0, stdout: '' }])
   h.runs.set('git -C /repo/wt merge-base --is-ancestor fix-x main', [{ exitCode: 0 }])
+  h.runs.set(REFLOG, [{ exitCode: 0, stdout: `${committed}\n${created}\n` }])
   h.addTerm('stranger', '/repo/wt', {})
   h.status.stranger = 'working'
   await h.clock.settle()
