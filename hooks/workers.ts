@@ -19,7 +19,9 @@ import {
   PROMPT_WAIT_MS,
   QUIET_BUSY_MS,
   QUIET_MS,
+  READ_LINES_MS,
   SEND_DEADLINE_MS,
+  SEND_RETRY_MS,
   STEP_WAIT_MS,
   SWEEP_MS,
 } from './defaults'
@@ -181,7 +183,18 @@ export async function prompt($: EngineInterface, job: Job, lead: string, spawned
 async function send($: EngineInterface, name: string, text: string, force = false): Promise<string | undefined> {
   const deadline = (await $.clock.now()) + SEND_DEADLINE_MS
   const late = async () => (await $.clock.now()) >= deadline
-  const typeIt = () => hc<HcSend>($, ['send', name, text, ...(force ? ['--force'] : [])], 30_000)
+  // A terminal in its first seconds refuses with `unavailable` and nothing typed: try again with a growing pause, for SEND_RETRY_MS in all.
+  const typeIt = async () => {
+    let pause = 1000
+    for (let waited = 0; ; waited += pause, pause *= 2) {
+      try {
+        return await hc<HcSend>($, ['send', name, text, ...(force ? ['--force'] : [])], 30_000)
+      } catch (err) {
+        if (kindOf(err) !== 'unavailable' || waited + pause > SEND_RETRY_MS || (await late())) throw err
+        await $.clock.sleep(pause)
+      }
+    }
+  }
   let turn = 0
   // A short turn can start and end between two looks: only the turn count shows it then.
   const started = async () => {
@@ -878,7 +891,12 @@ export async function deliver(
     }
     let lines = ''
     try {
-      lines = (await readScreen($, job.name, 40)).trim()
+      // A stalled terminal can take 25 s to give its history: wait a few seconds, then take the visible screen alone.
+      try {
+        lines = (await readScreen($, job.name, 40, READ_LINES_MS)).trim()
+      } catch {
+        lines = (await readScreen($, job.name, undefined, READ_LINES_MS)).trim()
+      }
     } catch {}
     const screen = `${job.dir}/SCREEN-${current.token ?? (await $.clock.now())}.txt`
     await $.fs.write(screen, lines.slice(-4000))

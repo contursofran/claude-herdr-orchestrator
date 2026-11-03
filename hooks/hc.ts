@@ -59,8 +59,8 @@ export async function listWorkers($: EngineInterface) {
 }
 
 // A terminal's screen as hc reads it, with `lines` lines of history above it when given. A finished terminal stays readable.
-export async function readScreen($: EngineInterface, name: string, lines?: number) {
-  return (await hc<{ text: string }>($, ['read', name, ...(lines ? ['--lines', String(lines)] : [])])).text
+export async function readScreen($: EngineInterface, name: string, lines?: number, timeoutMs?: number) {
+  return (await hc<{ text: string }>($, ['read', name, ...(lines ? ['--lines', String(lines)] : [])], timeoutMs)).text
 }
 
 // Ends a worker's terminal: kill, then remove (which also takes its tab away). One already gone is fine.
