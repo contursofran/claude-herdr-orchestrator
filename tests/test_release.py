@@ -76,6 +76,63 @@ class Release(unittest.TestCase):
             with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
                 self.assertIn('"version": "0.23.0"', f.read())
 
+    def finish(self, merged=True, dry_run=False, ancestor=True):
+        """Runs --finish 0.24.0 with fake gh and git; returns the result and what they were asked."""
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "log")
+            fakes = {
+                "gh": 'echo "gh $*" >> "$LOG"\n'
+                'case "$*" in *mergeCommit.oid*) if [ "$MERGED" = 1 ]; then echo MERGECOMMIT; fi;; '
+                '*"pr list"*) if [ "$MERGED" = 1 ]; then echo "- Notes (#5)"; fi;; esac',
+                "git": 'echo "git $*" >> "$LOG"\n'
+                'case "$1" in rev-parse) case "$2" in --abbrev-ref) echo main;; -q) exit 1;; esac;;'
+                " merge-base) [ \"$ANCESTOR\" = 1 ];; esac",
+            }
+            for name, body in fakes.items():
+                path = os.path.join(d, name)
+                with open(path, "w") as f:
+                    f.write("#!/bin/sh\n" + body + "\n")
+                os.chmod(path, 0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{d}:{os.environ['PATH']}",
+                "LOG": log,
+                "MERGED": "1" if merged else "0",
+                "ANCESTOR": "1" if ancestor else "0",
+            }
+            args = [SCRIPT, "--finish", "0.24.0"] + (["--dry-run"] if dry_run else [])
+            r = subprocess.run(args, env=env, capture_output=True, text=True)
+            with open(log) as f:
+                return r, f.read()
+
+    def test_finish_tags_the_version_prs_merge_commit_not_head(self):
+        r, logged = self.finish()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("git tag -a v0.24.0 -m Version 0.24.0 MERGECOMMIT", logged)
+        self.assertIn("git push origin v0.24.0", logged)
+        self.assertIn("gh release create v0.24.0", logged)
+        self.assertNotIn("git pull", logged)
+
+    def test_finish_refuses_when_the_version_pr_is_not_merged(self):
+        r, logged = self.finish(merged=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("has not merged", r.stderr)
+        self.assertNotIn("git tag", logged)
+        self.assertNotIn("push", logged)
+
+    def test_finish_refuses_a_merge_commit_that_is_not_on_origin_main(self):
+        r, logged = self.finish(ancestor=False)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not on origin/main", r.stderr)
+        self.assertNotIn("git tag", logged)
+
+    def test_finish_dry_run_changes_nothing(self):
+        r, logged = self.finish(dry_run=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("+ git tag -a v0.24.0 -m Version 0.24.0 MERGECOMMIT", r.stdout)
+        for forbidden in ("git pull", "git tag", "git push", "release create"):
+            self.assertNotIn(forbidden, logged)
+
 
 if __name__ == "__main__":
     unittest.main()

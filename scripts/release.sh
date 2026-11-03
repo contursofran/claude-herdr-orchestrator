@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # One-step release (#176). Main stays the working branch and the version only changes here.
 #   scripts/release.sh X.Y.Z | --minor | --patch [--dry-run]   opens the "Version X.Y.Z" pull request, notes in its body
-#   scripts/release.sh --finish X.Y.Z [--dry-run]              after it merges: tags the merge commit, pushes the tag, publishes the release
-# --dry-run prints every step and changes nothing (the checks still run, since they only read).
+#   scripts/release.sh --finish X.Y.Z [--dry-run]              after it merges: tags that pull request's merge commit, pushes the tag, publishes the release
+# --dry-run prints every step and changes nothing (the checks still run, since they only read; `git fetch` only updates origin/main).
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 manifest=.claude-plugin/plugin.json
 dry_run=0
+cleanup_files=()
+
+# Temporary notes files are removed on exit.
+cleanup() {
+  [[ ${#cleanup_files[@]} -eq 0 ]] || rm -f "${cleanup_files[@]}"
+}
 
 die() {
   echo "release: $*" >&2
@@ -105,6 +111,7 @@ prepare() {
   tag=$(last_tag)
   [[ -n $tag ]] || die "no earlier tag to take the notes from"
   notes="${RELEASE_NOTES_FILE:-$(mktemp)}"
+  [[ -n ${RELEASE_NOTES_FILE:-} ]] || cleanup_files+=("$notes")
   write_notes "$version" "$tag" "$notes"
   branch="version-$version"
   echo "Releasing $version (now $current, last tag $tag). Notes:"
@@ -123,25 +130,33 @@ prepare() {
 }
 
 finish() {
-  local version=$1 notes
+  local version=$1 notes oid select
   cd "$root"
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a version: $version"
   [[ $(git rev-parse --abbrev-ref HEAD) == main ]] || die "not on main"
   [[ -z $(git status --porcelain) ]] || die "the working tree is not clean"
-  git pull --quiet --ff-only origin main
-  [[ $(current_version "$manifest") == "$version" ]] || die "main is at $(current_version "$manifest"): the Version $version pull request has not merged"
   git rev-parse -q --verify "refs/tags/v$version" >/dev/null && die "tag v$version already exists"
+  # The Version pull request must have merged: its merge commit is what gets tagged, not whatever HEAD is.
+  select="[.[] | select(.title == \"Version $version\")][0]"
+  oid=$(gh pr list --state merged --base main --search "Version $version in:title" --json title,mergeCommit \
+    --jq "$select.mergeCommit.oid // empty")
+  [[ -n $oid ]] || die "the Version $version pull request has not merged (found no merged pull request with that title)"
+  git fetch --quiet origin main
+  git cat-file -e "$oid^{commit}" 2>/dev/null || die "merge commit $oid is not in this checkout"
+  git merge-base --is-ancestor "$oid" origin/main || die "merge commit $oid is not on origin/main"
   notes="${RELEASE_NOTES_FILE:-$(mktemp)}"
+  [[ -n ${RELEASE_NOTES_FILE:-} ]] || cleanup_files+=("$notes")
   gh pr list --state merged --base main --search "Version $version in:title" --json title,body \
-    --jq "[.[] | select(.title == \"Version $version\")][0].body // empty" >"$notes"
-  [[ -s $notes ]] || die "found no merged pull request titled Version $version"
-  run git tag -a "v$version" -m "Version $version"
+    --jq "$select.body // empty" >"$notes"
+  [[ -s $notes ]] || die "the Version $version pull request has no notes"
+  run git tag -a "v$version" -m "Version $version" "$oid"
   run git push origin "v$version"
   run gh release create "v$version" --title "v$version" --notes-file "$notes"
 }
 
 main() {
   local want="" finishing=0 arg
+  trap cleanup EXIT
   for arg in "$@"; do
     case $arg in
       --dry-run) dry_run=1 ;;

@@ -190,7 +190,7 @@ npm run check                   # formatting, type check, both manifests, tests
 
 #### Releasing
 
-A release is one step, run from an up-to-date, clean `main` for a finished batch of changes (at most about once a day unless a fix can't wait): `scripts/release.sh X.Y.Z` (or `--minor`, `--patch`). It bumps `version` in `.claude-plugin/plugin.json` and opens a pull request titled `Version X.Y.Z`, whose body is the notes: one line per pull request merged since the last tag, with its number. Once CI passes and that pull request merges, run `scripts/release.sh --finish X.Y.Z`: it tags the merge commit `vX.Y.Z`, pushes the tag and runs `gh release create` with the same notes. `--dry-run` on either run prints every step and changes nothing. The release notes need `gh` signed in.
+A release is one step, run from an up-to-date, clean `main` for a finished batch of changes (at most about once a day unless a fix can't wait): `scripts/release.sh X.Y.Z` (or `--minor`, `--patch`). It bumps `version` in `.claude-plugin/plugin.json` and opens a pull request titled `Version X.Y.Z`, whose body is the notes: one line per pull request merged since the last tag, with its number. Once CI passes and that pull request merges, run `scripts/release.sh --finish X.Y.Z`: it refuses unless that pull request has merged, then tags its merge commit `vX.Y.Z`, pushes the tag and runs `gh release create` with the same notes. `--dry-run` on either run prints every step and changes nothing (it only runs `git fetch`, which updates `origin/main`). The release notes need `gh` signed in.
 
 While you work, run only the test files you touched, with `npm run test:file -- tests/bridge.test.tsx`: the whole suite takes about a minute.
 
