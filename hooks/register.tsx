@@ -15,6 +15,7 @@ import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
+import { tmpDenied } from './tmpguard'
 import { refreshSpawnTool, registerTools } from './tools'
 import { checkReports, interruptWorker, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep, sweepNeeded } from './workers'
 import type { SpawnArgs } from './workers'
@@ -115,11 +116,15 @@ export const register: Register = on => {
 
   // The session that writes the shared state file owns it (see resetSettings).
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    const denied = await tmpDenied($, e.file_path)
+    if (denied) return denied as never
     const out = await next(e)
     await claimState($, e.file_path)
     return out
   })
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    const denied = await tmpDenied($, e.file_path)
+    if (denied) return denied as never
     const out = await next(e)
     await claimState($, e.file_path)
     return out
