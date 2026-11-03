@@ -1053,6 +1053,12 @@ class FakeGh:
 
 
 class RepoChoice(unittest.TestCase):
+    def setUp(self):
+        # A temp folder inside a git checkout (TMPDIR in a job folder) must not find that checkout's repo.
+        patch = mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": tempfile.gettempdir()})
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def folder(self):
         path = tempfile.mkdtemp(prefix="hrd-metrics-repo-")
         self.addCleanup(shutil.rmtree, path, True)

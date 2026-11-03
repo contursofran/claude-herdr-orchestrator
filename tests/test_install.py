@@ -105,7 +105,8 @@ class Install(unittest.TestCase):
         os.makedirs(self.app)
         copy = os.path.join(self.config, "clone")
         shutil.copytree(CLONE, copy, ignore=shutil.ignore_patterns(".git", "node_modules", ".herdr-agents"))
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app)
+        # A temp folder inside a git checkout (TMPDIR in a job folder) must not find that checkout's repo.
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app, GIT_CEILING_DIRECTORIES=self.config)
         subprocess.run([os.path.join(copy, "install.sh")], capture_output=True, text=True, env=env, check=True)
         with open(self.version_file()) as f:
             self.assertEqual(json.load(f), {"version": self.plugin_version()})
