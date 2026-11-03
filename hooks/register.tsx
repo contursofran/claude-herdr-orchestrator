@@ -3,7 +3,7 @@ import { appModShown, learnCore, watchAppMod } from './appmod'
 import { drawBand, hidesToolResult, hidesToolUse, shortenBrief } from './band'
 import { refresh, showContext } from './board'
 import { registerCommands, runCommand } from './commands'
-import { pollPrs } from './boarddata'
+import { pollPrs, setNext, type NextArgs } from './boarddata'
 import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
@@ -104,6 +104,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'mcp__herdr-agents__message' }, ($, e) => messageWorker($, e as unknown as { worker: string; text: string }))
   on('tool.call', { tool: 'mcp__herdr-agents__stop' }, ($, e) => stopWorker($, e as unknown as { worker: string }))
   on('tool.call', { tool: 'mcp__herdr-agents__interrupt' }, ($, e) => interruptWorker($, e as unknown as { worker: string }))
+  on('tool.call', { tool: 'mcp__herdr-agents__set_next' }, ($, e) => setNext($, e as unknown as NextArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__ask_owner' }, ($, e) => askOwner($, e as unknown as AskArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__decided' }, ($, e) => settle($, e as unknown as DecidedArgs))
   on('tool.call', { tool: 'mcp__herdr-agents__pin_for_owner' }, ($, e) => pinForOwner($, e as unknown as PinArgs))
