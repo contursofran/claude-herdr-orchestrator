@@ -45,6 +45,8 @@ export const PROMPT_WAIT_MS = 90_000
 export const SEND_DEADLINE_MS = 6 * 60_000
 // How often hc is asked whether that work started.
 export const PROMPT_CHECK_MS = 5000
+// How long a message call waits for its send before it answers "Queued" and lets the send go on.
+export const MESSAGE_WAIT_MS = 10_000
 // How long the sweep's close step waits for the workers' queued steps before going on without them.
 export const STEP_WAIT_MS = 10_000
 // How often the sweep reads hc for every running worker at once (one `hc ls`).
