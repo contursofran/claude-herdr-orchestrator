@@ -76,7 +76,7 @@ export async function playbook($: EngineInterface, statePath: string) {
 export async function toggleWrapUp($: EngineInterface, on: boolean, fromCommand = false) {
   await setWrapUp($, on)
   const live = Object.values(await jobs($)).filter(active)
-  if (Object.keys(await jobs($)).length > 0) {
+  if (Object.keys(await jobs($)).length > 0 && (await isOrchestrating($))) {
     const note = on
       ? `<herdr-context>The owner is wrapping up: start no new workers (a reviewer for an open PR is allowed). Let the ${live.length} running finish, send them fixes with message and merge what is ready. When the last one has reported, update the state file and stop.</herdr-context>`
       : `<herdr-context>The owner ended the wrap-up: keep ${await target($)} workers busy again from the Ready list.</herdr-context>`
@@ -108,9 +108,9 @@ export async function resetPending($: EngineInterface) {
 // Keeps a coordinator's context small. Past the limit it asks the model to
 // save its state to the state file; once that file is newer than the ask (or
 // SAVE_WAIT_MS passed), it compacts with a short summary pointing at the file.
-// Only a session that has started workers is reset.
+// Only a coordinator (/hrd-orchestrate ran) is reset; a plain session keeps no state file.
 export async function maybeReset($: EngineInterface, tokens: number) {
-  if (resetting || Object.keys(await jobs($)).length === 0) return
+  if (resetting || !(await isOrchestrating($))) return
   const { limit, statePath, coordinator, shared } = await resetSettings($)
   const reset = await read($, resetAtom)
   if (tokens < limit) {

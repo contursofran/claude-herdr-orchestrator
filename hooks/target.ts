@@ -23,6 +23,8 @@ export async function setOrchestrating($: EngineInterface, on: boolean) {
 // Its own file, so outbox.ts can use it without importing the coordinator (owner.ts imports outbox.ts).
 export async function belowTarget($: EngineInterface) {
   const all = Object.values(await jobs($))
+  // Wrap-up (also from the config) only speaks to a coordinator; a plain session is never told to wrap up.
+  if (!(await isOrchestrating($))) return ''
   if (await wrappingUp($)) {
     const left = all.filter(active).length
     if (left > 0)
@@ -32,8 +34,6 @@ export async function belowTarget($: EngineInterface) {
     const notes = folder ? ` Before you stop:\n${notesInstructions(folder)}\n` : ' '
     return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand.${notes}Then stop. The owner ends it with ${cmd('wrap-up')} off.]`
   }
-  // A session the owner did not make a coordinator gets reports for the workers it was asked to start, and no nudge.
-  if (!(await isOrchestrating($))) return ''
   const want = await target($)
   const now = await $.clock.now()
   const running = all.filter(j => working(j, now)).length

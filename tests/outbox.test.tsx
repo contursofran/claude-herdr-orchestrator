@@ -113,7 +113,10 @@ test('an owner answer that goes out alone carries no worker count', async ($, on
 
 test('a wrap-up goes out at once, not in the batch: the answer waiting for its batch comes after it', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
+  await command($, 'hrd-orchestrate')
   await spawn($, ['w-a'])
+  await clock.advance(3000 + BATCH_MS)
+  submitted.length = 0
   await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: 'Ship it today?', options: ['Yes', 'No'], from: 'p-1' })
   files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
   files[`${INBOX}/2-wrap.json`] = JSON.stringify({ action: 'wrapUp', on: true })

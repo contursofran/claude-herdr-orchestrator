@@ -58,11 +58,31 @@ async function compacted($: Parameters<typeof spawn>[0], on: Parameters<typeof s
   return submitted.join('\n')
 }
 
-test('after a compaction a plain session gets neither the playbook nor the roles', async ($, on) => {
+test('a plain session with workers gets no save-state or compaction prompt', async ($, on) => {
   const plain = await compacted($, on, false)
-  expect(plain).toMatch(/The conversation was compacted/)
+  expect(plain).not.toMatch(/The conversation was compacted/)
+  expect(plain).not.toMatch(/Update .* now so a fresh context/)
   expect(plain).not.toMatch(PLAYBOOK)
-  expect(plain).not.toMatch(ROLES)
+})
+
+test('a plain session with workers gets no wrap-up prompt from /hrd-wrap-up, on or off', async ($, on) => {
+  const { submitted, clock } = await start($, on)
+  await spawn($, ['w-a'])
+  await command($, 'hrd-wrap-up')
+  await command($, 'hrd-wrap-up', 'off')
+  await clock.advance(BATCH_MS)
+  const all = submitted.join('\n')
+  expect(all).not.toMatch(/wrapping up|ended the wrap-up|keep \d+ workers busy/)
+  await stopAll($, clock, ['w-a'])
+})
+
+test('wrapUp: true in the config gives a plain session no wrap-up line with a report', async ($, on) => {
+  const ctx = await start($, on, { wrapUp: true })
+  const all = await reportOnce($, ctx)
+  expect(all).toMatch(/<herdr-agent name="w-a"/)
+  expect(all).not.toMatch(/Wrapping up/)
+  expect(all).not.toMatch(/update the state file/)
+  await stopAll($, ctx.clock, ['w-a'])
 })
 
 test('after a compaction a coordinator gets the playbook and the roles', async ($, on) => {
