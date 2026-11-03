@@ -214,7 +214,14 @@ async function send($: EngineInterface, name: string, text: string, force = fals
   }
   // The visible screen only: `hc read --lines` scrolls a full-screen CLI, and took 25 s on one that had not started its turn.
   const onScreen = async () => {
-    const screen = await readScreen($, name)
+    // A read that times out leaves the screen unknown: `undefined`, not a failed start.
+    let screen: string
+    try {
+      screen = await readScreen($, name)
+    } catch (err) {
+      if (kindOf(err) === 'timeout') return undefined
+      throw err
+    }
     // The placeholder counts only in the input box at the bottom: the transcript above may show an earlier prompt's.
     return screen.includes(text.slice(0, 40)) || /\[Pasted /i.test(screen.split('\n').slice(-8).join('\n'))
   }
@@ -227,8 +234,11 @@ async function send($: EngineInterface, name: string, text: string, force = fals
   for (let i = 0; i < PROMPT_TRIES; i++) {
     if (i > 0 && (await late())) return notDelivered(`no work started within ${SEND_DEADLINE_MS / 60_000} minutes`)
     try {
-      if (i > 0 && (await onScreen())) {
+      const shown = i > 0 ? await onScreen() : false
+      if (shown) {
         await hc($, ['keys', name, 'enter'])
+      } else if (shown === undefined) {
+        // The screen read timed out: the text was typed on an earlier try, so do not type it again, just wait for work.
       } else if (!mayLand) {
         const sent = await typeIt()
         if (sent === 'timeout') mayLand = true
@@ -1299,8 +1309,9 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     )
     return after !== undefined
   }
-  // Returns why the text could not be typed, or undefined once it went in.
-  const typeIn = async () => {
+  // Returns why the text could not be typed, or undefined once it went in. A send that timed out (90 s) may
+  // still land, so it comes back as `mayLand`: the message is reported as possibly delivered and never typed again.
+  const typeIn = async (): Promise<{ why?: string; mayLand?: boolean }> => {
     try {
       await sending($, job.name, () =>
         hc($, [
@@ -1310,11 +1321,21 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
           ...(force ? ['--force'] : []),
         ]),
       )
+      return {}
     } catch (err) {
-      return err instanceof Error ? err.message : String(err)
+      if (kindOf(err) === 'timeout') return { mayLand: true }
+      return { why: err instanceof Error ? err.message : String(err) }
     }
   }
   const typedFailed = (why: string) => ({ deny: `could not type the message into ${e.worker}: ${why}` })
+  const typedResult = (r: { why?: string; mayLand?: boolean }) =>
+    r.why
+      ? typedFailed(r.why)
+      : r.mayLand
+        ? {
+            result: `The message to ${e.worker} may still arrive: hc send timed out, so it was not typed again. Do not send it a second time.`,
+          }
+        : { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
   if (job.status === 'starting') {
     // It has no CLI yet: the message goes in with its first prompt (see startWorker).
     const { after } = await updateJob($, job.name, j =>
@@ -1328,9 +1349,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
     if (kind === 'claude') {
-      const why = await typeIn()
-      if (why) return typedFailed(why)
-      return { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
+      return typedResult(await typeIn())
     }
     if (await hold()) return heldResult
   }
@@ -1355,10 +1374,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     if (latest.status === 'running' && !latest.interrupted) {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
-        const why = await typeIn()
-        result = why
-          ? typedFailed(why)
-          : { result: `Sent to ${e.worker} while it works; Claude takes it at its next step, and its one report covers both.` }
+        result = typedResult(await typeIn())
       } else {
         const { after } = await updateJob($, job.name, j =>
           j.status === 'running' ? { ...j, queued: [...(j.queued ?? []), path] } : undefined,

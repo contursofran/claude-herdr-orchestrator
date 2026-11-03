@@ -41,5 +41,5 @@ Behaviours of Herdr (and GitHub) that cost a debugging session each. Read this b
 
 - **Symptom:** a prompt reported as failed (after the 30 s client timeout of `hc send`) arrived in the terminal later, once a person stopped typing.
 - **Cause:** the core runs calls in spawned tasks, and only `machine.exec` aborts one when the client goes away (`server.rs`, v0.1.14). Killing the client does not cancel the send.
-- **Our code:** `hc()` throws a timed-out call with kind `timeout`. `send()` then counts the text as "may still land" and never types it again: a later try only presses enter when the screen shows the text, otherwise it waits for work to start. Out of time it reports "its prompt may still arrive", not "not delivered".
+- **Our code:** `hc()` throws a timed-out call with kind `timeout`. `send()` then counts the text as "may still land" and never types it again: a later try only presses enter when the screen shows the text, otherwise it waits for work to start. Out of time it reports "its prompt may still arrive", not "not delivered". A mid-task message to a Claude worker (90 s) is handled the same way: reported as possibly delivered, never typed twice. A plain `hc read` of the screen gets 10 s, not the 90 s default.
 - **Link:** #107.

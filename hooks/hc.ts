@@ -70,8 +70,10 @@ export async function listWorkers($: EngineInterface) {
   return await listTerminals($, ['herdr-agents.role=worker'])
 }
 
+// A plain read of the visible screen gets READ_SCREEN_MS; a caller that scrolls history passes its own.
+export const READ_SCREEN_MS = 10_000
 // A terminal's screen as hc reads it, with `lines` lines of history above it when given. A finished terminal stays readable.
-export async function readScreen($: EngineInterface, name: string, lines?: number, timeoutMs?: number) {
+export async function readScreen($: EngineInterface, name: string, lines?: number, timeoutMs = READ_SCREEN_MS) {
   return (await hc<{ text: string }>($, ['read', name, ...(lines ? ['--lines', String(lines)] : [])], timeoutMs)).text
 }
 

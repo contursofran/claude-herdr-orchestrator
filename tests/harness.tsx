@@ -185,6 +185,8 @@ export async function start(
   const slowHistory = new Set<string>()
   // Workers whose `hc send` types the text (the core lands it) and then never answers: the call times out.
   const slowSend = new Set<string>()
+  // Terminals whose plain screen read (no --lines) times out once a prompt was sent.
+  const slowScreen = new Set<string>()
   // Workers whose `hc send` cannot run at all (hc missing): the call rejects at once.
   const brokenSend = new Set<string>()
   // Sleeps seen between `hc send` tries are in the clock; these are the timeouts `hc read` was given.
@@ -474,6 +476,7 @@ export async function start(
       if (sub === 'read') {
         readTimeouts.push(e.init?.timeoutMs)
         if ('--lines' in flags && t && slowHistory.has(t.name)) return exit(124, '', 'timed out')
+        if (!('--lines' in flags) && t && slowScreen.has(t.name) && sends.length > 0) return { deny: 'hc read timed out' }
         if (fail.pane > 0) {
           fail.pane--
           return unreachable()
@@ -699,6 +702,7 @@ export async function start(
     fail,
     slowHistory,
     slowSend,
+    slowScreen,
     brokenSend,
     readTimeouts,
     pieces,
