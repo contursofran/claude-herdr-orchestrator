@@ -38,6 +38,8 @@ test('a session with /hrd-orchestrate gets the playbook, the roles and the nudge
   const all = await reportOnce($, ctx)
   expect(all).toMatch(PLAYBOOK)
   expect(all).toContain('Answer first:')
+  expect(all).toContain('even mid-turn')
+  expect(all).toContain('still gets your reasoning in the reply')
   expect(all).toContain("Say what's next:")
   expect(all).toMatch(ROLES)
   expect(all).toMatch(NUDGE)
