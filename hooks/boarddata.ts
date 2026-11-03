@@ -281,6 +281,10 @@ export async function boardSnapshot($: EngineInterface) {
       note: r.note ?? null,
       since: r.since ?? null,
       repo: r.repo ?? null,
+      ...(r.provider ? { provider: r.provider } : {}),
+      ...(r.model ? { model: r.model } : {}),
+      ...(r.worktree ? { worktree: r.worktree } : {}),
+      ...(r.branch ? { branch: r.branch } : {}),
       ...(r.outputAt === undefined ? {} : { command: r.command ?? null, commandAt: r.commandAt ?? null, outputAt: r.outputAt }),
     })),
     tasks: tasks.map(t => ({

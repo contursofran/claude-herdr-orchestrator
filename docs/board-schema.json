@@ -68,6 +68,16 @@
             "description": "Optional, so older boards stay valid. When a waiting worker started waiting, ms since the epoch; a reader works the clock out from it, so the time passing never rewrites the file."
           },
           "repo": { "type": ["string", "null"], "description": "owner/name on GitHub." },
+          "provider": {
+            "type": "string",
+            "description": "Optional, so older boards stay valid. The CLI its profile runs: claude, codex, opencode."
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional. The profile's model (`sonnet`, `opus`), from its `model` or its --model argument; missing when the profile names none."
+          },
+          "worktree": { "type": "string", "description": "Optional. The folder it works in." },
+          "branch": { "type": "string", "description": "Optional. The git branch checked out there when it started." },
           "command": {
             "type": ["string", "null"],
             "description": "Optional, like the next two, and only on a working worker that runs this mod, mid-turn. The tool it has been running for 15 s or more: `npm test`."

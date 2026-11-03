@@ -113,6 +113,11 @@ export type Row = {
   note?: string
   since?: number
   repo?: string
+  // The CLI (the profile's kind), its model, and the folder and branch it works in.
+  provider?: string
+  model?: string
+  worktree?: string
+  branch?: string
   // What it is doing mid-turn (see hooks/live.ts).
   command?: string | null
   commandAt?: number | null
@@ -181,7 +186,7 @@ export type Reset = { stage: 'saving'; at: number }
 // A worker profile: the CLI hc starts (`kind`), its flags, extra environment, and a
 // short description for the spawn tool and the guides.
 // `label` names the model and effort in a time comment ("Sonnet 5.5 medium"); it is worked out from args when unset.
-export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string; label?: string }
+export type Profile = { kind: string; args: string[]; env?: Record<string, string>; note?: string; label?: string; model?: string }
 
 // herdr-agents.json, the user's and a folder's. Every key is optional; see the README.
 export type Settings = {

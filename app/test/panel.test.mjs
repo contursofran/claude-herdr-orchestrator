@@ -256,6 +256,14 @@ test("a worker's tab draws that worker, and any other tab the board", () => {
   app.terminals = []
 })
 
+test("a worker's tab names its provider, model, worktree and branch, and omits them on an older board", () => {
+  const full = { ...worker, provider: 'claude', model: 'sonnet', worktree: '/w/claude-herdr-wt/fix-1', branch: 'fix-1-branch' }
+  const text = textOf(workerView(board(), full))
+  assert.ok(text.includes('claude sonnet · fix-1 · fix-1-branch'))
+  const old = textOf(workerView(board(), worker))
+  assert.ok(!old.includes('claude sonnet'))
+})
+
 test('a worker with no task says so, and a blocked one says why', () => {
   const text = textOf(workerView(board(), { ...worker, state: 'blocked', note: 'permission prompt' }))
   assert.ok(text.includes('No task on the board for this worker.'))
