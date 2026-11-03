@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import type { Board, Job, Links, Row } from '../types'
 import { endFinishedWrapUp } from './coordinator'
-import { config, target, wrappingUp } from './config'
+import { PROFILES, config, modelOf, target, wrappingUp } from './config'
 import { INTERRUPTED_NOTE, LINGER_MS, QUIET_MAX_MS } from './defaults'
 import { lastStatus } from './hc'
 import { workerLiveFields } from './live'
@@ -67,7 +67,9 @@ export async function refresh($: EngineInterface) {
     j => active(j) || asking.has(j.name) || waitsAfterReport(j) || (j.endedAt !== undefined && now - j.endedAt < LINGER_MS),
   )
   const rows: Row[] = []
+  const known = { ...PROFILES, ...settings.profiles }
   for (const j of shown) {
+    const profile = known[j.profile]
     let state = 'reported'
     if (j.status === 'starting') state = 'starting'
     if (j.status === 'running') state = lastStatus.get(j.name) ?? 'working'
@@ -76,6 +78,10 @@ export async function refresh($: EngineInterface) {
     rows.push({
       name: j.name,
       profile: j.profile,
+      ...(profile ? { provider: profile.kind } : {}),
+      ...(modelOf(profile) ? { model: modelOf(profile) } : {}),
+      worktree: j.cwd,
+      ...(j.branch ? { branch: j.branch } : {}),
       state,
       startedAt: j.startedAt,
       endedAt: j.endedAt,

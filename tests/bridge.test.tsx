@@ -69,6 +69,16 @@ test('/hrd-wrap-up with no workers at all ends orchestrating', async ($, on) => 
   expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(false)
 })
 
+test("a worker's board row carries its provider, model and worktree from its profile", async ($, on) => {
+  const { clock, files } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'b-1', profile: 'builder', cwd: '/repo-b1', task: 'x' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'd-1', profile: 'debugger', cwd: '/repo-d1', task: 'x' })
+  await clock.advance(3000)
+  const workers = JSON.parse(files[FILE] ?? '{}').workers as { name: string }[]
+  expect(workers.find(w => w.name === 'b-1')).toMatchObject({ provider: 'claude', model: 'sonnet', worktree: '/repo-b1' })
+  expect(workers.find(w => w.name === 'd-1')).toMatchObject({ provider: 'claude', model: 'opus', worktree: '/repo-d1' })
+})
+
 test('the board is written for outside apps, and their action files answer and tick', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
   await spawn($, ['w-busy'])
