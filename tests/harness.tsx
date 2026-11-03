@@ -182,7 +182,11 @@ export async function start(
   // The coordinator's own terminal (HC_TERMINAL_ID): its labels place the workers' tabs; clear them for a coordinator outside a space.
   const self = { labels: { 'herdr.space': 'sp1', 'herdr.tab': 'tb1' } as Record<string, string> }
   // How many more `hc ls`, `hc get`, `hc read`, `hc run` and `herdr-app do tab.rename` calls fail; the test sets them.
-  const fail = { list: 0, get: 0, pane: 0, start: 0, rename: 0 }
+  const fail = { list: 0, get: 0, pane: 0, start: 0, rename: 0, send: 0 }
+  // Terminals whose `hc read --lines` stalls past any timeout the caller gives it.
+  const slowHistory = new Set<string>()
+  // Sleeps seen between `hc send` tries are in the clock; these are the timeouts `hc read` was given.
+  const readTimeouts: (number | undefined)[] = []
   // Whether the events streams yield each line in two pieces (a piece is not a line).
   const pieces = { split: false }
   const terms = new Map<string, Term>()
@@ -466,6 +470,8 @@ export async function start(
         return t ? ok(terminal(t)) : missing()
       }
       if (sub === 'read') {
+        readTimeouts.push(e.init?.timeoutMs)
+        if ('--lines' in flags && t && slowHistory.has(t.name)) return exit(124, '', 'timed out')
         if (fail.pane > 0) {
           fail.pane--
           return unreachable()
@@ -486,6 +492,10 @@ export async function start(
       if (sub === 'send') {
         if (!t) return missing()
         if (t.finished) return err('finished', `${t.name} has finished`)
+        if (fail.send > 0) {
+          fail.send--
+          return err('unavailable', `${t.name} is still starting: its output has not settled`)
+        }
         const force = '--force' in flags
         if (status[t.name] === 'blocked' && !force && !noStatus.has(t.name)) return err('blocked', `${t.name} waits at a prompt`)
         const text = pos[1] ?? ''
@@ -676,6 +686,8 @@ export async function start(
     stubborn,
     self,
     fail,
+    slowHistory,
+    readTimeouts,
     pieces,
     terms,
     addTerm,

@@ -671,3 +671,49 @@ test('prune does nothing when either terminal list fails', async ($, on) => {
   await clock.settle()
   expect(removes(shell)).toBe(false)
 })
+
+test('a prompt hc refuses as unavailable (terminal still starting) is tried again after a short pause', async ($, on) => {
+  const { clock, sends, fail, store } = await start($, on)
+  fail.send = 2
+  await $.tool.call(spawnArgs)
+  await settled()
+  // Two refusals, then the third try types it: 1 s and 2 s of backoff.
+  await clock.advance(1000)
+  await clock.advance(2000)
+  expect(sends).toHaveLength(1)
+  expect(jobOf(store, 'w-hc')).toMatchObject({ status: 'running' })
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a prompt hc keeps refusing as unavailable is reported as not delivered after about 15 s', async ($, on) => {
+  const { clock, sends, fail, toasts } = await start($, on)
+  fail.send = 100
+  await $.tool.call(spawnArgs)
+  await settled()
+  for (let i = 0; i < 30; i++) {
+    await clock.advance(1000)
+    await settled()
+  }
+  const used = 100 - fail.send
+  // 1 + 2 + 4 + 8 s of pauses: five tries, then the refusal is thrown.
+  expect(used).toBe(5)
+  expect(sends).toHaveLength(0)
+  expect(toasts.join('\n')).toMatch(/first prompt failed: hc send: .*still starting/)
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a stalled worker whose history read times out is reported with its visible screen instead', async ($, on) => {
+  const { clock, submitted, noStatus, screens, slowHistory, readTimeouts } = await start($, on)
+  noStatus.add('w-hc')
+  slowHistory.add('w-hc')
+  screens['w-hc'] = '⏺ Working on it.\n────\n❯ \n────\n  aerolab · wt · Haiku 5.5 (xhigh)'
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(7 * 60_000)
+  await clock.advance(BATCH_MS)
+  expect(reportsOf(submitted)[0]).toMatch(/stopped \(unknown, screen unchanged for 5 min\) without writing RESULT\.md/)
+  // The history read was given a timeout, then the visible screen was read alone.
+  expect(readTimeouts).toContain(5000)
+  expect(readTimeouts.filter(t => t === 5000).length).toBeGreaterThanOrEqual(2)
+  await stopAll($, clock, ['w-hc'])
+})

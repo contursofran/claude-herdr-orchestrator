@@ -43,6 +43,10 @@ export const PROMPT_TRIES = 3
 export const PROMPT_WAIT_MS = 90_000
 // The most a prompt's delivery may take in all, however slow hc is: 3 tries of 90 s, and room for the calls between.
 export const SEND_DEADLINE_MS = 6 * 60_000
+// How long `hc send` is retried, with a growing pause, when hc refuses a young terminal as `unavailable` (still starting).
+export const SEND_RETRY_MS = 15_000
+// How long the `hc read --lines` of a stalled worker's history may take before the plain screen is read instead.
+export const READ_LINES_MS = 5000
 // How often hc is asked whether that work started.
 export const PROMPT_CHECK_MS = 5000
 // How long a message call waits for its send before it answers "Queued" and lets the send go on.
