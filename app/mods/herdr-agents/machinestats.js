@@ -14,6 +14,9 @@ export const READ_SCRIPT = [
   'if [ "$os" = Darwin ]; then vm_stat; sysctl -n hw.memsize; else grep -E "^(MemTotal|MemAvailable):" /proc/meminfo; fi',
   'echo --disk',
   'if [ "$os" = Darwin ]; then df -Pk /System/Volumes/Data; else df -Pk /; fi',
+  'echo --temp',
+  // Linux only (macOS has no CPU temperature without sudo): per CPU chip, `chip <name>` then `<label>:<millidegrees>`.
+  'if [ "$os" != Darwin ]; then for d in /sys/class/hwmon/hwmon*; do n=$(cat "$d/name" 2>/dev/null); case "$n" in coretemp|k10temp|zenpower) echo "chip $n"; for f in "$d"/temp*_input; do echo "$(cat "${f%_input}_label" 2>/dev/null):$(cat "$f" 2>/dev/null)"; done;; esac; done; fi',
 ].join('\n')
 
 export const POLL_MS = 10000
@@ -27,14 +30,14 @@ export function splitReading(text) {
   const lines = String(text ?? '').split('\n')
   const os = lines[0]?.trim()
   if (os !== 'Darwin' && os !== 'Linux') return null
-  const sections = { cpu: [], mem: [], disk: [] }
+  const sections = { cpu: [], mem: [], disk: [], temp: [] }
   let into = null
   for (const line of lines.slice(1)) {
-    const mark = /^--(cpu|mem|disk)$/.exec(line.trim())
+    const mark = /^--(cpu|mem|disk|temp)$/.exec(line.trim())
     if (mark) into = sections[mark[1]]
     else if (into) into.push(line)
   }
-  return { os, cpu: sections.cpu.join('\n'), mem: sections.mem.join('\n'), disk: sections.disk.join('\n') }
+  return { os, cpu: sections.cpu.join('\n'), mem: sections.mem.join('\n'), disk: sections.disk.join('\n'), temp: sections.temp.join('\n') }
 }
 
 /** Linux: busy and total jiffies from the `cpu ` line of /proc/stat; null when it is not there. Idle and iowait are idle. */
@@ -96,17 +99,42 @@ export function parseDf(text) {
   return used + avail > 0 ? pct((used / (used + avail)) * 100) : null
 }
 
-/** What one reading says: `{ cpu, ram, disk }` (null for what is not known) and the /proc/stat counters to compare the
+/** Linux: average CPU temperature in °C from the `--temp` section (hwmon values are millidegrees). Intel `coretemp`: the
+ *  mean of the `Core N` readings (the `Package id` one when there are no cores). AMD `k10temp`/`zenpower`: `Tdie`, else
+ *  `Tctl`. The first chip that gives a figure wins; null when there is none (VM, WSL, macOS). */
+export function parseTemps(text) {
+  const chips = []
+  for (const line of String(text ?? '').split('\n')) {
+    const chip = /^chip (\S+)/.exec(line)
+    if (chip) {
+      chips.push({ name: chip[1], temps: [] })
+      continue
+    }
+    const t = /^(.*):(\d+)\s*$/.exec(line)
+    if (t && chips.length) chips[chips.length - 1].temps.push({ label: t[1].trim(), c: Number(t[2]) / 1000 })
+  }
+  for (const { name, temps } of chips) {
+    const pick = (re, all) => {
+      const v = temps.filter(x => re.test(x.label)).map(x => x.c)
+      return v.length ? (all ? v.reduce((a, b) => a + b, 0) / v.length : v[0]) : null
+    }
+    const c = name === 'coretemp' ? (pick(/^Core \d+$/, true) ?? pick(/^Package/, false)) : (pick(/^Tdie$/, false) ?? pick(/^Tctl$/, false))
+    if (Number.isFinite(c) && c > 0) return Math.round(c)
+  }
+  return null
+}
+
+/** What one reading says: `{ cpu, ram, disk, temp }` (null for what is not known) and the /proc/stat counters to compare the
  *  next Linux read with (`prev` is the last read's). null when the text is not a reading. */
 export function readFigures(text, prev) {
   const s = splitReading(text)
   if (!s) return null
-  if (s.os === 'Darwin') return { cpu: parseIostatCpu(s.cpu), ram: parseVmStat(s.mem), disk: parseDf(s.disk), counters: null }
+  if (s.os === 'Darwin') return { cpu: parseIostatCpu(s.cpu), ram: parseVmStat(s.mem), disk: parseDf(s.disk), temp: null, counters: null }
   const counters = parseProcStat(s.cpu)
-  return { cpu: cpuBetween(prev, counters), ram: parseMeminfo(s.mem), disk: parseDf(s.disk), counters }
+  return { cpu: cpuBetween(prev, counters), ram: parseMeminfo(s.mem), disk: parseDf(s.disk), temp: parseTemps(s.temp), counters }
 }
 
-/** `CPU 12%  RAM 30%  Disk 47%`, leaving out any figure not known; '' when none is. */
+/** `CPU 12%  RAM 30%  Disk 47%  62°C`, leaving out any figure not known; '' when none is. */
 export function statsLine(f) {
   return [
     ['CPU', f?.cpu],
@@ -115,6 +143,7 @@ export function statsLine(f) {
   ]
     .filter(([, n]) => Number.isFinite(n))
     .map(([name, n]) => `${name} ${n}%`)
+    .concat(Number.isFinite(f?.temp) ? [`${f.temp}°C`] : [])
     .join('  ')
 }
 
