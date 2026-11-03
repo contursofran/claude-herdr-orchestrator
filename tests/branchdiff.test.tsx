@@ -1,4 +1,3 @@
-import { BATCH_MS } from '../hooks/defaults'
 import { expect } from 'claude-code/testing'
 import { DIFF_FILES_MAX, parseDiff } from '../hooks/branchdiff'
 import { W, reportW } from './workerkit'
@@ -112,7 +111,7 @@ test("a worker's context is a percent of its window, kept between turns, and abs
   await stopAll($, s.clock, ['w-busy'])
 })
 
-test('a finished worker triggers no git calls and keeps the diff it had', async ($, on) => {
+test('a finished worker gets one last diff, then no git calls and it keeps that diff', async ($, on) => {
   const s = await start($, on)
   await spawn($, ['w-busy'], '/repo/wt')
   s.runs.set(`${GIT} symbolic-ref --short refs/remotes/origin/HEAD`, [{ exitCode: 0, stdout: 'origin/develop\n' }])
@@ -130,12 +129,17 @@ test('a finished worker triggers no git calls and keeps the diff it had', async 
   await step(70_000)
   const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
   s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone.`
+  // A commit made after the last poll, just before the worker finished.
+  s.runs.set(`${GIT} diff --no-renames --numstat origin/develop...HEAD`, [{ exitCode: 0, stdout: '4\t2\ta.ts\n7\t0\tc.ts\n' }])
+  s.runs.set(`${GIT} diff --no-renames --name-status origin/develop...HEAD`, [{ exitCode: 0, stdout: 'M\ta.ts\nA\tc.ts\n' }])
   await s.finish('w-busy')
-  s.shell.length = 0
-  await step(50_000)
+  await step(60_000)
   expect(worker(s)()).toMatchObject({ state: 'reported' })
+  expect(worker(s)().diff).not.toEqual(diff)
+  expect(worker(s)().diff).toMatchObject({ add: 11, del: 2 })
+  s.shell.length = 0
+  await step(130_000)
   expect(s.shell.some(c => c.includes(' diff ') || c.includes('symbolic-ref'))).toBe(false)
-  expect(worker(s)().diff).toEqual(diff)
   await stopAll($, s.clock, ['w-busy'])
 })
 

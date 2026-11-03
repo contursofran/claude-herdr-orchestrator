@@ -117,6 +117,7 @@ export async function workerLive($: EngineInterface, dir: string, now: number, w
   } catch {
     return {}
   }
+  // `?.`: a LIVE.json holding JSON null reads as null.
   const c = live?.context
   const context = c && c.limit > 0 && c.tokens >= 0 ? { context: Math.min(100, Math.round((c.tokens / c.limit) * 100)) } : {}
   return { ...(working ? liveFields(live, now) : {}), ...context }

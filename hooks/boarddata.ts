@@ -160,6 +160,8 @@ function failureForBoard(f?: CiFailure) {
 
 // Each shown worker's branch against its default branch, kept in the state for the board. Like pollPrs, only while the app mod draws.
 let diffing = false
+// Workers whose last diff was read after they stopped; a worker that works again leaves the set.
+const finalDiffed = new Set<string>()
 export async function pollDiffs($: EngineInterface) {
   if (diffing || !(await appModShown($))) return
   diffing = true
@@ -170,14 +172,16 @@ export async function pollDiffs($: EngineInterface) {
     const got: NonNullable<BoardState['diffs']> = {}
     for (const r of board.rows) {
       const job = all[r.name]
-      // A finished worker's branch no longer moves: it keeps the diff it had, with no git calls.
-      if (!job || !active(job)) {
-        const k = kept[r.name]
+      const k = kept[r.name]
+      if (job && active(job)) finalDiffed.delete(r.name)
+      // A worker that stopped (a blocked one counts as running again once answered) gets one last diff, for commits since the last poll; after that its branch no longer moves and it keeps that diff with no git calls.
+      else if (!job || finalDiffed.has(r.name)) {
         if (k) got[r.name] = k
         continue
-      }
+      } else finalDiffed.add(r.name)
       const d = await readDiff($, job.cwd).catch(() => null)
       if (d) got[r.name] = d
+      else if (!active(job) && k) got[r.name] = k
     }
     if (JSON.stringify(got) === JSON.stringify(kept)) return
     await update($, state, s => ({ ...s, diffs: got }))
