@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
-import type { BoardItem, BoardState, Pr } from '../types'
+import type { BoardItem, BoardState, NextItem, Pr } from '../types'
 import { appModShown } from './appmod'
 import { readBoard } from './board'
 import { ciOf, type Check } from './ci'
 import { isOrchestrating, toggleWrapUp } from './coordinator'
-import { PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
+import { NEXT_MAX, PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
 import { linker } from './links'
 import { ownLiveFields } from './live'
 import { sharedFiles } from './overlap'
@@ -77,7 +77,56 @@ export async function gather($: EngineInterface) {
     if (c !== undefined && t.jobs.length <= c && t.isFinished) return false
     return !t.isFinished || now - lastAt(t) < TASK_RECENT_MS
   })
-  return { v, board, now, open, todos, items, isLive, endOf, tasks }
+  return { v, board, now, open, todos, items, isLive, endOf, tasks, all }
+}
+
+export type NextArgs = { items?: { issue?: unknown; title?: unknown; planned?: unknown }[] }
+
+// set_next: the coordinator's Ready list, in order, for the board's Next section (D44). Each call replaces the list. An issue a
+// worker starts on leaves it by itself (see nextOnBoard), so a call is needed only when the order or the items change.
+export async function setNext($: EngineInterface, e: NextArgs) {
+  if (!Array.isArray(e.items)) return { deny: 'items must be a list, in the order they start; an empty list clears it' }
+  if (e.items.length > NEXT_MAX) return { deny: `at most ${NEXT_MAX} items: the next few to start, not the backlog` }
+  const links = await linker($, (await readBoard($)).rows)
+  const own = links.repoIn('', session.cwd)
+  const next: NextItem[] = []
+  for (const [i, it] of e.items.entries()) {
+    const ref = String(it?.issue ?? '').trim()
+    const title = String(it?.title ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!/^(?:[\w.-]+(?:\/[\w.-]+)?\s*)?#\d{1,6}$/.test(ref) || !title)
+      return { deny: `item ${i + 1}: give issue as #123 or owner/repo#123, and its title` }
+    const [repo = '', n = ''] = (links.refsIn(ref, own)[0] ?? '').split('#')
+    if (next.some(x => (x.repo ?? '') === repo && x.issue === Number(n))) continue
+    next.push({
+      ...(repo ? { repo } : {}),
+      issue: Number(n),
+      title: title.slice(0, 120),
+      ...(it?.planned === true ? { planned: true } : {}),
+    })
+  }
+  await update($, state, s => ({ ...s, next }))
+  if (!next.length) return { result: 'Cleared the Next list on the board.' }
+  return {
+    result: `The board's Next list is now ${next.map(x => `${x.repo ?? ''}#${x.issue}`).join(', ')}. An issue leaves it once a worker starts on it; call set_next again when the order or the items change.`,
+  }
+}
+
+// The Next list as the board shows it: an issue some task already has, running or done, has left it.
+function nextOnBoard(next: NextItem[], tasks: Task[]) {
+  const taken = (x: NextItem) => tasks.some(t => t.refs.includes(x.issue) && (!x.repo || !t.repo || t.repo === x.repo))
+  return next
+    .filter(x => !taken(x))
+    .map(x => ({
+      key: `${x.repo ?? ''}#${x.issue}`,
+      label: `issue #${x.issue}`,
+      title: x.title,
+      repo: x.repo ?? null,
+      issue: x.issue,
+      url: x.repo ? `https://github.com/${x.repo}/issues/${x.issue}` : null,
+      planned: x.planned === true,
+    }))
 }
 
 // The GitHub state of the open PRs the table lists: merged, and its checks. One poll at a
@@ -171,7 +220,7 @@ export async function boardInputs($: EngineInterface) {
 
 // The board as plain data for the Herdr app and Discord (see bridge.ts and docs/board-schema.json).
 export async function boardSnapshot($: EngineInterface) {
-  const { v, board, now, open, todos, items, isLive, endOf, tasks } = await gather($)
+  const { v, board, now, open, todos, items, isLive, endOf, tasks, all } = await gather($)
   const busy = board.rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length
   const shares = sharedFiles(tasks, v.prs)
   const prOf = (t: Task) => (t.repo && t.pr ? v.prs[`${t.repo}#${t.pr}`] : undefined)
@@ -221,6 +270,7 @@ export async function boardSnapshot($: EngineInterface) {
       conflictsWith: prOf(t)?.state === 'OPEN' && prOf(t)?.conflict ? (prOf(t)?.base ?? null) : null,
       shares: shares.get(t.key) ?? [],
     })),
+    next: nextOnBoard(v.next ?? [], all),
     needs: items.map(it => {
       const d = open.find(x => `D${x.id}` === it.key)
       const t = todos.find(x => `T${x.id}` === it.key)
