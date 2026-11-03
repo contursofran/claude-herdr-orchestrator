@@ -32,7 +32,7 @@ jobs:
           $w run herdr-app status | tee .herdr-agents/smoke/status.json
           sleep 4
           $w run herdr-app shot "$PWD/.herdr-agents/smoke/a.png"
-          $w run herdr-app do herdr-agents.pick1 || true
+          $w run herdr-app do space.new --name second --folder "$PWD"
           sleep 1
           $w run herdr-app shot "$PWD/.herdr-agents/smoke/b.png"
           $w run herdr-app status | tee .herdr-agents/smoke/status-after.json
