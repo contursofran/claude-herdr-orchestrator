@@ -18,7 +18,7 @@ const resetAtom = atom({ plugin: 'herdr-agents', key: 'reset' } as const, null a
 
 // What the coordinator does after two failed fix rounds.
 export function afterFailedRounds(off: Set<string>) {
-  return off.has('debugger') ? 'ask the owner with ask_owner' : 'spawn `debugger`'
+  return off.has('debugger') ? 'ask the owner with ask_owner' : 'spawn `debugger` and tell it to read docs/herdr-quirks.md first'
 }
 
 export async function setWrapUp($: EngineInterface, on: boolean) {
@@ -57,11 +57,11 @@ export async function playbook($: EngineInterface, statePath: string) {
     `- State: keep ${statePath} current. The mod rewrites its block between ${AUTO_START} and ${AUTO_END} (running and waiting workers, recent reports) on every change; never edit that block. You own Ready (planned items that can start now, at least 3), Decisions and Next: update them when they change, not after every report. Put Ready on the board with set_next, in the order it starts, whenever it changes. A fresh context carries on from the file alone.`,
     "- Reports: a <herdr-agent> report starts with the worker's summary. Read its full report file only when the summary is not enough; give a fix builder that path instead of copying the report. Its status is done, blocked, failed (also a worker that did not start) or gone (its tab is gone).",
     "- Worktrees: give spawn `branch` (and `repo` when the folder holds several) and the mod creates the worker's worktree off the base branch (fetched from origin first, if the repo has one) at ../<repo>-wt/<branch>; give `cwd` instead only to reuse a worktree (a fix round). Never two writers in one.",
-    '- Roles: `builder` does all code changes; `reviewer` reviews every builder PR.',
+    '- Roles: `builder` does all code changes; `reviewer` reviews every builder PR that changes code; for a docs-only or config-only PR, the coordinator reads the diff itself and merges on green CI.',
     "- Briefs: open a brief with the issue's title, not a command: the board takes the brief's first line or first backtick span as the worker's row title.",
-    `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
+    `- Each issue: ${steps.join(', ')}. Send blockers to a fresh builder: stop the one that wrote the PR, then spawn \`builder\` in the same worktree with the PR and the blockers; after two failed fix rounds, ${afterFailedRounds(off)}. Nits get no fix round and never hold a merge: merge with them left open.${small ? ` Small, well-defined tasks may go to \`${small}\`.` : ''}`,
     '- A worker going the wrong way or quiet too long: interrupt it, then message the correction, which keeps its context; its report comes from that turn. stop loses the context.',
-    `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once.`,
+    `- Throughput: keep ${want} workers busy; each report says how many work. Split big work into small PRs and run independent slices at once; app-mod work (the Herdr app's mod) goes in small PRs, and a new Herdr quirk goes in docs/herdr-quirks.md in the same PR.`,
     '- Waiting: never poll or sleep; reports, WAIT.json checks and decisions arrive by themselves.',
     '- The owner: ask only what is theirs (product, design or rule choices, approvals) with ask_owner, a few at a time; settle the rest yourself with decided. Merge only as the repo rules allow.',
     '- Answer first: when the owner asks something, even mid-turn, answer it in your reply before any tool call the answer doesn\'t need. A pin, a thinking update or "I\'ll answer on the sidebar" is not an answer: a question you pin still gets your reasoning in the reply.',
