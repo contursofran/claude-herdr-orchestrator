@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -63,18 +64,22 @@ class Release(unittest.TestCase):
                     f.write("#!/bin/sh\n" + body + "\n")
                 os.chmod(p, 0o755)
             env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "LOG": log}
+            with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
+                now = json.load(f)["version"]
+            major, minor, _ = now.split(".")
+            want = f"{major}.{int(minor) + 1}.0"
             r = subprocess.run([SCRIPT, "--minor", "--dry-run"], env=env, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertIn("Releasing 0.24.0", r.stdout)
+            self.assertIn(f"Releasing {want}", r.stdout)
             self.assertIn("- Fix a thing (#5)", r.stdout)
-            self.assertIn("+ gh pr create --base main --title Version 0.24.0", r.stdout)
+            self.assertIn(f"+ gh pr create --base main --title Version {want}", r.stdout)
             with open(log) as f:
                 logged = f.read()
             self.assertNotIn("commit", logged)
             self.assertNotIn("push", logged)
             self.assertNotIn("pr create", logged)
             with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
-                self.assertIn('"version": "0.23.0"', f.read())
+                self.assertEqual(json.load(f)["version"], now)
 
     def finish(self, merged=True, dry_run=False, ancestor=True):
         """Runs --finish 0.24.0 with fake gh and git; returns the result and what they were asked."""
