@@ -27,8 +27,23 @@ run() {
 }
 
 # Prints "none" when the PR has no check yet, "pending" while any runs, "failed:<names>" when any failed, else "passed".
+# gh exits non-zero for failing (1) and pending (8) checks, still printing the JSON, and exits 1 with "no checks reported"
+# on stderr (no JSON) while none has registered: that is "none", i.e. wait. Any other error stops the script.
 checks_state() {
-  gh pr checks "$1" --json name,bucket | node -e '
+  local out err rc=0 errfile
+  errfile=$(mktemp)
+  out=$(gh pr checks "$1" --json name,bucket 2>"$errfile") || rc=$?
+  err=$(cat "$errfile")
+  rm -f "$errfile"
+  if [[ $rc != 0 && -z $out ]]; then
+    if [[ $err == *"no checks reported"* ]]; then
+      echo none
+      return 0
+    fi
+    echo "$err" >&2
+    return 1
+  fi
+  printf '%s' "$out" | node -e '
 let text = ""
 process.stdin.on("data", chunk => (text += chunk))
 process.stdin.on("end", () => {

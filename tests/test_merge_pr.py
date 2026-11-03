@@ -1,5 +1,6 @@
 """scripts/merge-pr.sh and scripts/window-errors.sh, run with a fake gh, git, install and herdr-app on PATH."""
 
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import os
 import shutil
 import subprocess
@@ -11,12 +12,20 @@ MERGE = os.path.join(ROOT, "scripts", "merge-pr.sh")
 WINDOW = os.path.join(ROOT, "scripts", "window-errors.sh")
 
 # Answers `gh pr checks` from the files $FAKE/checks.1, checks.2 ...: the nth look gets the nth file, the last one repeats.
+# Like the real gh: a file starting with "!" is an error message on stderr with exit 1 and no output (no checks yet);
+# failing checks print their JSON and exit 1, pending ones exit 8.
 FAKE_GH = """#!/bin/sh
 echo "gh $*" >> "$FAKE/log"
 if [ "$1 $2" = "pr checks" ]; then
   n=$(cat "$FAKE/looks" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$FAKE/looks"
   f="$FAKE/checks.$n"; [ -f "$f" ] || f=$(ls "$FAKE"/checks.* | sort | tail -1)
+  case "$(cat "$f")" in
+    "!"*) tail -c +2 "$f" >&2; exit 1 ;;
+  esac
   cat "$f"
+  grep -q '"bucket":"fail"' "$f" && exit 1
+  grep -q '"bucket":"pending"' "$f" && exit 8
+  exit 0
 fi
 """
 FAKE_GIT = """#!/bin/sh
@@ -30,6 +39,7 @@ echo "install" >> "$FAKE/log"
 echo "Window: no errors."
 """
 
+NO_CHECKS = "!no checks reported on the 'feature' branch"
 PASS = '[{"name":"test","bucket":"pass"},{"name":"lint","bucket":"skipping"}]'
 PENDING = '[{"name":"test","bucket":"pending"}]'
 FAIL = '[{"name":"test","bucket":"pass"},{"name":"lint","bucket":"fail"}]'
@@ -80,11 +90,31 @@ class MergePr(unittest.TestCase):
         self.assertIn("Window: no errors.", ran.stdout)
 
     def test_waits_while_there_are_no_checks_or_they_run(self):
-        self.checks("[]", PENDING, PASS)
+        self.checks(NO_CHECKS, "[]", PENDING, PASS)
         ran = self.run_merge("12", extra={"MERGE_PR_MAX": "10"})
         self.assertEqual(ran.returncode, 0, ran.stderr)
-        self.assertEqual(len([l for l in self.log() if l.startswith("gh pr checks")]), 3)
+        self.assertEqual(len([l for l in self.log() if l.startswith("gh pr checks")]), 4)
         self.assertTrue(any(l.startswith("gh pr merge") for l in self.log()))
+
+    def test_no_checks_reported_yet_is_a_wait_never_a_pass_or_a_failure(self):
+        self.checks(NO_CHECKS)
+        ran = self.run_merge("12", extra={"MERGE_PR_MAX": "0"})
+        self.assertNotEqual(ran.returncode, 0)
+        self.assertIn("still none", ran.stderr)
+        self.assertFalse(any(l.startswith("gh pr merge") for l in self.log()))
+
+    def test_gives_up_after_the_timeout_when_no_checks_ever_register(self):
+        self.checks(NO_CHECKS)
+        ran = self.run_merge("12", extra={"MERGE_PR_EVERY": "1", "MERGE_PR_MAX": "2"})
+        self.assertNotEqual(ran.returncode, 0)
+        self.assertEqual(len([l for l in self.log() if l.startswith("gh pr checks")]), 3)
+
+    def test_another_gh_error_stops_the_script(self):
+        self.checks("!HTTP 502")
+        ran = self.run_merge("12")
+        self.assertNotEqual(ran.returncode, 0)
+        self.assertIn("could not read the checks", ran.stderr)
+        self.assertFalse(any(l.startswith("gh pr merge") for l in self.log()))
 
     def test_refuses_when_a_check_failed_and_merges_nothing(self):
         self.checks(FAIL)
