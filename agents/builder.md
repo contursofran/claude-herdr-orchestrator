@@ -1,6 +1,6 @@
 ---
 name: builder
-description: Implements an issue, or a plan when one is given, in a branch off the repo's base branch and opens or updates the PR. Use for all code changes.
+description: Implements an issue, or a plan when one is given, in a branch off the repo's base branch and opens or updates the PR.
 tools: Read, Write, Edit, Grep, Glob, Bash
 model: sonnet
 effort: medium

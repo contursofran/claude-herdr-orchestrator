@@ -12,6 +12,8 @@ export type Job = {
   status: 'starting' | 'running' | 'reported'
   // the worker's hc address (t7), set once hc has started its terminal
   address?: string
+  // the herdr pane id of its terminal, when hc's spawn reply gave one
+  pane?: string
   // message files held for a non-Claude worker until it reports
   queued?: string[]
   // Messages accepted by `message` whose send has not ended; a reload or a failed send reports them (see messageWorker).
@@ -120,6 +122,8 @@ export type Row = {
   model?: string
   worktree?: string
   branch?: string
+  // The herdr pane its terminal runs in, when hc reported it at spawn.
+  pane?: string
   // What it is doing mid-turn (see hooks/live.ts).
   command?: string | null
   commandAt?: number | null

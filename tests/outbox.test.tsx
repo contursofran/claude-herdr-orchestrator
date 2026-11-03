@@ -1,6 +1,6 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS, JOBS_KEEP_MS } from '../hooks/defaults'
-import { spawn, start, stopAll, test } from './harness'
+import { command, spawn, start, stopAll, test } from './harness'
 
 // The outbox (outbox.ts): the prompts for the coordinator that come close together go out as one,
 // after a quiet BATCH_MS and once the coordinator's turn has ended. The batch's tick checks read
@@ -11,6 +11,10 @@ const turnEnd = (turnId: string) => ({ turnId, answer: '', durationMs: 1, isAbor
 
 test('two reports that land together reach the coordinator as one prompt, with one worker count', async ($, on) => {
   const { clock, emit, submitted, typed, files } = await start($, on)
+  await command($, 'hrd-orchestrate')
+  // The playbook prompt goes out first; this test is about the reports.
+  await clock.advance(BATCH_MS)
+  submitted.length = 0
   await spawn($, ['w-a', 'w-b'])
   for (const w of ['w-a', 'w-b']) await emit(w, 'working')
   const [tokenA, tokenB] = typed.map(t => t.match(/<!-- report (\S+) -->/)?.[1])
@@ -109,7 +113,10 @@ test('an owner answer that goes out alone carries no worker count', async ($, on
 
 test('a wrap-up goes out at once, not in the batch: the answer waiting for its batch comes after it', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
+  await command($, 'hrd-orchestrate')
   await spawn($, ['w-a'])
+  await clock.advance(3000 + BATCH_MS)
+  submitted.length = 0
   await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: 'Ship it today?', options: ['Yes', 'No'], from: 'p-1' })
   files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
   files[`${INBOX}/2-wrap.json`] = JSON.stringify({ action: 'wrapUp', on: true })

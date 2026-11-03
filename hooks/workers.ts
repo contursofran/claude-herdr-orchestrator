@@ -1125,8 +1125,21 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     ])
     if (p.kind === 'opencode') await ensureOpencodePlugin($, p.env)
     const argv = await workerArgv($, p.kind, p.args, env)
-    const made = await hc<{ address: string }>($, ['run', '--bg', '--no-parent', '--name', worker, '--cwd', cwd, ...labels, '--', ...argv])
-    const saved = await updateJob($, worker, j => (j.status === 'starting' ? { ...j, address: made.address } : undefined))
+    const made = await hc<{ address: string; pane?: string }>($, [
+      'run',
+      '--bg',
+      '--no-parent',
+      '--name',
+      worker,
+      '--cwd',
+      cwd,
+      ...labels,
+      '--',
+      ...argv,
+    ])
+    const saved = await updateJob($, worker, j =>
+      j.status === 'starting' ? { ...j, address: made.address, ...(made.pane ? { pane: made.pane } : {}) } : undefined,
+    )
     if (!saved.after) return await close()
     if (space) void nameTab($, worker)
     await waitReady($, worker, cwd, p.kind)

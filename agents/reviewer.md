@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Reviews a PR for correctness, missing tests and the repo's rules. Use after every builder PR. Changes nothing.
+description: Reviews a PR for correctness, missing tests and the repo's rules. Changes nothing.
 tools: Read, Grep, Glob, Bash
 model: opus
 effort: high

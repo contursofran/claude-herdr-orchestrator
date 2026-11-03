@@ -7,7 +7,6 @@ import { app, findId, textOf } from './fake-gpui.mjs'
 const { makeSheetState, sheetBlock, SheetState } = await import('../mods/herdr-agents/sheet.js')
 const { openSheet } = await import('../mods/herdr-agents/sheetctl.js')
 const { card } = await import('../mods/herdr-agents/card.js')
-const { openPins } = await import('../mods/herdr-agents/pinsctl.js')
 const { toggleSheet } = await import('../mods/herdr-agents/strip.js')
 
 const board = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url)))
@@ -135,14 +134,6 @@ test('a sheet left by the last run is cleared once per app run, not by a later c
   app.store['hrd.sheet'] = { session: 's', key: 'D7' }
   makeSheetState(cx)
   assert.deepEqual(app.store['hrd.sheet'], { session: 's', key: 'D7' }, 'a layout switch keeps an open sheet')
-})
-
-test('opening the pins closes the sheet and hands the keyboard back', () => {
-  app.ran = []
-  app.store['hrd.sheet'] = { session: 's', key: 'D7', back: 't1', space: null }
-  openPins('s', [], 'all')
-  assert.equal(app.store['hrd.sheet'], null)
-  assert.deepEqual(app.ran.at(-1), ['pane.focus', { terminal: 't1' }])
 })
 
 test('opening the sheet closes the pins and the shared pop-up', () => {

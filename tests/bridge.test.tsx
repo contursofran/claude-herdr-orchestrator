@@ -208,3 +208,27 @@ test('images on a question or to-do reach the board; only absolute paths of pict
   expect(images('T1')).toEqual(['/shots/b.MP4'])
   expect(images('T2')).toEqual([])
 })
+
+test("a worker's board row carries the pane hc's spawn reply gave", async ($, on) => {
+  const { clock, files } = await start($, on)
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'b-1', profile: 'builder', cwd: '/repo-b1', task: 'x' })
+  await clock.advance(3000)
+  const workers = JSON.parse(files[FILE] ?? '{}').workers as { name: string; pane?: string }[]
+  expect(workers.find(w => w.name === 'b-1')?.pane).toMatch(/^p-t\d+$/)
+})
+
+test('a spawn with a branch shows it on the board row, and a user profile without --model keeps the built-in model', async ($, on) => {
+  const { clock, files, runs } = await start($, on, { profiles: { builder: { kind: 'claude', args: ['--effort', 'low'] } } })
+  runs.set('git -C /repo-b1 branch --show-current', [{ exitCode: 0, stdout: 'issue-7\n' }])
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'b-1', profile: 'builder', cwd: '/repo-b1', task: 'x' })
+  await clock.advance(3000)
+  const workers = JSON.parse(files[FILE] ?? '{}').workers as { name: string }[]
+  expect(workers.find(w => w.name === 'b-1')).toMatchObject({ branch: 'issue-7', model: 'sonnet' })
+})
+
+test("the board carries the coordinator's herdr pane when HERDR_PANE_ID is set, and leaves it out otherwise", async ($, on) => {
+  const { clock, files } = await start($, on, {}, {}, { HERDR_PANE_ID: 'p-9' })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'b-1', profile: 'builder', cwd: '/repo-b1', task: 'x' })
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.pane).toBe('p-9')
+})

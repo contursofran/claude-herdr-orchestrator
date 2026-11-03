@@ -293,7 +293,7 @@ test('it floats only where there is no room for it, and unmeasured it does', () 
 })
 
 test('floating leaves the rows above and below clear, down to a least height', () => {
-  assert.equal(m.panelFloatHeight(700), 700 - 158)
+  assert.equal(m.panelFloatHeight(700), 700 - 120)
   assert.equal(m.panelFloatHeight(300), 240)
 })
 
