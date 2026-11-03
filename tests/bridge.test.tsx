@@ -18,23 +18,40 @@ test('/hrd-orchestrate flips coordinator.orchestrating on the board', async ($, 
   expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(true)
 })
 
-test('/hrd-orchestrate hands the playbook and goal to the model as the command context, not a prompt', async ($, on) => {
-  const { submitted } = await start($, on)
+test('/hrd-orchestrate starts the coordinator turn: playbook and goal go out once as a prompt after the command', async ($, on) => {
+  const { clock, submitted } = await start($, on)
   const result = await command($, 'hrd-orchestrate', 'ship the ready issues')
+  expect(result.context).toBeUndefined()
   expect(submitted).toEqual([])
-  expect(result.context).toHaveLength(1)
-  expect(result.context?.[0]).toMatch(/^<herdr-context>You are now the coordinator of this folder\./)
-  expect(result.context?.[0]).toContain('Goal: ship the ready issues')
-  expect(result.context?.[0]).toContain('You coordinate worker agents')
+  await clock.advance(3000)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toMatch(/^<herdr-context>You are now the coordinator of this folder\./)
+  expect(submitted[0]).toContain('Goal: ship the ready issues')
+  expect(submitted[0]).toContain('You coordinate worker agents')
 })
 
-test('a finished wrap-up (nothing running) ends orchestrating; one with workers running waits for them', async ($, on) => {
+test('/hrd-orchestrate after a finished wrap-up turns wrap-up off, so it stays orchestrating', async ($, on) => {
   const { clock, files } = await start($, on)
   const orchestrating = () => JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating
   await spawn($, ['w-a'])
   await command($, 'hrd-orchestrate')
-  const wrap = await command($, 'hrd-wrap-up')
-  expect(wrap.context?.[0]).toMatch(/^<herdr-context>The owner is wrapping up/)
+  await command($, 'hrd-wrap-up')
+  await stopAll($, clock, ['w-a'])
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(false)
+  await command($, 'hrd-orchestrate')
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(true)
+})
+
+test('a finished wrap-up (nothing running) ends orchestrating; one with workers running waits for them', async ($, on) => {
+  const { clock, files, submitted } = await start($, on)
+  const orchestrating = () => JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating
+  await spawn($, ['w-a'])
+  await command($, 'hrd-orchestrate')
+  await command($, 'hrd-wrap-up')
+  await clock.advance(3000)
+  expect(submitted.join('\n')).toContain('<herdr-context>The owner is wrapping up')
   await clock.advance(3000)
   expect(orchestrating()).toBe(true)
   await stopAll($, clock, ['w-a'])
