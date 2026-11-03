@@ -179,3 +179,59 @@ test('a reload while a queued message was being sent names it to the coordinator
   expect(submitted.join('\n')).toContain('MESSAGE-1-abcd.md')
   expect(jobOf(store, 'w').sending).toBeUndefined()
 })
+
+test('a stop while a message is queued drops it: it is named as not sent and never typed', async ($, on) => {
+  const started = await start($, on)
+  const { clock, holds, typed, status, submitted, store } = started
+  await reportedWorker(started, $, 'w-a')
+  holds.add('w-a')
+  // The first is already being typed in (held); the second waits behind it.
+  const first = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'First.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await first
+  const second = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Second.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  expect(JSON.stringify(await second)).toContain('Queued')
+  const stopped = JSON.stringify(await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' }))
+  expect(stopped).toContain('queued message(s) were still being sent and will not be sent')
+  expect(stopped).toContain('MESSAGE-')
+  expect(stopped).toContain('2 queued message(s)')
+  const before = typed.length
+  holds.delete('w-a')
+  status['w-a'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  await clock.advance(BATCH_MS)
+  // Nothing went into the stopped worker, and no second notice came for the same message.
+  expect(typed.slice(before).some(t => t.includes('Second.'))).toBe(false)
+  expect(submitted.filter(t => t.includes('was not sent'))).toEqual([])
+  // The stopped job is not brought back to running by the dropped send.
+  expect(jobOf(store, 'w-a').status).toBe('reported')
+})
+
+test('a queued message that cannot be typed in is reported to the coordinator once it fails', async ($, on) => {
+  const started = await start($, on)
+  const { clock, holds, status, submitted, gate } = started
+  await reportedWorker(started, $, 'w-a')
+  holds.add('w-a')
+  const first = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'First.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await first
+  const second = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Second.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  expect(JSON.stringify(await second)).toContain('Queued')
+  // The first goes in; the second is typed to a worker that now waits at a prompt, and fails.
+  const release = gate(argv => argv[0] === 'hc' && argv[1] === 'send' && argv.join(' ').includes('extra message'))
+  holds.delete('w-a')
+  status['w-a'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  status['w-a'] = 'blocked'
+  release()
+  await settled()
+  await clock.advance(BATCH_MS)
+  const notice = submitted.filter(t => t.includes('The message you queued for it was not sent'))
+  expect(notice).toHaveLength(1)
+  expect(notice[0]).toContain('could not type the message into w-a')
+  expect(notice[0]).toContain('MESSAGE-')
+  status['w-a'] = 'working'
+  await stopAll($, clock, ['w-a'])
+})

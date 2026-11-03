@@ -1282,9 +1282,16 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // Recorded on the job until the send ends, so a later message queues behind it and a reload can name it.
   await updateJob($, job.name, j => ({ ...j, sending: [...(j.sending ?? []), path] }))
   let queuedReply = false
+  let dropped = false
   const step = serial(job.name, async () => {
     const latest = await latestJob($, job.name)
     if (!latest) return
+    // Stopped or closed while it waited: the message is not sent. Stop named it in its answer, so no notice follows.
+    if (latest.stopped || latest.closed) {
+      result = { deny: `${e.worker} was stopped` }
+      dropped = true
+      return
+    }
     if (latest.status === 'running' && !latest.interrupted) {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
@@ -1332,7 +1339,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // sending, the coordinator hears of it (a prompt that is lost is reported by prompt itself).
   const finished = step.then(async () => {
     await updateJob($, job.name, j => ({ ...j, sending: (j.sending ?? []).filter(p => p !== path) }))
-    if (queuedReply && (!result || 'deny' in result))
+    if (queuedReply && !dropped && (!result || 'deny' in result))
       await post(
         $,
         `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\n[The message you queued for it was not sent (${result && 'deny' in result ? result.deny : 'it could not be sent'}): ${path}.]\n</herdr-agent>`,
@@ -1447,7 +1454,9 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
     : ''
   // A message still being sent when it stopped is named, as its send may not have gone in.
   const unsent = (await latestJob($, job.name))?.sending ?? []
-  const lostSending = unsent.length ? ` ${unsent.length} queued message(s) were still being sent: ${unsent.join(', ')}.` : ''
+  const lostSending = unsent.length
+    ? ` ${unsent.length} queued message(s) were still being sent and will not be sent: ${unsent.join(', ')}.`
+    : ''
   try {
     await closeTerminal($, job.name)
   } catch (err) {
