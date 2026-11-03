@@ -187,6 +187,8 @@ export type BoardState = {
   next?: NextItem[]
   // each worker's branch against the default branch, by worker name (see branchdiff.ts)
   diffs?: Record<string, BranchDiff>
+  // a row's issue or PR title on GitHub, by owner/name#123; null when GitHub has none by that number (see pollTitles)
+  titles?: Record<string, string | null>
 }
 
 // `base` is the branch it is read against; `files` are the first few, `more` the ones left out; `add` and `del` count every file.
