@@ -357,6 +357,18 @@ export function agentLive(boards, terminals, address, now) {
   return null
 }
 
+/** The mode of a board: `orchestrating`, `solo`, or null when the board doesn't say (an older one). */
+export function modeText(board) {
+  const o = board?.coordinator?.orchestrating
+  return o === true ? 'orchestrating' : o === false ? 'solo' : null
+}
+
+/** The mode of the orchestrator on a terminal, found by the board's coordinator terminal. */
+export function agentMode(boards, address) {
+  const b = (boards ?? []).find(x => x.coordinator?.terminal === address)
+  return b ? modeText(b) : null
+}
+
 /** What an Interrupt button in the agents list presses: a worker on its board, or an orchestrator's terminal. */
 export function interruptTarget(boards, terminals, address) {
   const name = (terminals ?? []).find(t => t.address === address)?.name

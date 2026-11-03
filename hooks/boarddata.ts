@@ -4,7 +4,7 @@ import type { BoardItem, BoardState, Pr } from '../types'
 import { appModShown } from './appmod'
 import { readBoard } from './board'
 import { ciOf, type Check } from './ci'
-import { toggleWrapUp } from './coordinator'
+import { isOrchestrating, toggleWrapUp } from './coordinator'
 import { PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
 import { linker } from './links'
 import { ownLiveFields } from './live'
@@ -161,6 +161,7 @@ export async function boardInputs($: EngineInterface) {
     b.target,
     b.context,
     await read($, state),
+    await isOrchestrating($),
     await openQuestions($),
     await pinnedItems($),
     await answered($),
@@ -180,7 +181,7 @@ export async function boardSnapshot($: EngineInterface) {
     cwd: session.cwd,
     at: now,
     // The hc terminal this coordinator runs in (null outside hc); an app finds the board by it.
-    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null, ...ownLiveFields(now) },
+    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null, orchestrating: await isOrchestrating($), ...ownLiveFields(now) },
     stageNames: [...STAGES],
     summary: {
       busy,

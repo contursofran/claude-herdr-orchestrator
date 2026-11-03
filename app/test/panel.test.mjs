@@ -493,3 +493,10 @@ test('shared files read as the design has them, on the row and in the worker vie
   assert.ok(textOf(panelView(b)).includes('touches pin-panel.ts like #215'))
   assert.ok(textOf(workerView(b, { name: 'w1', state: 'working' })).includes('touches pin-panel.ts like #215'))
 })
+
+test('the head says whether the session is orchestrating or solo, and plain Board when the board does not say', () => {
+  const head = coordinator => textOf(panelView(board({ coordinator }), 0))
+  assert.ok(head({ orchestrating: true }).includes('Board · orchestrating'))
+  assert.ok(head({ orchestrating: false }).includes('Board · solo'))
+  assert.ok(!head({}).includes('Board ·'))
+})
