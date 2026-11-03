@@ -1,6 +1,7 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
 import { BAND, spawn, start, stopAll, test } from './harness'
+import type { TestBody } from 'claude-code/testing'
 
 // The one line above the prompt, what pin_for_owner keeps, and the worker states the board shows.
 // Run with `claude plugin test .`.
@@ -154,7 +155,7 @@ test('a starting worker shows as starting until its terminal is made', async ($,
 })
 
 // A worker that reports with `status: blocked` in its header (a real RESULT.md), as the board and the state file show it.
-async function blockedReport($: Parameters<Parameters<typeof test>[1]>[0], on: Parameters<Parameters<typeof test>[1]>[1]) {
+async function blockedReport($: Parameters<TestBody>[0], on: Parameters<TestBody>[1]) {
   const h = await start($, on)
   const { clock, files, emit, typed } = h
   files['/repo/COORDINATOR-STATE.md'] = '# S\n'
