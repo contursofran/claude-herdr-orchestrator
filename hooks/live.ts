@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
 import { LIVE_COMMAND_MS, LIVE_SAVE_MS, QUIET_SHOW_MS, QUIET_WARN_MS } from './defaults'
 
@@ -26,6 +27,24 @@ let tools = 0
 let savedAt = 0
 let context: Live['context']
 
+export type BandText = { text: string; warn: boolean } | null
+
+// What the band last drew. Its render reads it, so a change redraws the band: a tool call or a turn start/end updates it at once,
+// the coordinator's tick when the minute or the quiet state moves.
+const shown = atom({ plugin: 'herdr-agents', key: 'liveline' } as const, { line: null as BandText })
+
+export async function liveLine($: EngineInterface): Promise<BandText> {
+  return (await read($, shown)).line
+}
+
+// Works out the band's line now and stores it if it changed (the text carries the minute, so a same-minute tick writes nothing).
+export async function syncLive($: EngineInterface) {
+  const line = bandLine(await $.clock.now())
+  const prev = (await read($, shown)).line
+  if (prev?.text === line?.text && prev?.warn === line?.warn) return
+  await update($, shown, () => ({ line }))
+}
+
 function liveNow(): Live {
   const oldest = [...running].sort((a, b) => a.at - b.at)[0]
   return {
@@ -53,6 +72,7 @@ export async function startLive($: EngineInterface) {
   tools = 0
   savedAt = 0
   context = undefined
+  await syncLive($)
 }
 
 // After each turn: how full this session's context is, for the worker panel's `ctx 41%`.
@@ -69,6 +89,7 @@ export async function liveTurn($: EngineInterface, started: boolean) {
   turnAt = started ? now : null
   tools = 0
   await save($, now)
+  await syncLive($)
 }
 
 // A piece of the model's answer. It arrives many times a second, so the file follows at most every LIVE_SAVE_MS.
@@ -84,11 +105,13 @@ export async function liveTool($: EngineInterface, e: { tool: string; command?: 
   running.add(call)
   tools++
   await save($, call.at)
+  await syncLive($)
   return async () => {
     running.delete(call)
     const now = await $.clock.now()
     outputAt = now
     await save($, now)
+    await syncLive($)
   }
 }
 

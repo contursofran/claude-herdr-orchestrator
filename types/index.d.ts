@@ -250,6 +250,8 @@ declare module 'claude-code' {
       boardState: BoardState
       // whether the Herdr app mod drew this session's board at the last check; changing it redraws the band
       appmod: { shown: boolean }
+      // the coordinator's band text in a turn (null outside one); changing it redraws the band
+      liveline: { line: { text: string; warn: boolean } | null }
     }
   }
 }

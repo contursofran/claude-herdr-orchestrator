@@ -46,6 +46,22 @@ test('the band shows the coordinator live line mid-turn, warns at 5 min, and cle
   expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
 })
 
+test('the band follows the turn without any redraw: tool calls and the tick change its text', async ($, on) => {
+  let finish = () => {}
+  on('tool.call', { tool: 'Bash' }, () => new Promise(resolve => (finish = () => resolve({ result: { stdout: '' } } as never))) as never)
+  const { clock } = await start($, on)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.turn.start({ text: 'Go.', turnId: 't1' })
+  expect((await ui.find({ type: 'Text', text: /tools/ }))?.text).toBe('0m · 0 tools')
+  const call = $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(1)
+  expect((await ui.find({ type: 'Text', text: /tool/ }))?.text).toBe('0m · 1 tool · running npm test')
+  await clock.advance(61_000)
+  expect((await ui.find({ type: 'Text', text: /tool/ }))?.text).toBe('1m · 1 tool · running npm test')
+  finish()
+  await call
+})
+
 test('with nothing waiting the band draws nothing of its own, and one line once something waits', async ($, on) => {
   const { clock } = await start($, on)
   await spawn($, ['w-busy'])

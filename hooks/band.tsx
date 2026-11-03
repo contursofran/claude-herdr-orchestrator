@@ -1,5 +1,5 @@
 import type { EngineInterface, RenderElement, RenderInput } from 'claude-code'
-import { bandLine } from './live'
+import { liveLine } from './live'
 import { openQuestions, pinnedItems } from './owner'
 
 export type BandRender = RenderInput<'AbovePrompt'>
@@ -16,7 +16,7 @@ export async function drawBand($: EngineInterface, e: BandRender, next: (e: Band
   const { Text } = $.ui.resolve(e)
   if (count === 0) {
     // Nothing waits: a turn in progress gets its live line (#174), amber once the model has been quiet for 5 minutes.
-    const live = bandLine(await $.clock.now())
+    const live = await liveLine($)
     return live ? (
       <Text wrap="truncate-end" color={live.warn ? 'warning' : undefined} dimColor={!live.warn}>
         {live.text}

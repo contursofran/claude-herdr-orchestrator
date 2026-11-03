@@ -69,7 +69,7 @@ export const TICK_MS = 3000
 export const LIVE_COMMAND_MS = 15_000
 // How often a worker's stream of model output reaches its live file.
 export const LIVE_SAVE_MS = 30_000
-// The quiet line of the coordinator's band shows after this long without output, amber after the second (as the app mod's).
+// The quiet line of the coordinator's band shows after this long without output, amber after the second. Keep in step with QUIET_SHOW_MS/QUIET_WARN_MS in app/mods/herdr-agents/model.js (a separate copy).
 export const QUIET_SHOW_MS = 2 * 60_000
 export const QUIET_WARN_MS = 5 * 60_000
 // How long a reported worker stays on the board.

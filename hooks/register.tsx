@@ -7,7 +7,7 @@ import { pollDiffs, pollPrs, setNext, type NextArgs } from './boarddata'
 import { publishBoard, removeBoard } from './bridge'
 import { claimState, config, resetSettings } from './config'
 import { maybeReset } from './coordinator'
-import { liveContext, liveOutput, liveTool, liveTurn, startLive } from './live'
+import { liveContext, liveOutput, liveTool, liveTurn, startLive, syncLive } from './live'
 import { CLOSE_IDLE_MINUTES, PR_POLL_MS, PRUNE_MINUTES, SWEEP_MS, TICK_MS } from './defaults'
 import { restoreOutbox, retry, turnEnded, turnStarted } from './outbox'
 import { askOwner, noteReports, pinForOwner, pingAfterReports, settle, unpinForOwner } from './owner'
@@ -82,6 +82,7 @@ export const register: Register = on => {
           .then(() => refresh($))
           .then(() => publishBoard($))
           .then(() => watchAppMod($))
+          .then(() => syncLive($))
           .catch(() => {}),
     )
     $.clock.every(PR_POLL_MS, () => void pollPrs($).catch(() => {}))
