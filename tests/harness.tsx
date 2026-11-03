@@ -140,6 +140,8 @@ export async function start(
   const screens: Record<string, string> = {}
   // What `gh pr view` reports for each PR, by owner/name#123; the test sets it.
   const prs: Record<string, unknown> = {}
+  // What `gh run view --log-failed` prints for each run id; the test sets it. A run with none exits 1.
+  const runLogs: Record<string, string> = {}
   // How many more `hc send` calls report started: false, by worker; the test sets it.
   const stalls: Record<string, number> = {}
   // Workers whose CLI sits on what it is sent, as Claude does until its session.start hooks are done: hc says idle
@@ -538,6 +540,7 @@ export async function start(
       const pr = prs[`${e.argv[5]}#${name}`]
       return pr ? exit(0, JSON.stringify(pr)) : exit(1)
     }
+    if (cmd === 'gh' && sub === 'run' && verb === 'view') return name in runLogs ? exit(0, runLogs[name]) : exit(1)
     // The file moves and removals the bridge makes, on the files above.
     if (cmd === 'mkdir') return exit(0)
     const [from = '', to = ''] = e.argv.slice(2).filter(a => !a.startsWith('-'))
@@ -633,6 +636,7 @@ export async function start(
     reads,
     unwritable,
     prs,
+    runLogs,
     stalls,
     holds,
     turns,

@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
-import type { BoardItem, BoardState, NextItem, Pr } from '../types'
+import type { BoardItem, BoardState, CiFailure, NextItem, Pr } from '../types'
 import { appModShown } from './appmod'
 import { readBoard } from './board'
 import { ciOf, type Check } from './ci'
+import { failedJob, parseLog, runIdOf } from './failure'
 import { isOrchestrating, toggleWrapUp } from './coordinator'
 import { NEXT_MAX, PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
 import { linker } from './links'
@@ -132,6 +133,30 @@ function nextOnBoard(next: NextItem[], tasks: Task[]) {
 // The GitHub state of the open PRs the table lists: merged, and its checks. One poll at a
 // time; when gh fails for all of them the status line says so.
 let polling = false
+/** `{ failure }` for an open PR whose CI failed: the same read when its head is the one already read, else the failed job and,
+ *  from its log, the failing tests. One log read per failing head; a log that can't be read leaves the job without test names. */
+async function failureOf($: EngineInterface, k: string, checks: Check[], head: string, held?: CiFailure) {
+  if (ciOf(checks) !== 'fail') return {}
+  if (held && held.head === head) return { failure: held }
+  const failure = failedJob(checks, head)
+  if (!failure) return {}
+  const run = runIdOf(failure.url)
+  if (run) {
+    try {
+      const ran = await $.process.run(['gh', 'run', 'view', run, '-R', k.split('#')[0] ?? '', '--log-failed'], { timeoutMs: 30_000 })
+      if (ran.exitCode === 0) Object.assign(failure, parseLog(ran.stdout))
+    } catch {}
+  }
+  return { failure }
+}
+
+/** The failure as the board shows it: without the head it was read at. */
+function failureForBoard(f?: CiFailure) {
+  if (!f) return null
+  const { head: _head, ...shown } = f
+  return shown
+}
+
 export async function pollPrs($: EngineInterface) {
   // Polls while the app mod draws the boards: its pop-up's CI column reads these PRs.
   if (polling || !(await appModShown($))) return
@@ -150,7 +175,7 @@ export async function pollPrs($: EngineInterface) {
       const [repo = '', n = ''] = k.split('#')
       try {
         const ran = await $.process.run(
-          ['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup,mergeable,baseRefName,files'],
+          ['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup,mergeable,baseRefName,files,headRefOid'],
           { timeoutMs: 20_000 },
         )
         if (ran.exitCode !== 0) {
@@ -164,6 +189,7 @@ export async function pollPrs($: EngineInterface) {
           mergeable?: string
           baseRefName?: string
           files?: { path: string }[]
+          headRefOid?: string
         }
         const mergedAt = pr.mergedAt ? Date.parse(pr.mergedAt) : NaN
         got[k] = {
@@ -177,6 +203,7 @@ export async function pollPrs($: EngineInterface) {
                 conflict: pr.mergeable === 'UNKNOWN' ? (v.prs[k]?.conflict ?? false) : pr.mergeable === 'CONFLICTING',
                 base: pr.baseRefName ?? 'base',
                 files: (pr.files ?? []).map(f => f.path),
+                ...(await failureOf($, k, pr.statusCheckRollup ?? [], pr.headRefOid ?? '', v.prs[k]?.failure)),
               }
             : {}),
         }
@@ -267,6 +294,7 @@ export async function boardSnapshot($: EngineInterface) {
       isFinished: t.isFinished,
       isMerged: t.isMerged,
       mergedAt: t.mergedAt ?? null,
+      ciFailure: prOf(t)?.state === 'OPEN' && prOf(t)?.ci === 'fail' ? failureForBoard(prOf(t)?.failure) : null,
       conflictsWith: prOf(t)?.state === 'OPEN' && prOf(t)?.conflict ? (prOf(t)?.base ?? null) : null,
       shares: shares.get(t.key) ?? [],
     })),

@@ -2,7 +2,18 @@ import type { Pr } from '../types'
 
 // GitHub's view of a PR: its checks rolled up to one word.
 
-export type Check = { __typename?: string; status?: string; conclusion?: string; state?: string }
+export type Check = {
+  __typename?: string
+  status?: string
+  conclusion?: string
+  state?: string
+  name?: string
+  context?: string
+  detailsUrl?: string
+  targetUrl?: string
+  startedAt?: string
+  completedAt?: string
+}
 const FAILED = ['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']
 
 export function ciOf(checks: Check[]): Pr['ci'] {

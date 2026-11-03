@@ -1021,7 +1021,30 @@ export function workRows(board) {
       mergedAt: Number.isFinite(t.mergedAt) && t.mergedAt > 0 ? t.mergedAt : null,
       conflictsWith: typeof t.conflictsWith === 'string' && t.conflictsWith ? t.conflictsWith : null,
       shares: sharesText(t.shares),
+      ciFailure: ciFailureOf(t),
     }))
+}
+
+/** A task's failed CI as the panel draws it, or null: `summary` for the board row (`CI failed · 2 tests`), the rest for a worker's view.
+ *  Anything the board leaves out (an older plugin, a log that could not be read) is left out of the lines too. */
+function ciFailureOf(t) {
+  const f = t.ciFailure
+  if (!f || typeof f !== 'object' || typeof f.job !== 'string') return null
+  const count = n => (Number.isInteger(n) && n >= 0 ? n : null)
+  const tests = (Array.isArray(f.tests) ? f.tests : []).filter(x => typeof x === 'string' && x)
+  const failed = count(f.failed) ?? (tests.length || null)
+  const passed = count(f.passed)
+  // The worker's view shows only the first test, so every other failure is "more" (the board's `more` counts only those past the named ones).
+  const more = tests.length && failed ? Math.max(0, failed - 1) : 0
+  const secs = Number.isFinite(f.seconds) && f.seconds >= 0 ? f.seconds : null
+  return {
+    summary: failed ? `CI failed · ${failed} test${failed === 1 ? '' : 's'}` : 'CI failed',
+    url: typeof f.url === 'string' && /^https?:\/\//.test(f.url) ? f.url : null,
+    counts: failed ? `${failed} failed${passed === null ? '' : ` · ${passed} passed`}` : '',
+    job: secs === null ? f.job : `${f.job} · ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`}`,
+    first: tests[0] ?? '',
+    more: more ? `+${more} more failing test${more === 1 ? '' : 's'}` : '',
+  }
 }
 
 /** The board's Next list as rows the panel draws like its work rows: the issue's link, its plan mark, and `ready`, the first one

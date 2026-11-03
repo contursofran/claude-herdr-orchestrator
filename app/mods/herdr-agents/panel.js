@@ -1,7 +1,7 @@
 // Role `panel`: the right panel, which follows the tab (#274): an orchestrator's tab draws its board, a worker's tab that worker.
 // The strip's copy moves the panel here on arrival at the tab (`panelMove` in panelmodel.js); this copy only draws.
 import { div, svg } from 'gpui-kit'
-import { closeOverlay, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
+import { closeOverlay, exec, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
 import { boardSpace, counts, liveLine, mergedText, modeText, nextRows, projectName, rowAction, rowLive, stripItems } from './model.js'
@@ -42,6 +42,29 @@ const warning = text =>
     .text_color(theme().working)
     .child(svg(icon('warn')).size(11).flex_none())
     .child(div().min_w_0().truncate().child(text))
+
+/** `CI failed · 2 tests ↗` in red; the arrow and the press open the run when the board has its address. */
+const ciFailed = (r, id) => {
+  const f = r.ciFailure
+  const text = div().min_w_0().truncate().text_color(theme().blocked)
+  if (!f.url) return div().flex().text_size(11).child(text.child(f.summary))
+  return div()
+    .flex()
+    .text_size(11)
+    .child(
+      div()
+        .id(id)
+        .min_w_0()
+        .truncate()
+        .cursor_pointer()
+        .text_color(theme().blocked)
+        .on_mouse_down('left', (_e, cx) => {
+          cx.stop_propagation()
+          exec('open', [f.url]).catch(() => {})
+        })
+        .child(`${f.summary} ↗`),
+    )
+}
 
 function row(r, board, now, ui) {
   const merged = mergedText(r, now)
@@ -100,6 +123,7 @@ function row(r, board, now, ui) {
     )
     .when(Boolean(r.conflictsWith && !r.unattended), el => el.child(warning(`conflicts with ${r.conflictsWith}`)))
     .when(Boolean(r.shares), el => el.child(warning(r.shares)))
+    .when(Boolean(r.ciFailure), el => el.child(ciFailed(r, `panel-ci-${r.key}`)))
     .when(Boolean(r.blocked), el =>
       el.child(
         div()
@@ -281,6 +305,27 @@ function backButton(board, ui) {
     .child(`‹ ${projectName(board)} board`)
 }
 
+/** A worker's view of its PR's failed CI: counts, the job and its run time, the first failing test, how many more, Open log. */
+function ciFailureBlock(f, key) {
+  const line = (text, c) => div().min_w_0().truncate().text_size(11).text_color(c).child(text)
+  return div()
+    .flex()
+    .flex_col()
+    .gap(4)
+    .child(div().text_color(look.head).child('CI failed'))
+    .when(Boolean(f.counts), el => el.child(line(f.counts, theme().blocked)))
+    .child(line(f.job, color.dim))
+    .when(Boolean(f.first), el => el.child(line(f.first, color.text)))
+    .when(Boolean(f.more), el => el.child(line(f.more, color.dim)))
+    .when(Boolean(f.url), el =>
+      el.child(
+        div()
+          .flex()
+          .child(link({ link: { url: f.url } }, 'Open log ↗', `panel-ci-log-${key}`)),
+      ),
+    )
+}
+
 /** A worker's tab: who it is, how far it got, what it is on and its PR, from what the board has. */
 export function workerView(board, worker, ui = { open: new Set() }) {
   const t = theme()
@@ -386,6 +431,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
                 .when(Boolean(r.conflictsWith), inner => inner.child(warning(`conflicts with ${r.conflictsWith}`)))
                 .when(Boolean(r.shares), inner => inner.child(warning(r.shares))),
             )
+            .when(Boolean(r.ciFailure), inner => inner.child(ciFailureBlock(r.ciFailure, r.key)))
             .when(Boolean(r.link), inner =>
               inner.child(
                 div()

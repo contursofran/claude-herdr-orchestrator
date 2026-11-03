@@ -495,6 +495,75 @@ test('shared files read as the design has them, on the row and in the worker vie
   assert.ok(textOf(workerView(b, { name: 'w1', state: 'working' })).includes('touches pin-panel.ts like #215'))
 })
 
+const FAIL = {
+  job: 'test',
+  url: 'https://github.com/o/r/actions/runs/7',
+  seconds: 185,
+  failed: 3,
+  passed: 46,
+  tests: ['a > one', 'a > two'],
+  more: 1,
+}
+
+test('a failed CI reads as the design has it on the row and in the worker view', () => {
+  const b = board({ tasks: [task('one', { tab: 'fix-1', workers: ['fix-1'], ciFailure: FAIL }), task('old')] })
+  const [one, old] = m.panelSections(b).work
+  assert.equal(one.ciFailure.summary, 'CI failed · 3 tests')
+  assert.equal(old.ciFailure, null)
+  const row = textOf(panelView(b))
+  assert.ok(row.includes('CI failed · 3 tests ↗'))
+  const view = workerView(b, { name: 'fix-1', state: 'working' })
+  const text = textOf(view)
+  for (const line of ['3 failed · 46 passed', 'test · 3m 5s', 'a > one', '+2 more failing tests', 'Open log ↗'])
+    assert.ok(text.includes(line), line)
+  assert.ok(!text.includes('a > two'))
+  assert.ok(findId(view, 'panel-ci-log-one'))
+  assert.ok(findId(panelView(b), 'panel-ci-one'))
+})
+
+test('two failures, both named, still say there is one more than the first shown', () => {
+  const ci = { job: 'test', url: null, seconds: null, failed: 2, passed: 1, tests: ['a > one', 'a > two'], more: 0 }
+  const b = board({ tasks: [task('one', { tab: 'fix-1', ciFailure: ci })] })
+  const text = textOf(workerView(b, { name: 'fix-1', state: 'working' }))
+  assert.ok(text.includes('a > one'))
+  assert.ok(text.includes('+1 more failing test'))
+  assert.ok(!text.includes('+1 more failing tests'))
+})
+
+test('a failed CI with less on the board says less, and one without a run has no link', () => {
+  const b = board({
+    tasks: [
+      task('one', {
+        tab: 'fix-1',
+        ciFailure: { job: 'build', url: null, seconds: null, failed: null, passed: null, tests: ['t'], more: 0 },
+      }),
+    ],
+  })
+  const f = m.panelSections(b).work[0].ciFailure
+  assert.deepEqual(f, {
+    summary: 'CI failed · 1 test',
+    url: null,
+    counts: '1 failed',
+    job: 'build',
+    first: 't',
+    more: '',
+  })
+  assert.ok(textOf(panelView(b)).includes('CI failed · 1 test'))
+  assert.ok(!textOf(panelView(b)).includes('↗'))
+  assert.equal(findId(workerView(b, { name: 'fix-1', state: 'working' }), 'panel-ci-log-one'), null)
+  const bare = m.panelSections(board({ tasks: [task('x', { ciFailure: { job: 'build', tests: [], more: 0 } })] })).work[0].ciFailure
+  assert.equal(bare.summary, 'CI failed')
+})
+
+test('pressing the failed CI opens its run, and the press stops there', () => {
+  const b = board({ tasks: [task('one', { ciFailure: FAIL })] })
+  app.execs.length = 0
+  let stopped = false
+  findId(panelView(b), 'panel-ci-one').node.calls.on_mouse_down[1](null, { stop_propagation: () => (stopped = true) })
+  assert.deepEqual(app.execs, [['open', FAIL.url]])
+  assert.ok(stopped)
+})
+
 test('the head says whether the session is orchestrating or solo, and plain Board when the board does not say', () => {
   const head = coordinator => textOf(panelView(board({ coordinator }), 0))
   assert.ok(head({ orchestrating: true }).includes('Board · orchestrating'))
