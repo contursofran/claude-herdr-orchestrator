@@ -1,0 +1,47 @@
+# Throwaway spike (#348, S2): can a macos-15 runner draw a hidden Herdr window? Never merged.
+name: smoke-spike
+on:
+  workflow_dispatch:
+  push:
+    branches: [spike-348-macos]
+jobs:
+  smoke:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Herdr app and core
+        run: |
+          curl -fsSLo Herdr.dmg https://releases.herdr.dev/app/Herdr.dmg
+          hdiutil attach -nobrowse -mountpoint /Volumes/Herdr Herdr.dmg
+          curl -fsSL https://releases.herdr.dev/core/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Smoke
+        run: |
+          mkdir -p .herdr-agents/smoke
+          w=scripts/herdr-hidden-window.sh
+          export HERDR_HIDDEN_APP=/Volumes/Herdr/Herdr.app
+          export PATH="$HOME/.local/bin:$PATH"
+          trap '$w stop || true' EXIT
+          $w start
+          $w demo
+          $w run herdr-app status | tee .herdr-agents/smoke/status.json
+          $w run herdr-app shot "$PWD/.herdr-agents/smoke/a.png"
+          sleep 1
+          $w run herdr-app do herdr-agents.board || true
+          $w run herdr-app shot "$PWD/.herdr-agents/smoke/b.png"
+          ls -l .herdr-agents/smoke
+          shasum .herdr-agents/smoke/*.png
+          ! grep -q "could not create display link" /private/tmp/hw-hw/app.log
+      - name: Collect
+        if: always()
+        run: cp /private/tmp/hw-*/app.log .herdr-agents/smoke/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          path: .herdr-agents/smoke
+          include-hidden-files: true
