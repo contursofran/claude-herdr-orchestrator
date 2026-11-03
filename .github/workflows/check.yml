@@ -1,6 +1,6 @@
 # Runs on every pull request and on main: formatting, the plugin validator and the tests.
-# The typecheck needs the plugin API types a local Claude Code writes (npm run types), so
-# it stays in `npm run check` on your machine.
+# The typecheck needs the plugin API types a Claude Code session writes when it loads the mod. CI has
+# no session, so it uses the committed copy in types-pinned/ (refresh: scripts/types.sh --pin).
 name: check
 on:
   pull_request:
@@ -21,6 +21,15 @@ jobs:
           curl -fsSL https://claude.ai/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: npm run format:check
+      - name: Warn when the pinned types are stale
+        run: |
+          pinned=$(cat types-pinned/VERSION)
+          current=$(claude --version | awk '{print $1}')
+          if [ "$pinned" != "$current" ]; then
+            echo "::warning title=Pinned plugin types are stale::types-pinned/ came from Claude Code $pinned but CI installed $current. Refresh with scripts/types.sh --pin and commit."
+          fi
+      - name: Typecheck against the pinned plugin API types
+        run: scripts/types.sh --pinned && npm run typecheck
       - run: npm run validate
       - run: npm test
       - name: Herdr app mod tests
