@@ -23,9 +23,13 @@ class Install(unittest.TestCase):
         self.app = os.path.join(self.config, "no-app")
 
     def install(self):
+        return subprocess.run([INSTALL], capture_output=True, text=True, env=self.env(), check=True)
+
+    def env(self):
         # No app home unless a test makes one: install.sh must not touch the real Herdr app.
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app)
-        return subprocess.run([INSTALL], capture_output=True, text=True, env=env, check=True)
+        # HOME is the temporary folder too: with the real one, install.sh finds the Discord bot's launch agent
+        # and restarts the owner's real bot (launchctl kickstart -k), which is what made this file slow (#270).
+        return dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app, HOME=self.config)
 
     def recorded(self):
         with open(os.path.join(self.config, "mods", "herdr-agents", "clone")) as f:
@@ -105,7 +109,8 @@ class Install(unittest.TestCase):
         os.makedirs(self.app)
         copy = os.path.join(self.config, "clone")
         shutil.copytree(CLONE, copy, ignore=shutil.ignore_patterns(".git", "node_modules", ".herdr-agents"))
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app)
+        # A temporary folder inside a checkout (TMPDIR) would let git find that checkout above the copy.
+        env = dict(self.env(), GIT_CEILING_DIRECTORIES=self.config)
         subprocess.run([os.path.join(copy, "install.sh")], capture_output=True, text=True, env=env, check=True)
         with open(self.version_file()) as f:
             self.assertEqual(json.load(f), {"version": self.plugin_version()})
