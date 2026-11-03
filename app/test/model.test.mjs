@@ -1241,3 +1241,20 @@ test('interruptTarget: a worker through its board, an orchestrator by its termin
   assert.deepEqual(interruptTarget(boards, terminals, 't2'), { session: 's', worker: 'fix-1' })
   assert.equal(interruptTarget(boards, terminals, 't3'), null)
 })
+
+test('modeText and agentMode say orchestrating or solo, and nothing for a board that does not say', async () => {
+  const { modeText, agentMode } = await import('../mods/herdr-agents/model.js')
+  assert.equal(modeText({ coordinator: { orchestrating: true } }), 'orchestrating')
+  assert.equal(modeText({ coordinator: { orchestrating: false } }), 'solo')
+  assert.equal(modeText({ coordinator: { terminal: 't1' } }), null)
+  assert.equal(modeText(null), null)
+  const boards = [
+    { coordinator: { terminal: 't1', orchestrating: true } },
+    { coordinator: { terminal: 't2', orchestrating: false } },
+    { coordinator: { terminal: 't3' } },
+  ]
+  assert.equal(agentMode(boards, 't1'), 'orchestrating')
+  assert.equal(agentMode(boards, 't2'), 'solo')
+  assert.equal(agentMode(boards, 't3'), null)
+  assert.equal(agentMode(boards, 't9'), null)
+})

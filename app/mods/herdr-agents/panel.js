@@ -4,7 +4,7 @@ import { div, svg } from 'gpui-kit'
 import { closeOverlay, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { boardSpace, counts, liveLine, mergedText, nextRows, projectName, rowAction, rowLive, stripItems } from './model.js'
+import { boardSpace, counts, liveLine, mergedText, modeText, nextRows, projectName, rowAction, rowLive, stripItems } from './model.js'
 import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { interruptButton } from './interrupt.js'
@@ -451,7 +451,12 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
             .flex_col()
             .gap(2)
             .child(div().truncate().font_bold().child(projectName(board)))
-            .child(div().text_size(11).text_color(color.dim).child('Board')),
+            .child(
+              div()
+                .text_size(11)
+                .text_color(color.dim)
+                .child(modeText(board) ? `Board \u00b7 ${modeText(board)}` : 'Board'),
+            ),
         )
         .when(Boolean(chip), el => el.child(chip))
         .child(closeButton(ui)),

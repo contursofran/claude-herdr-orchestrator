@@ -15,6 +15,11 @@ import { active, jobs } from './state'
 const resetAtom = atom({ plugin: 'herdr-agents', key: 'reset' } as const, null as Reset | null)
 const orchestrating = atom({ plugin: 'herdr-agents', key: 'orchestrating' } as const, false)
 
+// Whether /hrd-orchestrate ran here (the board shows it; only this file may read the atom).
+export function isOrchestrating($: EngineInterface) {
+  return read($, orchestrating)
+}
+
 // What the coordinator does after two failed fix rounds.
 export function afterFailedRounds(off: Set<string>) {
   return off.has('debugger') ? 'ask the owner with ask_owner' : 'spawn `debugger`'
@@ -171,15 +176,18 @@ export async function orchestrate($: EngineInterface, args: string) {
   const goal = args.trim()
   const { statePath } = await resetSettings($)
   await update($, orchestrating, () => true)
-  void $.prompt.submit({
-    text: [
-      '<herdr-context>You are now the coordinator of this folder.',
-      await playbook($, statePath),
-      goal
-        ? `Goal: ${goal}`
-        : 'Goal: none given. Read the state file and the open issues, then propose the first ones to the owner with ask_owner.',
-      '</herdr-context>',
-    ].join('\n'),
-  })
+  // The host rejects a submit made from inside a command hook; the flip above is what the board needs.
+  $.prompt
+    .submit({
+      text: [
+        '<herdr-context>You are now the coordinator of this folder.',
+        await playbook($, statePath),
+        goal
+          ? `Goal: ${goal}`
+          : 'Goal: none given. Read the state file and the open issues, then propose the first ones to the owner with ask_owner.',
+        '</herdr-context>',
+      ].join('\n'),
+    })
+    .catch(() => {})
   return { text: `Coordinating${goal ? `: ${goal}` : ''}. State file: ${statePath}. ${cmd('wrap-up')} stops new work.` }
 }

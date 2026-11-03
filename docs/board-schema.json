@@ -18,6 +18,10 @@
       "description": "Optional, so older boards stay valid.",
       "properties": {
         "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." },
+        "orchestrating": {
+          "type": "boolean",
+          "description": "True once /hrd-orchestrate ran in this session (it starts workers), false while it works on its own; /hrd-wrap-up does not clear it. Missing on older boards: unknown."
+        },
         "command": { "type": "string", "description": "Like a worker's `command`, `commandAt` and `outputAt`: there only mid-turn." },
         "commandAt": { "type": "number" },
         "outputAt": { "type": "number" }
