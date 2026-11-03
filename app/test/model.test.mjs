@@ -1163,14 +1163,8 @@ test('agedTimes: the ages each copy has on screen', async () => {
   }
   assert.deepEqual(agedTimes('strip', { boards, open: { session: 's', key: 'D2' } }), [], 'the card draws no answered item')
   assert.deepEqual(agedTimes('sheet', { boards, open: { session: 's', key: 'D2' } }), [8], 'the sheet still draws an answered item')
-  assert.deepEqual(agedTimes('pinbar', { pinAt: 9 }), [9])
-  assert.deepEqual(agedTimes('pinbar', { pinAt: null }), [])
-  const list = [{ id: 'a', at: 1 }, { id: 'b', at: 2 }, { id: 'c' }]
-  assert.deepEqual(agedTimes('pins', { pins: { list } }), [1, 2])
-  assert.deepEqual(agedTimes('pins', { pins: { list, view: 'panel', id: 'b' } }), [2], 'the drop panel shows one pin')
-  assert.deepEqual(agedTimes('pins', { pins: { list }, gone: new Set(['a']) }), [2], 'a pin marked done is not drawn')
   for (const role of ['board', 'agents', 'version'])
-    assert.deepEqual(agedTimes(role, { boards, pinAt: 9, open: { session: 's', key: 'D1' } }), [], role)
+    assert.deepEqual(agedTimes(role, { boards, open: { session: 's', key: 'D1' } }), [], role)
 })
 
 test('a remembered board gives way to one written over 30 minutes later on the same terminal (#272)', () => {

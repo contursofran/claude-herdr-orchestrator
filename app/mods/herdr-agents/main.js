@@ -5,8 +5,7 @@ import { Boards, beat, clearBeat } from './board.js'
 import { makeCardState } from './card.js'
 import { clearStaleOverlays, firstThisRun, onBoardsChanged } from './cardstate.js'
 import { anyDrawFailed, clearDrawFailed, drawNoteDue, guardsDraw, noteDraw } from './drawguard.js'
-import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, pinsOverlayEmpty, resolveBoard, stillOpen } from './model.js'
-import { closePinsOverlay, pinbar, pinsView } from './pinbar.js'
+import { AGE_TICK_MS, AgeClock, HEARTBEAT_MS, agedTimes, drawnKey, resolveBoard } from './model.js'
 import { floatView, panelFor } from './panel.js'
 import { makePopupState, popupView, releasePopup } from './popup.js'
 import { PinCtl } from './pinctl.js'
@@ -18,10 +17,9 @@ import { POLL_MS as USAGE_POLL_MS, UsageTracker, usageView } from './usage.js'
 import { readVersion, versionView } from './version.js'
 
 // One mod, one file per part; props().role says which part this copy draws.
-// Role `agents` is the agents list (agents.js) and `spaces` the Spaces list (spaces.js), which keep state of their own; `version`, `pins` and `board` have their own
+// Role `agents` is the agents list (agents.js) and `spaces` the Spaces list (spaces.js), which keep state of their own; `version` and `board` have their own
 // branches here. Each of the roles below takes what it needs from the same bag.
 const roles = {
-  pinbar: (board, x) => pinbar(board, x.pin.ui(board, x.cx)),
   strip: (board, x) => strip(board, { ...x.strip, card: x.card, cx: x.cx }),
   sheet: (_board, x) => sheetBlock(x.strip.boards, x.sheet, x.cx),
 }
@@ -68,20 +66,6 @@ export default class HerdrAgents extends View {
       this.watchAges(cx) // the merge ages of its rows
       return
     }
-    if (props()?.role === 'pins') {
-      // The drop panel and the popover get their pins in props(), so the first draw has its content; their one board is
-      // watched only so a pin resolved meanwhile leaves. `gone` are the pins Done here, hidden at once.
-      this.gone = new Set()
-      this.popup = makePopupState(cx)
-      this.watchAges(cx)
-      this.drawnChanged() // the props' list is what the first draw shows
-      this.boards.startOne(cx, props().session, null, cx => {
-        if (!this.drawnChanged()) return
-        if (pinsOverlayEmpty(props(), this.pinsBoard(), this.gone)) closePinsOverlay()
-        else cx.notify()
-      })
-      return
-    }
     if (props()?.role === 'board') {
       this.popup = makePopupState(cx)
       // The pop-up shows the board the strip picked (props().session), so it needs no focus logic of its own.
@@ -91,24 +75,25 @@ export default class HerdrAgents extends View {
       return
     }
     this.last = null
-    this.pin = new PinCtl()
-    const pinbarCopy = props()?.role === 'pinbar'
-    if (pinbarCopy) this.pin.outbox.release() // what the last pin bar copy queued and never sent would go out stale
+    // The strip's copy is the one always in the window (the coordinator layout has it and nothing else drops it), so it does what
+    // the pin bar's copy used to do besides drawing: the heartbeat (one writer per window), the pin outbox, the start-of-run
+    // clean-up and the report of a part that fails to draw.
+    const host = props()?.role === 'strip'
+    this.pin = host ? new PinCtl() : null
+    if (host) this.pin.outbox.release() // what the last copy queued and never sent would go out stale
     // Once per app run: overlays stay open across a layout switch, and a Done asked for on `main` waits for this copy.
-    if (pinbarCopy && firstThisRun('hrd.pinbarStarted')) {
+    if (host && firstThisRun('hrd.pinbarStarted')) {
       clearStaleOverlays(shared, setShared)
       clearDrawFailed(shared, setShared) // a card that failed last run may not draw again to clear it
     }
     // The card (drawn by the strip's copy) and the sheet settle their Outbox here, or a failed send would never show.
-    this.card = props()?.role === 'strip' ? makeCardState(cx) : null
+    this.card = host ? makeCardState(cx) : null
     this.sheet = props()?.role === 'sheet' ? makeSheetState(cx) : null
     // The strip keeps arrival times and the owner's seen tabs, and listens for ctrl-cmd-1..6.
-    this.part = props()?.role === 'strip' ? new StripState() : null
-    this.beating = pinbarCopy
+    this.part = host ? new StripState() : null
+    this.beating = host
     this.boards.start(cx, cx => {
-      onBoardsChanged({ pinbar: pinbarCopy, pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx, () =>
-        this.drawnChanged(),
-      )
+      onBoardsChanged({ pin: this.pin, card: this.card ?? this.sheet, strip: this.part }, this.boards.list(), cx, () => this.drawnChanged())
       this.part?.onBoardsRead(cx, () => resolveBoard(this.boards.list(), terminals(), focused(), this.last).board)
       // The first read says which coordinators are live: tell the plugin now, not 30 s later.
       if (this.beating && !this.started) {
@@ -116,10 +101,9 @@ export default class HerdrAgents extends View {
         this.beat(cx)
       }
     })
-    // A data timer, no cx.notify: it must not redraw the window. One writer per window: the pin bar copy only.
-    if (pinbarCopy) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
+    // A data timer, no cx.notify: it must not redraw the window. One writer per window: the strip's copy only.
+    if (host) cx.timer.every(HEARTBEAT_MS, cx => this.beat(cx))
     this.part?.listen(cx)
-    if (pinbarCopy) this.pin.listen(cx)
     this.watchAges(cx) // the strip's card shows an age
   }
 
@@ -145,16 +129,8 @@ export default class HerdrAgents extends View {
     return agedTimes(role, {
       boards: this.boards.list(),
       open: role === 'strip' ? shared('hrd.open') : role === 'sheet' ? shared('hrd.sheet') : null,
-      pinAt: this.pin?.shownAt,
-      pins: role === 'pins' ? { ...props(), list: stillOpen(props().list ?? [], this.pinsBoard()) } : null,
-      gone: this.gone,
       session: props()?.session,
     })
-  }
-
-  /** The board a pins overlay was opened on, once read. */
-  pinsBoard() {
-    return this.boards.list().find(b => b.session === props()?.session)
   }
 
   /** What was just drawn is what the next tick compares with. */
@@ -166,7 +142,7 @@ export default class HerdrAgents extends View {
   /** Whether what this copy draws from the boards changed since it last asked. */
   drawnChanged() {
     const role = props()?.role
-    const open = role === 'sheet' ? shared('hrd.sheet') : role === 'pins' ? props()?.list : null
+    const open = role === 'sheet' ? shared('hrd.sheet') : null
     const key = drawnKey(role, this.boards.list(), props()?.session, open)
     if (key === this.drawn) return false
     this.drawn = key
@@ -193,7 +169,7 @@ export default class HerdrAgents extends View {
     })
   }
 
-  /** The pin bar copy tells the plugin at once when a part starts or stops failing, not at the next 30 s beat. */
+  /** The strip's copy tells the plugin at once when a part starts or stops failing, not at the next 30 s beat. */
   beatOnChange(cx) {
     if (!this.beating) return
     const failed = anyDrawFailed(shared)
@@ -220,7 +196,6 @@ export default class HerdrAgents extends View {
       this.last = found.pick
       return this.drewAges(panelFor(found.board, focused(), Date.now(), this.panelUi))
     }
-    if (props()?.role === 'pins') return this.drewAges(pinsView(this.gone, this.popup, this.pinsBoard()))
     if (props()?.role === 'board' && props()?.float)
       return this.drewAges(
         floatView(

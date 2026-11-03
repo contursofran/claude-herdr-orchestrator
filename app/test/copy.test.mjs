@@ -8,7 +8,6 @@ const { COPIED_MS, CopyState, commandsIn, copyKey, copyTargets, pinMarkdown } = 
 const { card } = await import('../mods/herdr-agents/card.js')
 const { CardState } = await import('../mods/herdr-agents/cardstate.js')
 const { SheetState, sheetBlock } = await import('../mods/herdr-agents/sheet.js')
-const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
 const { cardHint, cardKeyAction, panelHeight } = await import('../mods/herdr-agents/model.js')
 const { sheetHint, sheetKeyAction, sheetMore } = await import('../mods/herdr-agents/sheetmodel.js')
 
@@ -219,21 +218,6 @@ test('sheet: the pin text gets the same part; a RESULT.md or excerpt stays plain
   assert.equal(cx.copied.length, 2)
 })
 
-test('pin panel: Copy and c copy; the list of all pins has no copy key', () => {
-  const list = [{ id: 's:K1', key: 'K1', title: 't', text: 'Run `npm ci`', at: 1 }]
-  app.props = { view: 'panel', session: 's', id: 's:K1', list, width: 900, height: 200, overlay: 'o1' }
-  const ctl = { h: {}, copy: new CopyState(), leaving: false }
-  const root = pinsView(new Set(), ctl)
-  const cx = fakeCx()
-  press(root, 'pin-copy-0', cx)
-  keyOn(root, 'pins-overlay', 'c', cx)
-  assert.deepEqual(cx.copied, ['npm ci', 'npm ci'])
-  assert.deepEqual(app.closed.filter(Boolean), [], 'nothing closes')
-  app.props = { ...app.props, view: 'all' }
-  keyOn(pinsView(new Set(), ctl), 'pins-overlay', 'c', cx)
-  assert.equal(cx.copied.length, 2)
-})
-
 test('pin_for_owner tells the agent to put a command in backticks, with no new field', () => {
   const src = readFileSync(new URL('../../hooks/tools.ts', import.meta.url), 'utf8')
   assert.match(src, /Put a command to run in backticks/)
@@ -322,18 +306,4 @@ test('card: a pin with no text still closes on c', () => {
   keyOn(root, 'card-body', 'c', cx)
   assert.deepEqual(cx.copied, [])
   assert.equal(app.store['hrd.open'], null)
-})
-
-test('pin panel: the hint says c copies; a held c copies nothing and closes nothing', () => {
-  const list = [{ id: 's:K1', key: 'K1', title: 't', text: 'Run `npm ci`', at: 1 }]
-  app.props = { ...ARGS, view: 'panel', list }
-  const ctl = { h: {}, copy: new CopyState(), leaving: false }
-  const root = pinsView(new Set(), ctl)
-  assert.match(textOf(findId(root, 'pin-context')).join(' '), /c copies/)
-  const cx = fakeCx()
-  findId(root, 'pins-overlay').node.calls.on_key_down[0]({ keystroke: 'c', is_held: true }, cx)
-  assert.deepEqual(cx.copied, [])
-  assert.deepEqual(app.closed.filter(Boolean), [])
-  app.props = { ...ARGS, view: 'panel', list: [{ ...list[0], text: '' }] }
-  assert.doesNotMatch(textOf(findId(pinsView(new Set(), ctl), 'pin-context')).join(' '), /c copies/)
 })

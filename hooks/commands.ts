@@ -144,7 +144,7 @@ async function help($: EngineInterface) {
       ]),
       '',
       'What needs you',
-      '  In the Herdr app: the pin bar, the strip and the board. Without it, one line above the prompt says what waits; reply in chat.',
+      '  In the Herdr app: the strip and the board. Without it, one line above the prompt says what waits; reply in chat.',
       '',
       'Profiles (spawn takes one)',
       ...profileRows('Built in', BUILT_IN),

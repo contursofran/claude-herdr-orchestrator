@@ -21,11 +21,11 @@ export const SHEET_MIN_H = 220
 export const SHEET_LEAST_H = 100
 // Under this width the header has no room for the meta: the id, the title's start, the pager and esc stay.
 export const SHEET_META_W = 420
-// The rows around the terminal (tabs, pin bar, strip, status bar) and a prompt's worth of room that stay visible.
-const SHEET_CLEAR = 42 + 38 + 34 + 28 + 118
+// The rows around the terminal (tabs, strip, status bar) and a prompt's worth of room that stay visible.
+const SHEET_CLEAR = 42 + 34 + 28 + 118
 // The most it can have: the app cuts a floating block off at the bottom of the main block (those rows, the block's margins
 // and the frame's, as measured at zoom 1 and 1.2). A short window gives up the prompt first, so options stay in reach.
-const SHEET_ROWS = 42 + 38 + 34 + 28 + 40
+const SHEET_ROWS = 42 + 34 + 28 + 40
 
 /**
  * The sheet's size from the window `viewport` ({width, height}): up to SHEET_W by SHEET_MAX_H, narrower when the window

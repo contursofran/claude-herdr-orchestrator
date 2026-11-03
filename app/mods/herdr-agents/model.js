@@ -370,10 +370,9 @@ export function interruptTarget(boards, terminals, address) {
 /** How often a copy that draws ages looks at them. */
 export const AGE_TICK_MS = 60_000
 
-/** The times behind the ages a copy has on screen; [] when it shows none (a closed card or sheet, no pin, other roles).
- *   boards  every board read       session  the pop-up's board       open  hrd.open or hrd.sheet, for the card and the sheet
- *   pinAt   the pin bar's current pin's time       pins  props() of a pins copy       gone  the pins it has hidden */
-export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set(), session = null } = {}) {
+/** The times behind the ages a copy has on screen; [] when it shows none (a closed card or sheet, other roles).
+ *   boards  every board read       session  the pop-up's board       open  hrd.open or hrd.sheet, for the card and the sheet */
+export function agedTimes(role, { boards = [], open = null, session = null } = {}) {
   const known = at => (at ? [at] : [])
   // The clocks of a board's agents, which move on their own, and of its merged rows.
   const liveTimes = b => [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
@@ -384,11 +383,6 @@ export function agedTimes(role, { boards = [], open = null, pinAt = null, pins =
   }
   // The right panel: every board, since which it shows follows focus.
   if (role === 'panel') return boards.flatMap(b => [...mergeTimes(b), ...liveTimes(b)])
-  if (role === 'pinbar') return known(pinAt)
-  if (role === 'pins') {
-    const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
-    return (pins?.view === 'panel' ? list.filter(p => p.id === pins.id) : list).flatMap(p => known(p.at))
-  }
   if ((role === 'strip' || role === 'sheet') && open) {
     const board = boards.find(b => b.session === open.session)
     // The sheet stays on an answered item until the owner closes it; the card only draws open ones.
