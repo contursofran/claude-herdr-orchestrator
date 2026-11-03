@@ -3,6 +3,7 @@
 Run: python3 -m unittest discover -s tests -p 'test_*.py'
 """
 
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import json
 import os
 import shutil
