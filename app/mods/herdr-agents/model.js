@@ -1012,6 +1012,30 @@ export function workRows(board) {
     }))
 }
 
+/** The board's Next list as rows the panel draws like its work rows: the issue's link, its plan mark, and `ready`, the first one
+ *  `ready · next in line`. [] for a board without one (an older plugin). */
+export function nextRows(board) {
+  return (Array.isArray(board?.next) ? board.next : [])
+    .filter(x => x && typeof x === 'object' && Number.isInteger(x.issue) && typeof x.title === 'string')
+    .map((x, i) => ({
+      key: `next-${x.key ?? x.issue}`,
+      label: '',
+      title: x.title,
+      who: { text: i === 0 ? 'ready · next in line' : 'ready', kind: 'dim' },
+      stages: [x.planned === true ? 'done' : null, null, null, null, null],
+      item: null,
+      tab: null,
+      workers: [],
+      now: '',
+      link: typeof x.url === 'string' && /^https?:\/\//.test(x.url) ? { text: `issue #${x.issue}`, url: x.url, onLabel: false } : null,
+      isMerged: false,
+      isFinished: false,
+      mergedAt: null,
+      conflictsWith: null,
+      shares: '',
+    }))
+}
+
 /** `touches pin-panel.ts like #215`, from a task's `shares`; `+2` for further files, and every PR they are shared with. '' when none. */
 function sharesText(shares) {
   const list = (Array.isArray(shares) ? shares : []).filter(s => Number.isInteger(s?.pr) && typeof s?.file === 'string' && s.file)
