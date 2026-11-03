@@ -11,6 +11,7 @@ import {
   INLINE_LINES,
   LOST_REPORT_MS,
   MESSAGE_CHARS,
+  MESSAGE_WAIT_MS,
   NAME,
   PROMPT_CHECK_MS,
   PROMPT_TRIES,
@@ -966,10 +967,24 @@ async function postWorkTime($: EngineInterface, job: Job, prs: number[]) {
 // session.start: each running worker gets its watch back, since a reload killed the children.
 export function resumeWatching($: EngineInterface, list: Job[]) {
   for (const job of list) {
+    if (job.sending?.length) void reportUnsent($, job)
     if (job.status === 'starting') void serial(job.name, () => startFailed($, job, new Error('the mod reloaded while it started')))
     else if (job.status === 'running') arm($, job, 'finish')
     else if (job.tail) arm($, job, job.tail === 'blocked' ? 'resume' : 'finish')
   }
+}
+
+// After a reload the send of a queued message is gone: the coordinator is told which ones may not have gone in.
+async function reportUnsent($: EngineInterface, job: Job) {
+  const { before } = await updateJob($, job.name, j => (j.sending?.length ? { ...j, sending: undefined } : undefined))
+  const lost = before?.sending ?? []
+  if (lost.length)
+    await post(
+      $,
+      `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\n[The mod reloaded while ${lost.length} message(s) you queued for it were being sent, so they may not have gone in: ${lost.join(', ')}.]\n</herdr-agent>`,
+      true,
+      { worker: job.name },
+    )
 }
 
 export type SpawnArgs = { worker: string; profile: string; task: string; cwd?: string; repo?: string; branch?: string; base?: string }
@@ -1249,7 +1264,7 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   }
   const heldResult = { result: `${e.worker} (${kind}) is mid-task, so the message is held and sent the moment it reports.` }
   // An interrupted worker has no turn to fold a message into: it goes in as a new prompt, below.
-  if (job.status === 'running' && !job.interrupted) {
+  if (job.status === 'running' && !job.interrupted && !job.sending?.length) {
     // Mid-task: Claude queues typed input for its next step, so it goes in now;
     // other CLIs get it the moment they report.
     if (kind === 'claude') {
@@ -1264,9 +1279,19 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
   // for that task resent, did not open it and asked its DECISION lines again.
   // In the job's own step, so it cannot land between a report and the prompt that follows it.
   let result: { result: string } | { deny: string } | undefined
-  await serial(job.name, async () => {
+  // Recorded on the job until the send ends, so a later message queues behind it and a reload can name it.
+  await updateJob($, job.name, j => ({ ...j, sending: [...(j.sending ?? []), path] }))
+  let queuedReply = false
+  let dropped = false
+  const step = serial(job.name, async () => {
     const latest = await latestJob($, job.name)
     if (!latest) return
+    // Stopped or closed while it waited: the message is not sent. Stop named it in its answer, so no notice follows.
+    if (latest.stopped || latest.closed) {
+      result = { deny: `${e.worker} was stopped` }
+      dropped = true
+      return
+    }
     if (latest.status === 'running' && !latest.interrupted) {
       // deliver just sent its queued messages: this one waits for that turn.
       if (kind === 'claude') {
@@ -1310,6 +1335,23 @@ export async function messageWorker($: EngineInterface, e: { worker: string; tex
     )
     result = { result: `Sent to ${e.worker}. Its next report will arrive as a <herdr-agent> message.` }
   })
+  // A send that outlasts MESSAGE_WAIT_MS goes on in its step; the call answers now. If the step then ends without
+  // sending, the coordinator hears of it (a prompt that is lost is reported by prompt itself).
+  const finished = step.then(async () => {
+    await updateJob($, job.name, j => ({ ...j, sending: (j.sending ?? []).filter(p => p !== path) }))
+    if (queuedReply && !dropped && (!result || 'deny' in result))
+      await post(
+        $,
+        `<herdr-agent name="${job.name}" profile="${job.profile}" status="blocked">\n[The message you queued for it was not sent (${result && 'deny' in result ? result.deny : 'it could not be sent'}): ${path}.]\n</herdr-agent>`,
+        true,
+        { worker: job.name },
+      )
+  })
+  const wait = $.clock.sleep(MESSAGE_WAIT_MS).then(() => false)
+  if (!(await Promise.race([finished.then(() => true), wait]))) {
+    queuedReply = true
+    return { result: `Queued for ${e.worker}: its send is slow. The message is sent in order; if it cannot be sent you are told.` }
+  }
   return result ?? { deny: `could not send to ${e.worker}; try again` }
 }
 
@@ -1410,13 +1452,18 @@ export async function stopWorker($: EngineInterface, e: { worker: string }) {
         .map(i => (i.token ? `${job.dir}/RESULT-${i.token}.md` : 'one without a RESULT file'))
         .join(', ')}.`
     : ''
+  // A message still being sent when it stopped is named, as its send may not have gone in.
+  const unsent = (await latestJob($, job.name))?.sending ?? []
+  const lostSending = unsent.length
+    ? ` ${unsent.length} queued message(s) were still being sent and will not be sent: ${unsent.join(', ')}.`
+    : ''
   try {
     await closeTerminal($, job.name)
   } catch (err) {
-    return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}.${lost}` }
+    return { result: `Marked ${e.worker} stopped; closing its tab failed: ${err}.${lost}${lostSending}` }
   }
   await patchJob($, job.name, { closed: true })
-  return { result: `Stopped ${e.worker} and closed its tab.${lost}${await belowTarget($)}` }
+  return { result: `Stopped ${e.worker} and closed its tab.${lost}${lostSending}${await belowTarget($)}` }
 }
 
 // A reported worker keeps its tab, and its CLI, for follow-ups, so finished workers
