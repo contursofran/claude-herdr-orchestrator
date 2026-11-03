@@ -288,6 +288,11 @@ EOF
     board.coordinator.terminal = address
     fs.writeFileSync(`${folder}/${board.session}.json`, JSON.stringify(board))
   ' "$fixture" "$dir/home/.herdr-agents/board" "$address"
+  # The app attaches the pane a moment after the terminal exists ("no such pane" on a slow runner): retry.
+  for ((i = 0; i < call_timeout * 5; i++)); do
+    call herdr-app do pane.focus --terminal "$address" >/dev/null 2>&1 && break
+    sleep 0.2
+  done
   call herdr-app do pane.focus --terminal "$address" >/dev/null
   echo "Coordinator at $address."
 }
