@@ -116,4 +116,4 @@ export const REPORTS_DIR = '.herdr-agents/reports'
 
 // The repo is public: anyone can open an issue, a PR or a comment. What someone other than the owner wrote waits for the owner's approval.
 export const OUTSIDE_AUTHOR_CHECK =
-  "the author's login (`gh issue view N --json author --jq .author.login`, or `gh pr view N --json author`; for a comment, `gh api repos/OWNER/REPO/issues/comments/ID --jq .user.login`) against the owner's (`gh api user --jq .login`)"
+  "the author's login (`gh issue view N --json author --jq .author.login`, or `gh pr view N --json author`; for a comment, `gh api repos/{owner}/{repo}/issues/comments/ID --jq .user.login`) against the owner's (`gh api user --jq .login`)"
