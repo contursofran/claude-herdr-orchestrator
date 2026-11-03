@@ -45,7 +45,7 @@ import { closePins, closePopupOverlay } from './pinsctl.js'
 import { color, font, icon, row, strip as look } from './tokens.js'
 
 /** What a tab's icon is: a chip-coloured glyph on a text-coloured disc (decide), outline (do) or a filled octagon (blocked). */
-function tabIcon(kind, fg) {
+function tabIcon(kind, fg, inverted) {
   if (kind === 'ask') {
     return div()
       .size(12)
@@ -60,17 +60,17 @@ function tabIcon(kind, fg) {
   return svg(icon(kind === 'blocked' ? 'blocked' : 'do'))
     .size(12)
     .flex_none()
-    .text_color(kind === 'blocked' ? color.text : fg)
+    .text_color(kind === 'blocked' && !inverted ? color.text : fg)
 }
 
 /** The inside of a tab: icon, bold id, short label. Drawn twice for a flashing tab (the second copy inverted). */
-function tabBody(item, fg) {
+function tabBody(item, fg, inverted = false) {
   return div()
     .flex()
     .items_center()
     .gap(7)
     .text_color(fg)
-    .child(tabIcon(item.kind, fg))
+    .child(tabIcon(item.kind, fg, inverted))
     .child(div().font_bold().flex_none().child(item.id))
     .child(div().max_w(110).truncate().child(item.label))
 }
@@ -312,7 +312,7 @@ function tab(item, board, state, now) {
       .bg(look.flash.bg)
       .opacity(0)
       .loop('opacity', { from: 0, to: 1, period: look.flash.period })
-      .child(tabBody(item, look.flash.text)),
+      .child(tabBody(item, look.flash.text, true)),
   )
 }
 
