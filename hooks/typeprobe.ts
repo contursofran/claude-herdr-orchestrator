@@ -1,1 +1,1 @@
-export const typeProbe: number = "not a number";
+export const typeProbe: number = 'not a number'
