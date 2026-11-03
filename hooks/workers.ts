@@ -1135,7 +1135,13 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
     // The sandbox resets TMPDIR for a Claude session's Bash, but sources CLAUDE_ENV_FILE before each command, so the job tmp
     // is exported there. No hook rewrites a tool call, which auto mode would refuse (#340).
     const pin = p.kind === 'claude' ? ([['CLAUDE_ENV_FILE', `${dir}/env.sh`]] as [string, string][]) : []
-    if (pin.length) await $.fs.write(pin[0][1], `export TMPDIR='${tmp.replace(/'/g, `'\\''`)}'\n`)
+    if (pin.length) {
+      // A CLAUDE_ENV_FILE already set (profile env, else this session's) is sourced first, so the worker keeps it.
+      const sq = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`
+      const prior = p.env?.CLAUDE_ENV_FILE ?? (await $.env.get('CLAUDE_ENV_FILE')) ?? ''
+      const chain = prior ? `[ -f ${sq(prior)} ] && . ${sq(prior)}\n` : ''
+      await $.fs.write(pin[0][1], `${chain}export TMPDIR=${sq(tmp)}\n`)
+    }
     // These come last, so a profile's env cannot drop them. A worker's own session
     // reads the role (see session.start).
     const env: [string, string][] = [

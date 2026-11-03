@@ -387,6 +387,25 @@ test('a claude worker exports its job tmp through CLAUDE_ENV_FILE; codex and ope
   await stopAll($, clock, ['w-env'])
 })
 
+const chained = "[ -f '/me/it'\\''s/env.sh' ] && . '/me/it'\\''s/env.sh'\nexport TMPDIR='/repo/wt/.herdr-agents/w-env/tmp'\n"
+test("a profile's CLAUDE_ENV_FILE is sourced first by the job's env.sh, quoted", async ($, on) => {
+  const { clock, files } = await start($, on, {
+    profiles: { c: { kind: 'claude', args: [], env: { CLAUDE_ENV_FILE: "/me/it's/env.sh" } } },
+  })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'c', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(files['/repo/wt/.herdr-agents/w-env/env.sh']).toBe(chained)
+  await stopAll($, clock, ['w-env'])
+})
+
+test("the parent session's CLAUDE_ENV_FILE is sourced first by the job's env.sh", async ($, on) => {
+  const { clock, files } = await start($, on, { profiles: { c: { kind: 'claude', args: [] } } }, {}, { CLAUDE_ENV_FILE: "/me/it's/env.sh" })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'c', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(files['/repo/wt/.herdr-agents/w-env/env.sh']).toBe(chained)
+  await stopAll($, clock, ['w-env'])
+})
+
 test('a codex worker gets no CLAUDE_ENV_FILE', async ($, on) => {
   const { clock, calls, files } = await start($, on, { profiles: { x: { kind: 'codex', args: [] } } })
   await spawnX($)
