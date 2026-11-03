@@ -1,3 +1,4 @@
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import re
 import unittest
 from pathlib import Path

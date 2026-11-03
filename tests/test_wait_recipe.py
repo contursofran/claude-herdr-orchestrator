@@ -1,5 +1,6 @@
 """The CI recipe the report rule gives for WAIT.json, run with a fake gh and the same jq filter."""
 
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import json
 import os
 import re
