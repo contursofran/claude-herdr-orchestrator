@@ -4,7 +4,7 @@ import { findId, textOf } from './fake-gpui.mjs'
 
 const { contextLine } = await import('../mods/herdr-agents/model.js')
 const { strip } = await import('../mods/herdr-agents/strip.js')
-const { strip: look } = await import('../mods/herdr-agents/tokens.js')
+const { color, strip: look } = await import('../mods/herdr-agents/tokens.js')
 
 const board = context => ({ session: 's', summary: { context } })
 const draw = context => strip(board(context), { boards: [], terminals: [] })
@@ -61,4 +61,17 @@ test('the strip draws nothing for it without data, and no empty child', () => {
 test('the line names the folder of the session it belongs to (#272)', () => {
   const b = { session: 's', cwd: '/Users/me/code/aerum', summary: { context: { tokens: 145_400, limit: 250_000 } } }
   assert.deepEqual(contextLine(b), { text: 'ctx 145k / 250k · aerum', level: null })
+})
+
+test('the blocked icon stays visible on the inverted copy of a flashing tab (#246)', () => {
+  const b = { session: 's', workers: [{ name: 'w1', state: 'blocked', note: 'stuck' }] }
+  const el = strip(b, { boards: [], terminals: [], part: { known: { 's:w:w1': Date.now() } } })
+  const tab = findId(el, 'tab-w:w1')
+  const icons = el =>
+    typeof el !== 'object' ? [] : [...(el.node.init.length && el.node.calls.size ? [el] : []), ...el.node.kids.flatMap(icons)]
+  const iconColours = icons(tab).map(i => i.node.calls.text_color[0])
+  assert.equal(iconColours.length, 2)
+  assert.equal(iconColours[0], color.text)
+  assert.equal(iconColours[1], look.flash.text)
+  assert.notEqual(iconColours[1], look.flash.bg)
 })
