@@ -105,6 +105,23 @@
           "mergedAt": {
             "type": ["integer", "null"],
             "description": "When the PR merged, in ms since the epoch; null or absent when unknown (older boards)."
+          },
+          "conflictsWith": {
+            "type": ["string", "null"],
+            "description": "The base branch an open PR conflicts with; null or absent when it doesn't or nobody knows (older boards)."
+          },
+          "shares": {
+            "type": "array",
+            "description": "The other open PRs on this board that change the same files, lockfiles aside; absent on older boards.",
+            "items": {
+              "type": "object",
+              "required": ["pr", "file", "count"],
+              "properties": {
+                "pr": { "type": "integer" },
+                "file": { "type": "string", "description": "The first path they share." },
+                "count": { "type": "integer", "description": "How many paths they share." }
+              }
+            }
           }
         }
       }

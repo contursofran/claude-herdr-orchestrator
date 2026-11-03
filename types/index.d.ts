@@ -130,8 +130,16 @@ export type Board = { now: number; rows: Row[]; context?: { tokens: number; limi
 // `title` is its short name, `text` the question or the to-do in full.
 export type BoardItem = { key: string; kind: 'ask' | 'do' | 'know'; title: string; text: string; from: string; at: number }
 
-// A PR's GitHub state as last read: `ci` sums its checks.
-export type Pr = { state: 'OPEN' | 'MERGED' | 'CLOSED'; ci: 'pass' | 'fail' | 'pending' | 'none'; at: number; mergedAt?: number | null }
+// A PR's GitHub state as last read: `ci` sums its checks. An open one also has whether it conflicts with `base`, and the files it changes.
+export type Pr = {
+  state: 'OPEN' | 'MERGED' | 'CLOSED'
+  ci: 'pass' | 'fail' | 'pending' | 'none'
+  at: number
+  mergedAt?: number | null
+  conflict?: boolean
+  base?: string
+  files?: string[]
+}
 
 // The board's own state (boarddata.ts). `items` are in arrival order and only Clear done removes
 // them. `answers` holds what the person answered; `cleared` the tasks Clear done removed, with

@@ -1007,7 +1007,17 @@ export function workRows(board) {
       isMerged: t.isMerged === true,
       isFinished: t.isFinished === true,
       mergedAt: Number.isFinite(t.mergedAt) && t.mergedAt > 0 ? t.mergedAt : null,
+      conflictsWith: typeof t.conflictsWith === 'string' && t.conflictsWith ? t.conflictsWith : null,
+      shares: sharesText(t.shares),
     }))
+}
+
+/** `touches pin-panel.ts like #215`, from a task's `shares`; `+2` for further files, and every PR they are shared with. '' when none. */
+function sharesText(shares) {
+  const list = (Array.isArray(shares) ? shares : []).filter(s => Number.isInteger(s?.pr) && typeof s?.file === 'string' && s.file)
+  if (!list.length) return ''
+  const more = list[0].count > 1 ? ` +${list[0].count - 1}` : ''
+  return `touches ${list[0].file.split('/').pop()}${more} like ${list.map(s => `#${s.pr}`).join(', ')}`
 }
 
 /** The row's PR link: its number and where it opens, only for a task that has a PR and a web address for it.
