@@ -506,6 +506,30 @@ test('a running job in the store is watched again after a reload', async ($, on)
   await stopAll($, clock, ['w-run'])
 })
 
+test('a mid-task message whose hc send times out is reported as possibly delivered, and typed once', async ($, on) => {
+  const { clock, sends, slowSend } = await start($, on)
+  await $.tool.call(spawnArgs)
+  await settled()
+  slowSend.add('w-hc')
+  const r = await $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-hc', text: 'Use option B.' })
+  expect(r.deny).toBeUndefined()
+  expect(JSON.stringify(r)).toMatch(/may still arrive/)
+  expect(JSON.stringify(r)).not.toMatch(/could not type/)
+  expect(sends.filter(x => x.text.includes('extra message'))).toHaveLength(1)
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a plain screen read is given a 10 s timeout', async ($, on) => {
+  const { clock, readTimeouts } = await start($, on)
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(PROMPT_CHECK_MS)
+  expect(readTimeouts.length).toBeGreaterThan(0)
+  expect(readTimeouts).not.toContain(undefined)
+  expect(readTimeouts.every(t => t === 10_000 || t === 5000)).toBe(true)
+  await stopAll($, clock, ['w-hc'])
+})
+
 // A blocked worker is answered through hc's refusal: forced for a question, never for a permission.
 test('a message to a worker blocked at a question is sent with --force', async ($, on) => {
   const { clock, sends, status, blockedKind } = await start($, on)
