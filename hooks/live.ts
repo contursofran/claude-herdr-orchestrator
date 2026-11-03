@@ -108,22 +108,17 @@ export function liveFields(live: Live | null, now: number) {
 // This session's own, for a coordinator's row.
 export const ownLiveFields = (now: number) => liveFields(liveNow(), now)
 
-// A worker's, from the file it writes. No file, or one caught mid-write, shows no line until the next tick.
-export async function workerLiveFields($: EngineInterface, dir: string, now: number) {
+// A worker's, from the file it writes, read once: the live line (only while it works) and its context fill as a whole percent
+// (what the board shows, so it only rewrites when the number moves). No file, or one caught mid-write, shows nothing until the next tick.
+export async function workerLive($: EngineInterface, dir: string, now: number, working: boolean) {
+  let live: Live
   try {
-    return liveFields(JSON.parse(await $.fs.read(`${dir}/LIVE.json`)) as Live, now)
+    live = JSON.parse(await $.fs.read(`${dir}/LIVE.json`)) as Live
   } catch {
     return {}
   }
-}
-
-// A worker's context fill as a whole percent (what the board shows, so it only rewrites when the number moves), from the same file.
-export async function workerContext($: EngineInterface, dir: string) {
-  try {
-    const c = (JSON.parse(await $.fs.read(`${dir}/LIVE.json`)) as Live).context
-    if (!c || !(c.limit > 0) || !(c.tokens >= 0)) return {}
-    return { context: Math.min(100, Math.round((c.tokens / c.limit) * 100)) }
-  } catch {
-    return {}
-  }
+  // `?.`: a LIVE.json holding JSON null reads as null.
+  const c = live?.context
+  const context = c && c.limit > 0 && c.tokens >= 0 ? { context: Math.min(100, Math.round((c.tokens / c.limit) * 100)) } : {}
+  return { ...(working ? liveFields(live, now) : {}), ...context }
 }

@@ -13,7 +13,7 @@ import { ownLiveFields } from './live'
 import { sharedFiles } from './overlap'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { session } from './session'
-import { jobs } from './state'
+import { active, jobs } from './state'
 import { groupTasks, STAGES, type ItemRef, type Task } from './tasks'
 import { interruptWorker, stopWorker } from './workers'
 
@@ -160,19 +160,30 @@ function failureForBoard(f?: CiFailure) {
 
 // Each shown worker's branch against its default branch, kept in the state for the board. Like pollPrs, only while the app mod draws.
 let diffing = false
+// Workers whose last diff was read after they stopped; a worker that works again leaves the set.
+const finalDiffed = new Set<string>()
 export async function pollDiffs($: EngineInterface) {
   if (diffing || !(await appModShown($))) return
   diffing = true
   try {
     const { board } = await gather($)
     const all = await jobs($)
+    const kept = (await read($, state)).diffs ?? {}
     const got: NonNullable<BoardState['diffs']> = {}
     for (const r of board.rows) {
-      const cwd = all[r.name]?.cwd
-      const d = cwd ? await readDiff($, cwd).catch(() => null) : null
+      const job = all[r.name]
+      const k = kept[r.name]
+      if (job && active(job)) finalDiffed.delete(r.name)
+      // A worker that stopped (a blocked one counts as running again once answered) gets one last diff, for commits since the last poll; after that its branch no longer moves and it keeps that diff with no git calls.
+      else if (!job || finalDiffed.has(r.name)) {
+        if (k) got[r.name] = k
+        continue
+      } else finalDiffed.add(r.name)
+      const d = await readDiff($, job.cwd).catch(() => null)
       if (d) got[r.name] = d
+      else if (!active(job) && k) got[r.name] = k
     }
-    if (JSON.stringify(got) === JSON.stringify((await read($, state)).diffs ?? {})) return
+    if (JSON.stringify(got) === JSON.stringify(kept)) return
     await update($, state, s => ({ ...s, diffs: got }))
   } finally {
     diffing = false
