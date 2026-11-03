@@ -1,5 +1,5 @@
 import { expect } from 'claude-code/testing'
-import { settled, start, stopAll, test, until } from './harness'
+import { settled, start, stopAll, test } from './harness'
 
 // The board's Next list (#278): the coordinator's Ready list through set_next, in order, until a worker starts on an issue.
 
@@ -17,7 +17,7 @@ test('the list goes on the board in order, with links in the folder repo, and le
     { issue: '#218', title: 'Said twice' },
   ])
   expect(said(out)).toContain('acme/app-client#218, acme/app-server#4')
-  await until(clock, () => next()?.length === 2)
+  await clock.advance(3000) // the board is rewritten at the next refresh
   expect(next()).toEqual([
     {
       key: 'acme/app-client#218',
@@ -41,11 +41,11 @@ test('the list goes on the board in order, with links in the folder repo, and le
 
   await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'b-218', profile: 'builder', cwd: '/repo', task: '# Build #218: PR links' })
   await settled()
-  await until(clock, () => next()?.length === 1)
+  await clock.advance(3000) // the board is rewritten at the next refresh
   expect(next().map(x => x.key)).toEqual(['acme/app-server#4'])
 
   expect(said(await setNext($, []))).toContain('Cleared')
-  await until(clock, () => next()?.length === 0)
+  await clock.advance(3000) // the board is rewritten at the next refresh
   expect(next()).toEqual([])
   await stopAll($, clock, ['b-218'])
 })
@@ -64,7 +64,6 @@ test('a bad item, or more than the next few, is refused and leaves the list as i
     ),
   ).toContain('at most 10')
   expect(said(await setNext($, undefined))).toContain('items must be a list')
-  await clock.advance(3000)
-  await until(clock, () => JSON.parse(files[BOARD] ?? '{}').next?.length === 1)
+  await clock.advance(3000) // the board is rewritten at the next refresh
   expect(JSON.parse(files[BOARD] ?? '{}').next.map((x: { issue: number }) => x.issue)).toEqual([1])
 })
