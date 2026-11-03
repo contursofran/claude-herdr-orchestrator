@@ -18,6 +18,8 @@
       "description": "Optional, so older boards stay valid.",
       "properties": {
         "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." },
+        "pane": { "type": "string", "description": "Optional. The coordinator's herdr pane id (HERDR_PANE_ID); absent when unknown." },
+        "model": { "type": "string", "description": "Optional. The coordinator's model; absent until the app or a hook supplies it." },
         "orchestrating": {
           "type": "boolean",
           "description": "True once /hrd-orchestrate ran in this session (it starts workers), false while it works on its own; /hrd-wrap-up does not clear it. Missing on older boards: unknown."
@@ -78,6 +80,10 @@
           },
           "worktree": { "type": "string", "description": "Optional. The folder it works in." },
           "branch": { "type": "string", "description": "Optional. The git branch checked out there when it started." },
+          "pane": {
+            "type": "string",
+            "description": "Optional. The herdr pane id of its terminal, as hc's spawn reply gave it; absent when hc gave none."
+          },
           "command": {
             "type": ["string", "null"],
             "description": "Optional, like the next two, and only on a working worker that runs this mod, mid-turn. The tool it has been running for 15 s or more: `npm test`."

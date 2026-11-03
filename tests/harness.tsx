@@ -428,7 +428,15 @@ export async function start(
         const made = addTerm(wanted, flags['--cwd']?.[0] ?? '', labels, rest)
         status[wanted] = 'idle'
         gone.delete(wanted)
-        return ok({ address: made.address, agent: rest.at(-1), cwd: made.cwd, name: wanted, state: 'live', turn: 0 })
+        return ok({
+          address: made.address,
+          pane: `p-${made.address}`,
+          agent: rest.at(-1),
+          cwd: made.cwd,
+          name: wanted,
+          state: 'live',
+          turn: 0,
+        })
       }
       if (sub === 'ls') {
         if (fail.list > 0) {
