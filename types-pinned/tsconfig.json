@@ -18,8 +18,7 @@
     ],
     "types": [
       "claude-code",
-      "claude-code-tools",
-      "claude-code-mcp"
+      "claude-code-tools"
     ]
   },
   "include": [

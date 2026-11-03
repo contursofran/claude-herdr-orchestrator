@@ -21,6 +21,13 @@ jobs:
           curl -fsSL https://claude.ai/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: npm run format:check
+      - name: Warn when the pinned types are stale
+        run: |
+          pinned=$(cat types-pinned/VERSION)
+          current=$(claude --version | awk '{print $1}')
+          if [ "$pinned" != "$current" ]; then
+            echo "::warning title=Pinned plugin types are stale::types-pinned/ came from Claude Code $pinned but CI installed $current. Refresh with scripts/types.sh --pin and commit."
+          fi
       - name: Typecheck against the pinned plugin API types
         run: scripts/types.sh --pinned && npm run typecheck
       - run: npm run validate

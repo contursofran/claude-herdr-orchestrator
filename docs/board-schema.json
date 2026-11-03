@@ -136,7 +136,10 @@
         "properties": {
           "key": { "type": "string" },
           "label": { "type": "string", "description": "#640" },
-          "title": { "type": "string" },
+          "title": {
+            "type": "string",
+            "description": "The row's issue or PR title on GitHub once read, else what the first worker's brief says the work is."
+          },
           "repo": { "type": ["string", "null"] },
           "pr": { "type": ["integer", "null"] },
           "url": { "type": ["string", "null"], "description": "The PR on GitHub, else the issue." },

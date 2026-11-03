@@ -109,6 +109,92 @@ test('nothing is decided before the strip is measured or with no focus', () => {
   assert.deepEqual(m.panelMove(null, board(), terms, 'closed', WIDE, last), { ...last, commands: [] })
 })
 
+// Herdr's top bar puts back each space's own panel right after a switch: the move waits for it.
+const at = (space, tab, terminal) => ({ space, tab, terminal })
+const settled = (focus, state, t) => {
+  const wait = m.panelMove(focus, board(), terms, state, WIDE, null, false, t)
+  return m.panelMove(focus, board(), terms, state, WIDE, wait, false, t + m.PANEL_SETTLE_MS)
+}
+
+test('arriving at an orchestrator in another space opens the board over the closed panel that space puts back', () => {
+  // The other space's tab shows its Files when the owner moves to the orchestrator's space, where the panel was closed.
+  const there = settled(at('X', 's', 't3'), 'files', 0)
+  const arrived = m.panelMove(at('Y', 'a', COORD), board(), terms, 'files', WIDE, there, false, 1000)
+  assert.deepEqual(arrived.commands, [], 'not on the panel the last space left showing')
+  assert.equal(arrived.until, 1000 + m.PANEL_SETTLE_MS)
+  const back = m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, arrived, false, 1050)
+  assert.deepEqual(back.commands, [], 'still waiting')
+  const due = m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, back, false, 1000 + m.PANEL_SETTLE_MS)
+  assert.deepEqual(due.commands, OPEN)
+  assert.equal(due.until, null)
+  assert.deepEqual(m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, due, false, 2000).commands, [], 'once')
+})
+
+test("a space's own Files stays, and its board needs no move", () => {
+  const there = settled(at('X', 's', 't3'), 'closed', 0)
+  for (const state of ['files', 'board']) {
+    const arrived = m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, there, false, 1000)
+    assert.deepEqual(m.panelMove(at('Y', 'a', COORD), board(), terms, state, WIDE, arrived, false, 1300).commands, [])
+  }
+})
+
+test('the first arrival waits too, and a tab switch in the same space moves at once', () => {
+  const first = m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, null, false, 0)
+  assert.deepEqual(first.commands, [])
+  const due = m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, first, false, m.PANEL_SETTLE_MS)
+  assert.deepEqual(due.commands, OPEN)
+  const back = [['layout.select', { stack: 'panel-body', child: 'changes' }]]
+  assert.deepEqual(m.panelMove(at('Y', 's', 't3'), board(), terms, 'board', WIDE, due, false, 1000).commands, back)
+})
+
+test("a tab switch while the space's panel is coming back keeps waiting for it", () => {
+  const there = settled(at('X', 's', 't3'), 'closed', 0)
+  const arrived = m.panelMove(at('Y', 's', 't3'), board(), terms, 'files', WIDE, there, false, 1000)
+  const moved = m.panelMove(at('Y', 'a', COORD), board(), terms, 'files', WIDE, arrived, false, 1010)
+  assert.deepEqual(moved.commands, [])
+  assert.equal(moved.until, 1000 + m.PANEL_SETTLE_MS)
+  assert.deepEqual(m.panelMove(at('Y', 'a', COORD), board(), terms, 'closed', WIDE, moved, false, 1300).commands, OPEN)
+})
+
+test('the strip draws once more when a waiting move is due, and then moves', async () => {
+  const { StripState } = await import('../mods/herdr-agents/strip.js')
+  const realNow = Date.now
+  let now = 5000
+  Date.now = () => now
+  try {
+    const timers = []
+    const cx = { spawn: f => timers.push(f), sleep: async ms => timers.push(ms), notify: () => (cx.notified = true) }
+    const root = hidden => ({ id: 'r', children: [{ id: 'panel', hidden, children: [{ id: 'panel-body', active: 'files' }] }] })
+    app.focused = at('Y', 'a', COORD)
+    app.layout = root(true)
+    app.terminals = terms
+    app.store['workspace.panels'] = ['files', 'changes', m.PANEL_CHILD]
+    app.ran.length = 0
+    const part = new StripState()
+    part.width = WIDE
+    part.followPanel(cx, board())
+    part.followPanel(cx, board())
+    assert.equal(timers.length, 1, 'one timer for both draws')
+    const task = timers.pop()
+    now += m.PANEL_SETTLE_MS
+    await task(cx)
+    assert.deepEqual(timers, [m.PANEL_SETTLE_MS])
+    assert.equal(cx.notified, true)
+    timers.length = 0
+    part.followPanel(cx, board())
+    assert.equal(timers.length, 1, 'the move runs after the draw')
+    await timers.pop()(cx)
+    assert.deepEqual(app.ran, OPEN)
+  } finally {
+    Date.now = realNow
+    app.focused = null
+    app.layout = null
+    app.terminals = []
+    app.store['workspace.panels'] = undefined
+    app.ran.length = 0
+  }
+})
+
 test("the panel's state comes from the layout", () => {
   const root = (hidden, active) => ({ id: 'r', children: [{ id: 'panel', hidden, children: [{ id: 'panel-body', active }] }] })
   assert.equal(m.panelState(root(false, 'hrd-panel')), 'board')

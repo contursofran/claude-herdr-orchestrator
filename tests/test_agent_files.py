@@ -1,3 +1,4 @@
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import os
 import unittest
 

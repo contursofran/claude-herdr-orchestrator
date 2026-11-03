@@ -5,3 +5,4 @@ node_modules/
 app/mods/herdr-agents/agents.js
 app/mods/herdr-agents/spaces.js
 types-pinned/
+.herdr-agents/

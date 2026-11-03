@@ -301,6 +301,7 @@ test("spawn runs the worker through the login shell, with HERDR_AGENTS_ROLE=work
     '/usr/bin/env',
     'A=1',
     'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
+    'CLAUDE_ENV_FILE=/repo/wt/.herdr-agents/w-env/env.sh',
     'HERDR_AGENTS_ROLE=worker',
     'HERDR_AGENTS_LIVE=/repo/wt/.herdr-agents/w-env/LIVE.json',
     'claude',
@@ -377,6 +378,41 @@ test('the report rule puts the repo and owner rules on attribution over a sessio
   expect(files['/repo/wt/.herdr-agents/w-env/REPORTING.md']).toContain(rule)
   await stopAll($, clock, ['w-env'])
 })
+test('a claude worker exports its job tmp through CLAUDE_ENV_FILE; codex and opencode get none', async ($, on) => {
+  const { clock, calls, files } = await start($, on, { profiles: { c: { kind: 'claude', args: [] }, x: { kind: 'codex', args: [] } } })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'c', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(calls.find(c => c[1] === 'run')).toContain('CLAUDE_ENV_FILE=/repo/wt/.herdr-agents/w-env/env.sh')
+  expect(files['/repo/wt/.herdr-agents/w-env/env.sh']).toBe("export TMPDIR='/repo/wt/.herdr-agents/w-env/tmp'\n")
+  await stopAll($, clock, ['w-env'])
+})
+
+const chained = "[ -f '/me/it'\\''s/env.sh' ] && . '/me/it'\\''s/env.sh'\nexport TMPDIR='/repo/wt/.herdr-agents/w-env/tmp'\n"
+test("a profile's CLAUDE_ENV_FILE is sourced first by the job's env.sh, quoted", async ($, on) => {
+  const { clock, files } = await start($, on, {
+    profiles: { c: { kind: 'claude', args: [], env: { CLAUDE_ENV_FILE: "/me/it's/env.sh" } } },
+  })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'c', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(files['/repo/wt/.herdr-agents/w-env/env.sh']).toBe(chained)
+  await stopAll($, clock, ['w-env'])
+})
+
+test("the parent session's CLAUDE_ENV_FILE is sourced first by the job's env.sh", async ($, on) => {
+  const { clock, files } = await start($, on, { profiles: { c: { kind: 'claude', args: [] } } }, {}, { CLAUDE_ENV_FILE: "/me/it's/env.sh" })
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'w-env', profile: 'c', cwd: '/repo/wt', task: 'x' })
+  await settled()
+  expect(files['/repo/wt/.herdr-agents/w-env/env.sh']).toBe(chained)
+  await stopAll($, clock, ['w-env'])
+})
+
+test('a codex worker gets no CLAUDE_ENV_FILE', async ($, on) => {
+  const { clock, calls, files } = await start($, on, { profiles: { x: { kind: 'codex', args: [] } } })
+  await spawnX($)
+  expect((calls.find(c => c[1] === 'run') ?? []).some(a => a.startsWith('CLAUDE_ENV_FILE'))).toBe(false)
+  expect(files['/repo/wt/.herdr-agents/w-env/env.sh']).toBeUndefined()
+  await stopAll($, clock, ['w-env'])
+})
 
 test('a fish login shell runs the worker with exec $argv', async ($, on) => {
   const { clock, calls } = await start($, on, claudeX, {}, { SHELL: '/usr/bin/fish' })
@@ -387,6 +423,7 @@ test('a fish login shell runs the worker with exec $argv', async ($, on) => {
     'exec $argv',
     '/usr/bin/env',
     'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
+    'CLAUDE_ENV_FILE=/repo/wt/.herdr-agents/w-env/env.sh',
     'HERDR_AGENTS_ROLE=worker',
     'HERDR_AGENTS_LIVE=/repo/wt/.herdr-agents/w-env/LIVE.json',
     'claude',
@@ -400,6 +437,7 @@ test('a shell the mod does not know runs the worker directly', async ($, on) => 
   expect(calls.find(c => c[1] === 'run')?.slice(16)).toEqual([
     '/usr/bin/env',
     'TMPDIR=/repo/wt/.herdr-agents/w-env/tmp',
+    'CLAUDE_ENV_FILE=/repo/wt/.herdr-agents/w-env/env.sh',
     'HERDR_AGENTS_ROLE=worker',
     'HERDR_AGENTS_LIVE=/repo/wt/.herdr-agents/w-env/LIVE.json',
     'claude',

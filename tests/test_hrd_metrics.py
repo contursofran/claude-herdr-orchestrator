@@ -4,6 +4,7 @@ Every expected number below is worked out by hand from the timeline in build(); 
 the script's output. Run: python3 -m unittest discover -s tests -p 'test_*.py'
 """
 
+import isolation  # noqa: F401  (temp HOME and git ceiling, see tests/isolation.py)
 import argparse
 import contextlib
 import importlib.util

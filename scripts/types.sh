@@ -9,8 +9,9 @@
 #
 # CI can't write the types itself: they come from a signed-in Claude Code session loading the mod.
 # So types-pinned/ is committed. Refresh it with --pin after a Claude Code update and commit the result.
-# claude-code-mcp is left out: it is generated from the MCP servers connected on the machine, and
-# tsconfig.json here only uses claude-code and claude-code-tools.
+# claude-code-mcp is left out: it is generated from the MCP servers connected on the machine, and the root
+# tsconfig.json only uses claude-code and claude-code-tools. Its line is dropped from the pinned tsconfig.json.
+# types-pinned/VERSION records the Claude Code version the copy came from; CI warns when its own differs.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -18,6 +19,9 @@ src=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/mods/herdr-agents/.claude-plugin/types
 mode=${1:-}
 
 if [[ $mode == --pinned ]]; then
+  if [[ -d $here/.claude-plugin/types && -z ${CI:-} ]]; then
+    echo "Replacing .claude-plugin/types with the pinned copy (rerun scripts/types.sh to get your local types back)." >&2
+  fi
   rm -rf "$here/.claude-plugin/types" && cp -R "$here/types-pinned" "$here/.claude-plugin/types"
   echo "Copied the pinned plugin API types."
   exit 0
@@ -32,5 +36,8 @@ echo "Copied the plugin API types from $src."
 if [[ $mode == --pin ]]; then
   rm -rf "$here/types-pinned" && mkdir "$here/types-pinned"
   cp -R "$src/claude-code" "$src/claude-code-tools" "$src/tsconfig.json" "$here/types-pinned/"
+  # Drop the claude-code-mcp entry (and the comma before it) from the copied tsconfig.json.
+  perl -0pi -e 's/,\s*"claude-code-mcp"//' "$here/types-pinned/tsconfig.json"
+  claude --version | awk '{print $1}' > "$here/types-pinned/VERSION"
   echo "Refreshed types-pinned/ (commit it)."
 fi
