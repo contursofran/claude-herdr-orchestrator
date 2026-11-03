@@ -1,5 +1,6 @@
 import { expect } from 'claude-code/testing'
-import { BATCH_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SWEEP_MS } from '../hooks/defaults'
+import { BATCH_MS, MESSAGE_WAIT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SWEEP_MS } from '../hooks/defaults'
+import { jobOf } from './workerkit'
 import { settled, start, stopAll, test } from './harness'
 
 // One worker's long send (a prompt that has not started work) must hold up only that worker's own steps.
@@ -105,5 +106,132 @@ test("the sweep's close step does not wait for a worker's long send", { timeoutM
   holds.delete('w-a')
   status['w-a'] = 'working'
   await clock.advance(PROMPT_WAIT_MS)
+  await stopAll($, clock, ['w-a'])
+})
+
+// A worker that reported and now gets a message: the message goes in as a new prompt, which a slow worker takes minutes to start on.
+const reportedWorker = async (started: Awaited<ReturnType<typeof start>>, $: Parameters<typeof start>[0], worker: string) => {
+  const { clock, typed, files, finish } = started
+  await spawnAt($, worker)
+  const token = typed.at(-1)?.match(/<!-- report (\S+) -->/)?.[1]
+  files[`/repo-${worker}/.herdr-agents/${worker}/RESULT.md`] = `<!-- report ${token} -->\nDone.`
+  await finish(worker)
+  await clock.advance(BATCH_MS)
+}
+
+test('a message to a worker whose send is slow returns promptly, and is still delivered', async ($, on) => {
+  const started = await start($, on)
+  const { clock, holds, typed, status, submitted } = started
+  await reportedWorker(started, $, 'w-a')
+  holds.add('w-a')
+  const called = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Also check the docs.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  expect(JSON.stringify(await called)).toContain('Queued')
+  // The call is over, and the send is still waiting for the worker to start.
+  holds.delete('w-a')
+  status['w-a'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  expect(typed.some(t => t.includes('Also check the docs.'))).toBe(true)
+  expect(submitted.filter(t => t.includes('not sent'))).toEqual([])
+  await stopAll($, clock, ['w-a'])
+})
+
+test('a message after a queued one waits behind it instead of overtaking it', async ($, on) => {
+  const started = await start($, on)
+  const { clock, holds, typed, status } = started
+  await reportedWorker(started, $, 'w-a')
+  holds.add('w-a')
+  const first = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'First.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await first
+  const second = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Second.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await second
+  // The first has not gone in, so the second is not typed yet.
+  expect(typed.some(t => t.includes('extra message while you work'))).toBe(false)
+  holds.delete('w-a')
+  status['w-a'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  await clock.advance(PROMPT_WAIT_MS)
+  // The first goes in as a prompt with its text; the second, typed to the working worker, names its file.
+  const at1 = typed.findIndex(t => t.includes('First.'))
+  const at2 = typed.findIndex(t => t.includes('extra message while you work'))
+  expect(at1).toBeGreaterThan(-1)
+  expect(at2).toBeGreaterThan(at1)
+  await stopAll($, clock, ['w-a'])
+})
+
+test('a reload while a queued message was being sent names it to the coordinator', async ($, on) => {
+  const job = {
+    name: 'w',
+    profile: 'builder',
+    cwd: '/repo/wt',
+    dir: '/repo/wt/.herdr-agents/w',
+    startedAt: 1,
+    status: 'running',
+    token: 'tok1',
+    address: 't12',
+    sending: ['/repo/wt/.herdr-agents/w/MESSAGE-1-abcd.md'],
+  }
+  const { clock, submitted, store } = await start($, on, {}, { 'jobs:session-1234': { at: 1, jobs: { w: job } } })
+  await clock.settle()
+  await clock.advance(BATCH_MS)
+  expect(submitted.join('\n')).toContain('MESSAGE-1-abcd.md')
+  expect(jobOf(store, 'w').sending).toBeUndefined()
+})
+
+test('a stop while a message is queued drops it: it is named as not sent and never typed', async ($, on) => {
+  const started = await start($, on)
+  const { clock, holds, typed, status, submitted, store } = started
+  await reportedWorker(started, $, 'w-a')
+  holds.add('w-a')
+  // The first is already being typed in (held); the second waits behind it.
+  const first = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'First.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await first
+  const second = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Second.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  expect(JSON.stringify(await second)).toContain('Queued')
+  const stopped = JSON.stringify(await $.tool.call({ tool: 'mcp__herdr-agents__stop', worker: 'w-a' }))
+  expect(stopped).toContain('queued message(s) were still being sent and will not be sent')
+  expect(stopped).toContain('MESSAGE-')
+  expect(stopped).toContain('2 queued message(s)')
+  const before = typed.length
+  holds.delete('w-a')
+  status['w-a'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  await clock.advance(BATCH_MS)
+  // Nothing went into the stopped worker, and no second notice came for the same message.
+  expect(typed.slice(before).some(t => t.includes('Second.'))).toBe(false)
+  expect(submitted.filter(t => t.includes('was not sent'))).toEqual([])
+  // The stopped job is not brought back to running by the dropped send.
+  expect(jobOf(store, 'w-a').status).toBe('reported')
+})
+
+test('a queued message that cannot be typed in is reported to the coordinator once it fails', async ($, on) => {
+  const started = await start($, on)
+  const { clock, holds, status, submitted, gate } = started
+  await reportedWorker(started, $, 'w-a')
+  holds.add('w-a')
+  const first = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'First.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await first
+  const second = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Second.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  expect(JSON.stringify(await second)).toContain('Queued')
+  // The first goes in; the second is typed to a worker that now waits at a prompt, and fails.
+  const release = gate(argv => argv[0] === 'hc' && argv[1] === 'send' && argv.join(' ').includes('extra message'))
+  holds.delete('w-a')
+  status['w-a'] = 'working'
+  await clock.advance(PROMPT_WAIT_MS)
+  status['w-a'] = 'blocked'
+  release()
+  await settled()
+  await clock.advance(BATCH_MS)
+  const notice = submitted.filter(t => t.includes('The message you queued for it was not sent'))
+  expect(notice).toHaveLength(1)
+  expect(notice[0]).toContain('could not type the message into w-a')
+  expect(notice[0]).toContain('MESSAGE-')
+  status['w-a'] = 'working'
   await stopAll($, clock, ['w-a'])
 })

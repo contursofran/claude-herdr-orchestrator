@@ -14,6 +14,8 @@ export type Job = {
   address?: string
   // message files held for a non-Claude worker until it reports
   queued?: string[]
+  // Messages accepted by `message` whose send has not ended; a reload or a failed send reports them (see messageWorker).
+  sending?: string[]
   // the WAIT.json the worker is waiting on, read once (see waiting)
   wait?: Wait
   // its turn was ended with the stop key (see interruptWorker), and nothing has told it what to do since
@@ -122,7 +124,7 @@ export type Row = {
   command?: string | null
   commandAt?: number | null
   outputAt?: number
-  // Its context fill after its last turn, in whole percent (see workerContext).
+  // Its context fill after its last turn, in whole percent (see workerLive).
   context?: number
 }
 
