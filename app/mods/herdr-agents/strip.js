@@ -36,7 +36,7 @@ import {
 import { Arrivals } from './arrivals.js'
 import { card } from './card.js'
 import { closeCard, openCard } from './cardctl.js'
-import { handBack, takeDismissed } from './outside.js'
+import { handBack, openPopupBack, takeDismissed } from './outside.js'
 import { closeSheet, openSheet } from './sheetctl.js'
 import { isSettingsCommand } from './settingsmodel.js'
 import { openSettings } from './settingsview.js'
@@ -176,6 +176,7 @@ export class StripState {
     this.seen.add(id)
     const gone = takeDismissed(press)
     if (gone?.surface === 'card' && gone.session === board.session && gone.key === item.key) return handBack(gone)
+    const popupBack = gone ? null : openPopupBack() // a key replacing the pop-up: it held the keyboard
     const current = shared('hrd.pick')
     const next = nextPick(current, board.session, item.key, toggle)
     if (!next) closeCard()
@@ -194,7 +195,7 @@ export class StripState {
       openCard(
         board,
         item,
-        gone,
+        gone ?? popupBack,
         stripItems(board).findIndex(i => i.key === item.key),
       )
     }
@@ -219,8 +220,9 @@ export function openBoardPopup(board, press = null, float = false) {
     sheet: Boolean(shared('hrd.sheet')),
   })
   // The terminal to hand back; if the card holds the keyboard, the one the card will hand back. Read before anything closes.
-  const back = shared('hrd.open')?.back ?? gone?.back ?? focused()?.terminal ?? null
-  const space = (gone?.back ? gone.space : focused()?.space) ?? null
+  const held = gone ?? openPopupBack() // a press that closed a surface, or a key while the pop-up holds the keyboard
+  const back = shared('hrd.open')?.back ?? held?.back ?? focused()?.terminal ?? null
+  const space = (held?.back ? held.space : focused()?.space) ?? null
   // The card took the keyboard: closing it gives it back to the terminal that had it.
   if (plan.closeCard) closeCard(plan.refocus)
   // A second open replaces the first instead of stacking on it.
@@ -236,6 +238,7 @@ export function openBoardPopup(board, press = null, float = false) {
     at: popupSpot(view.width, view.height, height, width),
     props: { role: 'board', session: board.session, height, board, back, space, float },
   })
+  setShared('hrd.popupBack', { back, space })
   setShared('hrd.popup', overlay)
 }
 
@@ -251,6 +254,7 @@ export function toggleSheet(board, press = null) {
   const card = shared('hrd.open') ?? (gone?.surface === 'card' ? gone : null)
   const key = sheetTarget(board, card?.session === board.session ? card.key : null)
   if (!key) return
+  const heldBy = gone ?? openPopupBack() // read before the pop-up closes
   const plan = overlayPlan('sheet', {
     popup: Boolean(shared('hrd.popup')),
     card: Boolean(shared('hrd.open')),
@@ -260,7 +264,7 @@ export function toggleSheet(board, press = null) {
   if (plan.closeCard) closeCard(plan.refocus)
   if (plan.closePopup) closePopupOverlay()
   if (plan.closePins) closePins()
-  openSheet(board, key, gone)
+  openSheet(board, key, heldBy)
 }
 
 function tab(item, board, state, now) {

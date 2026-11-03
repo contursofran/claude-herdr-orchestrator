@@ -106,7 +106,7 @@ function row(r, board, ctl, now) {
         openCard(
           board,
           { key: act.item },
-          null,
+          { back: props()?.back, space: props()?.space }, // the pop-up held the keyboard, so the card returns it
           Math.max(
             0,
             stripItems(board).findIndex(i => i.key === act.item),

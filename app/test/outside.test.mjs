@@ -9,7 +9,7 @@ const { DISMISS_MS, pastFrame, samePress, stripItems } = await import('../mods/h
 const { card, makeCardState } = await import('../mods/herdr-agents/card.js')
 const { makeSheetState, sheetBlock } = await import('../mods/herdr-agents/sheet.js')
 const { popupView } = await import('../mods/herdr-agents/popup.js')
-const { strip, StripState } = await import('../mods/herdr-agents/strip.js')
+const { openBoardPopup, strip, StripState, toggleSheet } = await import('../mods/herdr-agents/strip.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 
 const board = () => ({ ...JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url))), session: 's' })
@@ -220,4 +220,48 @@ test('a note left by the last run is forgotten at start', () => {
     (k, v) => (app.store[k] = v),
   )
   assert.equal(app.store['hrd.dismissed'], null)
+})
+
+// --- a replaced pop-up still hands the keyboard back (#190): it holds the keyboard, so focused() names no terminal ---
+
+const heldPopup = () => {
+  popupRoot()
+  app.store['hrd.popupBack'] = { back: 't1', space: 'a' }
+  app.focused = { terminal: null, space: 'a' }
+}
+
+test("a pop-up row that opens the card hands the card the pop-up's terminal", () => {
+  const card = b.tasks.find(t => t.item && !t.tab) ?? { key: 'x', item: first.key }
+  const root = popupRoot()
+  const row = findId(root, `work-${card.key}`)
+  app.focused = { terminal: null, space: 'a' }
+  row.node.calls.on_mouse_down[1]()
+  assert.equal(app.store['hrd.open'].back, 't1')
+  assert.equal(app.store['hrd.open'].space, 'a')
+})
+
+test('the board key while the pop-up is open: the new pop-up keeps the terminal to hand back', () => {
+  heldPopup()
+  openBoardPopup(b)
+  assert.equal(app.opened[0].props.back, 't1')
+  assert.equal(app.opened[0].props.space, 'a')
+})
+
+test('⌘J while the pop-up is open: the sheet keeps the terminal to hand back', () => {
+  heldPopup()
+  toggleSheet(b)
+  assert.equal(app.store['hrd.sheet'].back, 't1')
+})
+
+test('a pick key while the pop-up is open: the card keeps the terminal to hand back', () => {
+  heldPopup()
+  new StripState().pick(b, first, false)
+  assert.equal(app.store['hrd.open'].back, 't1')
+})
+
+test('a closed pop-up leaves no terminal to hand back', () => {
+  heldPopup()
+  app.store['hrd.popup'] = null
+  toggleSheet(b)
+  assert.equal(app.store['hrd.sheet'].back, null)
 })
