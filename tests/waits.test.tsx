@@ -1,6 +1,6 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
-import type { Job } from '../types'
+import type { Job, Wait } from '../types'
 import { active } from '../hooks/state'
 import { settled, start, stopAll, test } from './harness'
 import { reportedJob, W, check, spawnBusy, jobOf, reportW } from './workerkit'
@@ -321,7 +321,7 @@ test('a rewrite that changes only every or max keeps the count; one that cannot 
   s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":1,"max":60}'
   s.runs.set('/bin/bash -c ci', [{ exitCode: 1 }, { exitCode: 1 }, { exitCode: 1 }])
   await s.clock.advance(60_000)
-  const since = jobOf(s.store, 'w-busy').wait!.since
+  const since = (jobOf(s.store, 'w-busy').wait as Wait).since
   s.files[`${W}/WAIT.json`] = '{"for":"ci","check":"ci","every":2,"max":90}'
   await s.clock.advance(2 * 60_000)
   expect(jobOf(s.store, 'w-busy').wait).toMatchObject({ for: 'ci', every: 2, max: 90, since })

@@ -1,6 +1,6 @@
 import { mock, test as kitTest } from 'claude-code/testing'
 import type { CommandRunInput, On } from 'claude-code'
-import type { Engine, MockClock, Mounted, Plugin } from 'claude-code/testing'
+import type { Engine, MockClock, Plugin, TestBody, TestOptions } from 'claude-code/testing'
 import type { Settings } from '../types'
 
 // What the tests share: the band's render props, and start(), which stands in for the
@@ -10,17 +10,13 @@ import type { Settings } from '../types'
 // run on real timers, so a busy machine can pass 5 s with nothing wrong. Import test from here: the same
 // test, with 60 s, or the test's own timeoutMs when that is longer.
 const TIMEOUT_MS = 60_000
-export const test: typeof kitTest = ((name: string, ...rest: unknown[]) => {
-  const [first] = rest
-  const opts = typeof first === 'function' ? undefined : (first as { timeoutMs?: number; plugins?: readonly Plugin[] })
-  const tail = typeof first === 'function' ? rest : rest.slice(1)
+export const test: typeof kitTest = (name, ...rest) => {
+  const [first, second] = rest
+  const opts: TestOptions | undefined = typeof first === 'function' ? undefined : first
+  const body = (typeof first === 'function' ? first : second) as TestBody
   const plugins = [CLOCK_HOLD, ...(opts?.plugins ?? [])]
-  return (kitTest as (...a: unknown[]) => unknown)(
-    name,
-    { ...opts, plugins, timeoutMs: Math.max(opts?.timeoutMs ?? 0, TIMEOUT_MS) },
-    ...tail,
-  )
-}) as typeof kitTest
+  kitTest(name, { ...opts, plugins, timeoutMs: Math.max(opts?.timeoutMs ?? 0, TIMEOUT_MS) }, body)
+}
 
 // The kit's clock lets go of a wait held past a hook's budget, ten seconds of real time, and that ends the mod's timer
 // for the rest of the test: a machine busy enough to slow a test past ten seconds loses its sweeps and PR polls. The time

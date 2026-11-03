@@ -1,4 +1,9 @@
 {
   "extends": "./.claude-plugin/types/tsconfig.json",
-  "compilerOptions": { "noUnusedLocals": true }
+  "compilerOptions": {
+    "noUnusedLocals": true,
+    // claude-code-mcp is generated from the MCP servers connected on the machine that wrote the types, and
+    // its tool inputs make `tool.call` for this mod's own tools too deep to resolve. The mod uses none of them.
+    "types": ["claude-code", "claude-code-tools"]
+  }
 }

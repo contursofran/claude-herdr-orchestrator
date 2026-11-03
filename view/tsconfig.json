@@ -2,6 +2,7 @@
   "extends": "../.claude-plugin/types/tsconfig.json",
   "include": ["hooks"],
   "compilerOptions": {
-    "noUnusedLocals": true
+    "noUnusedLocals": true,
+    "types": ["claude-code", "claude-code-tools"]
   }
 }
