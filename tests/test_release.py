@@ -81,14 +81,15 @@ class Release(unittest.TestCase):
             with open(os.path.join(ROOT, ".claude-plugin", "plugin.json")) as f:
                 self.assertEqual(json.load(f)["version"], now)
 
-    def finish(self, merged=True, dry_run=False, ancestor=True):
+    def finish(self, merged=True, dry_run=False, ancestor=True, state=None, title="Version 0.24.0"):
         """Runs --finish 0.24.0 with fake gh and git; returns the result and what they were asked."""
         with tempfile.TemporaryDirectory() as d:
             log = os.path.join(d, "log")
             fakes = {
                 "gh": 'echo "gh $*" >> "$LOG"\n'
-                'case "$*" in *mergeCommit.oid*) if [ "$MERGED" = 1 ]; then echo MERGECOMMIT; fi;; '
-                '*"pr list"*) if [ "$MERGED" = 1 ]; then echo "- Notes (#5)"; fi;; esac',
+                'case "$*" in *"pr view version-0.24.0 --json body"*) echo "- Notes (#5)";; '
+                '*"pr view version-0.24.0"*) case "$PRSTATE" in none) exit 1;; '
+                'esac; printf "%s\\t%s\\tMERGECOMMIT\\n" "$PRSTATE" "$PRTITLE";; esac',
                 "git": 'echo "git $*" >> "$LOG"\n'
                 'case "$1" in rev-parse) case "$2" in --abbrev-ref) echo main;; -q) exit 1;; esac;;'
                 " merge-base) [ \"$ANCESTOR\" = 1 ];; esac",
@@ -102,7 +103,8 @@ class Release(unittest.TestCase):
                 **os.environ,
                 "PATH": f"{d}:{os.environ['PATH']}",
                 "LOG": log,
-                "MERGED": "1" if merged else "0",
+                "PRSTATE": state or ("MERGED" if merged else "OPEN"),
+                "PRTITLE": title,
                 "ANCESTOR": "1" if ancestor else "0",
             }
             args = [SCRIPT, "--finish", "0.24.0"] + (["--dry-run"] if dry_run else [])
@@ -124,6 +126,23 @@ class Release(unittest.TestCase):
         self.assertIn("has not merged", r.stderr)
         self.assertNotIn("git tag", logged)
         self.assertNotIn("push", logged)
+
+    def test_finish_looks_the_pr_up_by_branch_not_by_search(self):
+        r, logged = self.finish()
+        self.assertIn("gh pr view version-0.24.0", logged)
+        self.assertNotIn("pr list", logged)
+
+    def test_finish_refuses_when_the_branch_has_no_pr(self):
+        r, logged = self.finish(state="none")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("has not merged", r.stderr)
+        self.assertNotIn("git tag", logged)
+
+    def test_finish_refuses_a_pr_with_another_title(self):
+        r, logged = self.finish(title="Something else")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("titled", r.stderr)
+        self.assertNotIn("git tag", logged)
 
     def test_finish_refuses_a_merge_commit_that_is_not_on_origin_main(self):
         r, logged = self.finish(ancestor=False)
