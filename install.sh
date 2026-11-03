@@ -6,6 +6,7 @@
 #   ./install.sh            # from a clone of this repo; run it again after a pull
 #
 # Needs node (to edit the JSON settings) and rsync; hc (herdr-core) runs the workers.
+# With the Herdr app there and running it ends by printing the window's errors (scripts/window-errors.sh).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -89,3 +90,10 @@ EOF
 fi
 
 echo "Installed herdr-agents into $claude. A first install loads in sessions started from now on; running sessions reload updates by themselves."
+
+# A mod that fails to reload shows only in the window's errors: print them when the app is there and running.
+# The app reloads the copied mod in the next moment, so give it a short while first.
+if [[ -d $app_home ]] && command -v herdr-app >/dev/null 2>&1; then
+  sleep "${INSTALL_WINDOW_WAIT:-2}"
+  "$here/scripts/window-errors.sh"
+fi
