@@ -427,3 +427,69 @@ test("a working worker's view offers Interrupt with its line, through its board"
   assert.equal(findId(workerView(board(), { name: 'fix-1', state: 'working' }), 'panel-interrupt'), null)
   assert.equal(findId(workerView(board(), { ...live, state: 'waiting' }), 'panel-interrupt'), null)
 })
+
+test('a PR in conflict with no worker on it goes to Needs a look; with one, its row says so', () => {
+  const b = board({
+    workers: [
+      { name: 'w1', state: 'working' },
+      { name: 'w2', state: 'reported' },
+    ],
+    tasks: [
+      task('busy', { tab: 'w1', conflictsWith: 'main' }),
+      task('left', { tab: 'w2', workers: ['w2'], conflictsWith: 'main', isFinished: true }),
+      task('none', { conflictsWith: 'develop' }),
+      task('fine'),
+    ],
+  })
+  const s = m.panelSections(b)
+  assert.deepEqual(
+    s.look.map(r => [r.key, r.unattended]),
+    [
+      ['left', 'conflicts with main · no worker on it'],
+      ['none', 'conflicts with develop · no worker on it'],
+    ],
+  )
+  assert.deepEqual(
+    s.work.map(r => r.key),
+    ['busy', 'fine'],
+  )
+  const text = textOf(panelView(b))
+  assert.ok(text.includes('Needs a look · 2'))
+  assert.ok(text.includes('conflicts with main · no worker on it'))
+  assert.ok(text.includes('conflicts with main'))
+})
+
+test('a blocked worker on a PR in conflict stays one row, saying it is blocked', () => {
+  const b = board({
+    workers: [{ name: 'w1', state: 'blocked', note: 'permission prompt' }],
+    tasks: [task('a', { tab: 'w1', conflictsWith: 'main' })],
+  })
+  const [row, ...rest] = m.panelSections(b).look
+  assert.equal(row.blocked, 'permission prompt')
+  assert.equal(row.unattended, undefined)
+  assert.deepEqual(rest, [])
+})
+
+test('shared files read as the design has them, on the row and in the worker view', () => {
+  const b = board({
+    workers: [{ name: 'w1', state: 'working' }],
+    tasks: [
+      task('one', { tab: 'w1', workers: ['w1'], shares: [{ pr: 215, file: 'app/mods/pin-panel.ts', count: 1 }] }),
+      task('more', {
+        conflictsWith: null,
+        tab: 'w1',
+        shares: [
+          { pr: 213, file: 'a/b.ts', count: 3 },
+          { pr: 216, file: 'c.ts', count: 1 },
+        ],
+      }),
+      task('old'),
+    ],
+  })
+  const rows = m.panelSections(b).work
+  assert.equal(rows[0].shares, 'touches pin-panel.ts like #215')
+  assert.equal(rows[1].shares, 'touches b.ts +2 like #213, #216')
+  assert.equal(rows[2].shares, '')
+  assert.ok(textOf(panelView(b)).includes('touches pin-panel.ts like #215'))
+  assert.ok(textOf(workerView(b, { name: 'w1', state: 'working' })).includes('touches pin-panel.ts like #215'))
+})

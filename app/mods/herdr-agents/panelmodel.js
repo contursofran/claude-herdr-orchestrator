@@ -2,7 +2,7 @@
 import { workRows } from './model.js'
 
 /** The right panel's lists. `look` is what is stuck until someone acts: a blocked worker's row, once however many workers share it,
- *  and it leaves the other lists. `work` is everything else that can still need a look, including a merged task with a test
+ *  or a PR that conflicts with its base with no worker on it; such a row leaves the other lists. `work` is everything else that can still need a look, including a merged task with a test
  *  waiting on the owner; `merged` is history, newest first. */
 export function panelSections(board) {
   const look = new Map()
@@ -18,6 +18,11 @@ export function panelSections(board) {
       link: null,
     }
     if (!look.has(r.key)) look.set(r.key, { ...r, blocked: worker.note || 'waiting' })
+  }
+  const running = new Set((board?.workers ?? []).filter(w => w?.state !== 'reported').map(w => w?.name))
+  for (const r of workRows(board)) {
+    if (!r.conflictsWith || look.has(r.key) || running.has(r.tab) || r.workers.some(w => running.has(w))) continue
+    look.set(r.key, { ...r, unattended: `conflicts with ${r.conflictsWith} · no worker on it` })
   }
   const rows = workRows(board).filter(r => !look.has(r.key))
   const settled = r => r.isMerged && r.who.text === 'merged'

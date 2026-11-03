@@ -8,6 +8,7 @@ import { toggleWrapUp } from './coordinator'
 import { PR_POLL_MAX, TASK_RECENT_MS } from './defaults'
 import { linker } from './links'
 import { ownLiveFields } from './live'
+import { sharedFiles } from './overlap'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { session } from './session'
 import { jobs } from './state'
@@ -90,22 +91,46 @@ export async function pollPrs($: EngineInterface) {
     const { v, tasks, now } = await gather($)
     const listed = new Set(tasks.filter(t => t.pr && t.repo).map(t => `${t.repo}#${t.pr}`))
     // A merged PR is asked once more when it has no merge time yet (one stored before `mergedAt`); null (gh gave none) is an answer.
-    const want = [...listed].filter(k => v.prs[k]?.state !== 'CLOSED' && (v.prs[k]?.state !== 'MERGED' || v.prs[k]?.mergedAt === undefined))
+    const want = [...listed]
+      .filter(k => v.prs[k]?.state !== 'CLOSED' && (v.prs[k]?.state !== 'MERGED' || v.prs[k]?.mergedAt === undefined))
+      // The longest unread first: past PR_POLL_MAX, the others get their turn at the next poll.
+      .sort((a, b) => (v.prs[a]?.at ?? 0) - (v.prs[b]?.at ?? 0))
     const got: Record<string, Pr> = {}
     let failed = ''
     for (const k of want.slice(0, PR_POLL_MAX)) {
       const [repo = '', n = ''] = k.split('#')
       try {
-        const ran = await $.process.run(['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup'], {
-          timeoutMs: 20_000,
-        })
+        const ran = await $.process.run(
+          ['gh', 'pr', 'view', n, '-R', repo, '--json', 'state,mergedAt,statusCheckRollup,mergeable,baseRefName,files'],
+          { timeoutMs: 20_000 },
+        )
         if (ran.exitCode !== 0) {
           failed = ran.stderr.trim().split('\n')[0] || `exit ${ran.exitCode}`
           continue
         }
-        const pr = JSON.parse(ran.stdout) as { state: Pr['state']; mergedAt?: string | null; statusCheckRollup?: Check[] }
+        const pr = JSON.parse(ran.stdout) as {
+          state: Pr['state']
+          mergedAt?: string | null
+          statusCheckRollup?: Check[]
+          mergeable?: string
+          baseRefName?: string
+          files?: { path: string }[]
+        }
         const mergedAt = pr.mergedAt ? Date.parse(pr.mergedAt) : NaN
-        got[k] = { state: pr.state, ci: ciOf(pr.statusCheckRollup ?? []), at: now, mergedAt: Number.isFinite(mergedAt) ? mergedAt : null }
+        got[k] = {
+          state: pr.state,
+          ci: ciOf(pr.statusCheckRollup ?? []),
+          at: now,
+          mergedAt: Number.isFinite(mergedAt) ? mergedAt : null,
+          ...(pr.state === 'OPEN'
+            ? {
+                // UNKNOWN only means GitHub is still working it out, and asking starts that: the last answer stands until the next poll.
+                conflict: pr.mergeable === 'UNKNOWN' ? (v.prs[k]?.conflict ?? false) : pr.mergeable === 'CONFLICTING',
+                base: pr.baseRefName ?? 'base',
+                files: (pr.files ?? []).map(f => f.path),
+              }
+            : {}),
+        }
       } catch (err) {
         failed = String(err)
       }
@@ -147,6 +172,8 @@ export async function boardInputs($: EngineInterface) {
 export async function boardSnapshot($: EngineInterface) {
   const { v, board, now, open, todos, items, isLive, endOf, tasks } = await gather($)
   const busy = board.rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length
+  const shares = sharedFiles(tasks, v.prs)
+  const prOf = (t: Task) => (t.repo && t.pr ? v.prs[`${t.repo}#${t.pr}`] : undefined)
   return {
     version: BOARD_VERSION,
     session: await $.session.id(),
@@ -190,6 +217,8 @@ export async function boardSnapshot($: EngineInterface) {
       isFinished: t.isFinished,
       isMerged: t.isMerged,
       mergedAt: t.mergedAt ?? null,
+      conflictsWith: prOf(t)?.state === 'OPEN' && prOf(t)?.conflict ? (prOf(t)?.base ?? null) : null,
+      shares: shares.get(t.key) ?? [],
     })),
     needs: items.map(it => {
       const d = open.find(x => `D${x.id}` === it.key)

@@ -9,7 +9,7 @@ import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { interruptButton } from './interrupt.js'
 import { cell, link, popupShell } from './popup.js'
-import { color, font, popup as look } from './tokens.js'
+import { color, font, icon, popup as look } from './tokens.js'
 
 const CELL = 18
 
@@ -32,9 +32,20 @@ function liveText(live, text) {
     .child(text ?? '')
 }
 
+/** A line in amber with the design's warning mark: what a PR on this row runs into. */
+const warning = text =>
+  div()
+    .flex()
+    .items_center()
+    .gap(6)
+    .text_size(11)
+    .text_color(theme().working)
+    .child(svg(icon('warn')).size(11).flex_none())
+    .child(div().min_w_0().truncate().child(text))
+
 function row(r, board, now, ui) {
   const merged = mergedText(r, now)
-  const who = merged && r.who.text === 'merged' ? '' : r.who.text
+  const who = (merged && r.who.text === 'merged') || r.unattended ? '' : r.who.text
   const live = rowLive(board, r, now)
   return div()
     .id(`panel-${r.key}`)
@@ -76,8 +87,19 @@ function row(r, board, now, ui) {
         .when(!r.link && Boolean(r.label), el => el.child(div().flex_none().child(r.label)))
         .when(Boolean(merged), el => el.child(div().flex_none().child(merged)))
         .when(Boolean(who), el => el.child(div().min_w_0().truncate().child(who)))
-        .when(Boolean(live), el => el.child(liveText(live, live?.short))),
+        .when(Boolean(live), el => el.child(liveText(live, live?.short)))
+        .when(Boolean(r.unattended), el =>
+          el.child(
+            div()
+              .min_w_0()
+              .truncate()
+              .text_color(theme().working)
+              .child(r.unattended ?? ''),
+          ),
+        ),
     )
+    .when(Boolean(r.conflictsWith && !r.unattended), el => el.child(warning(`conflicts with ${r.conflictsWith}`)))
+    .when(Boolean(r.shares), el => el.child(warning(r.shares)))
     .when(Boolean(r.blocked), el =>
       el.child(
         div()
@@ -360,7 +382,9 @@ export function workerView(board, worker, ui = { open: new Set() }) {
                 .gap(6)
                 .child(div().text_color(look.head).child('Task'))
                 .child(div().child(r.title))
-                .when(Boolean(r.now), inner => inner.child(div().text_size(11).text_color(color.dim).child(r.now))),
+                .when(Boolean(r.now), inner => inner.child(div().text_size(11).text_color(color.dim).child(r.now)))
+                .when(Boolean(r.conflictsWith), inner => inner.child(warning(`conflicts with ${r.conflictsWith}`)))
+                .when(Boolean(r.shares), inner => inner.child(warning(r.shares))),
             )
             .when(Boolean(r.link), inner =>
               inner.child(
