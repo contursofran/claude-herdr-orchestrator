@@ -121,7 +121,7 @@ async function flush($: EngineInterface): Promise<boolean> {
   inFlight = items
   try {
     let text = items.map(i => i.text).join('\n\n')
-    if (items.some(i => i.report)) text += await belowTarget($)
+    if (items.some(i => i.report)) text += await belowTarget($, false)
     await save($)
     await $.prompt.submit({ text: text.trim() })
     inFlight = []

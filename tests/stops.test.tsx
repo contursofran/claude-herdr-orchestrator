@@ -541,7 +541,7 @@ test('a blocked worker counts for 3 minutes, then not, and again once it leaves 
   await clock.advance(BATCH_MS)
   // The report sent as it blocks asks for no replacement of it.
   expect(reportsOf(submitted).at(-1)).toMatch(/status="blocked"/)
-  expect(submitted.at(-1)).toMatch(/\[1 of 4 workers working/)
+  expect(submitted.at(-1)).not.toContain('workers working')
   await clock.advance(BLOCKED_COUNTS_MS - BATCH_MS - 1)
   expect(counted(store, clock)).toBe(1)
   await clock.advance(1)

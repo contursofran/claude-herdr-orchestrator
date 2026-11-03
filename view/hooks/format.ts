@@ -9,11 +9,10 @@ function attr(tag: string, name: string): string | undefined {
   return tag.match(new RegExp(`${name}="([^"]*)"`))?.[1]
 }
 
-// The worker count, or the wrap-up note, that a prompt with a worker's report ends with.
+// The wrap-up note, that a prompt with a worker's report ends with.
 function workerNote(body: string): string {
-  const count = body.match(/\[(\d+) of (\d+) workers working/)
   const wrap = body.match(/\[Wrapping up: (?:(\d+) workers? still out|every worker has finished)/)
-  return wrap ? ` · wrapping up, ${wrap[1] ?? 0} left` : count ? ` · ${count[1]}/${count[2]} working` : ''
+  return wrap ? ` · wrapping up, ${wrap[1] ?? 0} left` : ''
 }
 
 // One element's line, from its tag (its first line) on, or undefined for a tag it doesn't know.

@@ -21,7 +21,7 @@ export async function setOrchestrating($: EngineInterface, on: boolean) {
 // The line the coordinator gets with a prompt that follows a report or a stop: while wrapping up,
 // how many workers are still out; otherwise, in a coordinator (/hrd-orchestrate ran), when fewer work than the target, how many to start.
 // Its own file, so outbox.ts can use it without importing the coordinator (owner.ts imports outbox.ts).
-export async function belowTarget($: EngineInterface) {
+export async function belowTarget($: EngineInterface, countHint = true) {
   const all = Object.values(await jobs($))
   // Wrap-up (also from the config) only speaks to a coordinator; a plain session is never told to wrap up.
   if (!(await isOrchestrating($))) return ''
@@ -34,6 +34,8 @@ export async function belowTarget($: EngineInterface) {
     const notes = folder ? ` Before you stop:\n${notesInstructions(folder)}\n` : ' '
     return `\n\n[Wrapping up: every worker has finished. Start nothing new; update the state file with where things stand.${notes}Then stop. The owner ends it with ${cmd('wrap-up')} off.]`
   }
+  // A report prompt leaves the count out: the owner reads it there and the host can't hide it (#174); stop results keep it.
+  if (!countHint) return ''
   const want = await target($)
   const now = await $.clock.now()
   const running = all.filter(j => working(j, now)).length
