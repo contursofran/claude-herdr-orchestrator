@@ -18,6 +18,40 @@ test('/hrd-orchestrate flips coordinator.orchestrating on the board', async ($, 
   expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(true)
 })
 
+test('/hrd-orchestrate hands the playbook and goal to the model as the command context, not a prompt', async ($, on) => {
+  const { submitted } = await start($, on)
+  const result = await command($, 'hrd-orchestrate', 'ship the ready issues')
+  expect(submitted).toEqual([])
+  expect(result.context).toHaveLength(1)
+  expect(result.context?.[0]).toMatch(/^<herdr-context>You are now the coordinator of this folder\./)
+  expect(result.context?.[0]).toContain('Goal: ship the ready issues')
+  expect(result.context?.[0]).toContain('You coordinate worker agents')
+})
+
+test('a finished wrap-up (nothing running) ends orchestrating; one with workers running waits for them', async ($, on) => {
+  const { clock, files } = await start($, on)
+  const orchestrating = () => JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating
+  await spawn($, ['w-a'])
+  await command($, 'hrd-orchestrate')
+  const wrap = await command($, 'hrd-wrap-up')
+  expect(wrap.context?.[0]).toMatch(/^<herdr-context>The owner is wrapping up/)
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(true)
+  await stopAll($, clock, ['w-a'])
+  await clock.advance(3000)
+  expect(orchestrating()).toBe(false)
+})
+
+test('/hrd-wrap-up with no workers at all ends orchestrating', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await command($, 'hrd-orchestrate')
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(true)
+  await command($, 'hrd-wrap-up')
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(false)
+})
+
 test('the board is written for outside apps, and their action files answer and tick', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
   await spawn($, ['w-busy'])

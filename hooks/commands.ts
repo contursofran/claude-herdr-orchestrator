@@ -42,7 +42,7 @@ export async function runCommand($: EngineInterface, command: string, args: stri
     case 'orchestrate':
       return orchestrate($, args)
     case 'wrap-up':
-      return { text: await toggleWrapUp($, !/^(off|resume)$/i.test(args.trim())) }
+      return toggleWrapUp($, !/^(off|resume)$/i.test(args.trim()), true)
     case 'notes':
       return writeNotes($)
     case 'update':
