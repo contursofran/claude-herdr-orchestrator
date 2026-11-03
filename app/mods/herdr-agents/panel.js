@@ -43,6 +43,36 @@ const warning = text =>
     .child(svg(icon('warn')).size(11).flex_none())
     .child(div().min_w_0().truncate().child(text))
 
+/** The review's verdict: amber when changes are needed, quiet when approved. */
+const verdictText = review =>
+  div()
+    .min_w_0()
+    .truncate()
+    .text_size(11)
+    .text_color(review.verdict === 'changes' ? theme().working : color.dim)
+    .child(review.text)
+
+/** `Review · from review-213 · 2 blockers`, then one line per blocker, in amber. */
+const reviewBlock = review => {
+  const n = review.blockers.length
+  return div()
+    .flex()
+    .flex_col()
+    .gap(4)
+    .text_size(11)
+    .text_color(theme().working)
+    .child(
+      div()
+        .truncate()
+        .child(
+          ['Review', review.from && `from ${review.from}`, review.verdict === 'changes' && n && `${n} blocker${n === 1 ? '' : 's'}`]
+            .filter(Boolean)
+            .join(' · '),
+        ),
+    )
+    .children(review.blockers.map(b => div().min_w_0().child(`· ${b}`)))
+}
+
 function row(r, board, now, ui) {
   const merged = mergedText(r, now)
   const who = (merged && r.who.text === 'merged') || r.unattended ? '' : r.who.text
@@ -100,6 +130,7 @@ function row(r, board, now, ui) {
     )
     .when(Boolean(r.conflictsWith && !r.unattended), el => el.child(warning(`conflicts with ${r.conflictsWith}`)))
     .when(Boolean(r.shares), el => el.child(warning(r.shares)))
+    .when(Boolean(r.review), el => el.child(verdictText(r.review)))
     .when(Boolean(r.blocked), el =>
       el.child(
         div()
@@ -398,8 +429,20 @@ export function workerView(board, worker, ui = { open: new Set() }) {
                       .flex_none()
                       .child(link(r, `${r.link.text} ↗`, `panel-pr-${r.key}`)),
                   )
+                  .when(Boolean(r.review), el =>
+                    el.child(
+                      div()
+                        .flex_none()
+                        .text_size(11)
+                        .text_color(r.review.verdict === 'changes' ? theme().working : color.dim)
+                        .child(r.review.text.split(' · ')[0]),
+                    ),
+                  )
                   .child(div().min_w_0().truncate().text_size(11).child(r.who.text)),
               ),
+            )
+            .when(Boolean(r.review && (r.review.blockers.length || r.review.verdict === 'changes')), inner =>
+              inner.child(reviewBlock(r.review)),
             ),
         ),
     )

@@ -8,6 +8,7 @@ globalThis.__fakeGpui.hc = async args => (hcCalls.push(args), { code: 0, stdout:
 
 const m = await import('../mods/herdr-agents/panelmodel.js')
 const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
+const { workRows } = await import('../mods/herdr-agents/model.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
 
 app.theme = {
@@ -492,4 +493,39 @@ test('shared files read as the design has them, on the row and in the worker vie
   assert.equal(rows[2].shares, '')
   assert.ok(textOf(panelView(b)).includes('touches pin-panel.ts like #215'))
   assert.ok(textOf(workerView(b, { name: 'w1', state: 'working' })).includes('touches pin-panel.ts like #215'))
+})
+
+test('the review reads as the design has it: on the row, beside the PR link, and with one line per blocker', () => {
+  const review = { from: 'review-213', verdict: 'changes', blockers: ['a.ts:3 wrong total', 'b.ts:9 no test'], head: null }
+  const b = board({
+    workers: [{ name: 'w1', state: 'working' }],
+    tasks: [
+      task('#7', { tab: 'w1', workers: ['w1'], pr: 7, url: 'https://github.com/o/r/pull/7', review }),
+      task('ok', { review: { from: 'r', verdict: 'approve', blockers: [] } }),
+      task('old'),
+      task('odd', { review: { verdict: 'maybe' } }),
+    ],
+  })
+  const rows = m.panelSections(b).work
+  assert.equal(rows[0].review.text, 'changes needed · 2 blockers')
+  assert.equal(rows[1].review.text, 'approved')
+  assert.equal(rows[2].review, null)
+  assert.equal(rows[3].review, null)
+  assert.ok(textOf(panelView(b)).includes('changes needed · 2 blockers'))
+  const view = textOf(workerView(b, { name: 'w1', state: 'working' })).join('\n')
+  assert.ok(view.includes('changes needed'))
+  assert.ok(view.includes('Review · from review-213 · 2 blockers'))
+  assert.ok(view.includes('a.ts:3 wrong total'))
+  assert.ok(view.includes('b.ts:9 no test'))
+})
+
+test('a single blocker is singular, and a verdict of changes with no lines shows no list', () => {
+  const rows = workRows({
+    tasks: [
+      { key: 'a', review: { from: 'r', verdict: 'changes', blockers: ['x'] } },
+      { key: 'b', review: { from: 'r', verdict: 'changes', blockers: [] } },
+    ],
+  })
+  assert.equal(rows[0].review.text, 'changes needed · 1 blocker')
+  assert.equal(rows[1].review.text, 'changes needed')
 })

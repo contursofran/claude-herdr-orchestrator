@@ -1009,7 +1009,18 @@ export function workRows(board) {
       mergedAt: Number.isFinite(t.mergedAt) && t.mergedAt > 0 ? t.mergedAt : null,
       conflictsWith: typeof t.conflictsWith === 'string' && t.conflictsWith ? t.conflictsWith : null,
       shares: sharesText(t.shares),
+      review: reviewOf(t.review),
     }))
+}
+
+/** A task's newest review: {from, verdict: 'approve' | 'changes', blockers: [short lines], text} where `text` is
+ *  `changes needed · 2 blockers` or `approved`. null when it has none, or when its verdict is not one we know. */
+function reviewOf(r) {
+  if (!r || typeof r !== 'object' || (r.verdict !== 'approve' && r.verdict !== 'changes')) return null
+  const blockers = (Array.isArray(r.blockers) ? r.blockers : []).filter(b => typeof b === 'string' && b.trim()).map(b => b.trim())
+  const n = blockers.length
+  const text = r.verdict === 'approve' ? 'approved' : n ? `changes needed · ${n} blocker${n === 1 ? '' : 's'}` : 'changes needed'
+  return { from: typeof r.from === 'string' ? r.from : '', verdict: r.verdict, blockers, text }
 }
 
 /** `touches pin-panel.ts like #215`, from a task's `shares`; `+2` for further files, and every PR they are shared with. '' when none. */

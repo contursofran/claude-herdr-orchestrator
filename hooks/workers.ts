@@ -38,7 +38,7 @@ import {
 } from './hc'
 import { answered as settledQuestions, ask, openQuestions, withdraw } from './owner'
 import { dropHeld, post } from './outbox'
-import { type Header, parseHeader, summaryOf } from './report'
+import { type Header, parseBlockers, parseHeader, summaryOf } from './report'
 import { postTime } from './timecomment'
 import { cmd, session } from './session'
 import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
@@ -767,6 +767,7 @@ export async function deliver(
   let prs: number[] = []
   // A report's header (see report.ts): its status and PRs go on the prompt's tag.
   let header: Header | undefined
+  let blockers: string[] = []
   // The file this report was kept in, for the state file's block.
   let reportFile: string | undefined
   let tail: Job['tail']
@@ -778,6 +779,8 @@ export async function deliver(
     if (status === 'done' && opts.early) tail = 'early'
     body = reportBody(await $.fs.read(resultPath))
     header = parseHeader(body)
+    // Read from the whole report: body becomes the short inline form below.
+    if (header?.verdict === 'changes') blockers = parseBlockers(body)
     const linked = Number(body.match(/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)/)?.[1]) || undefined
     prs = header?.prs.length ? header.prs : linked ? [linked] : []
     // Read the questions from the whole report: they often sit past the cut.
@@ -895,6 +898,16 @@ export async function deliver(
           reportFile,
           reportStatus: status,
           headerStatus: header?.status,
+          ...(header?.verdict
+            ? {
+                review: {
+                  verdict: header.verdict,
+                  blockers,
+                  head: header.head,
+                  at: endedAt,
+                },
+              }
+            : {}),
           ...(errorToken ? { errorToken } : {}),
         }
       : undefined,

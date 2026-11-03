@@ -174,6 +174,11 @@ export async function boardSnapshot($: EngineInterface) {
   const busy = board.rows.filter(r => r.state !== 'reported' && r.state !== 'waiting').length
   const shares = sharedFiles(tasks, v.prs)
   const prOf = (t: Task) => (t.repo && t.pr ? v.prs[`${t.repo}#${t.pr}`] : undefined)
+  // The newest review among a task's jobs replaces the older ones.
+  const reviewOf = (t: Task) => {
+    const j = t.jobs.filter(x => x.review).sort((a, b) => b.review!.at - a.review!.at)[0]
+    return j ? { from: j.name, verdict: j.review!.verdict, blockers: j.review!.blockers, head: j.review!.head ?? null } : null
+  }
   return {
     version: BOARD_VERSION,
     session: await $.session.id(),
@@ -219,6 +224,7 @@ export async function boardSnapshot($: EngineInterface) {
       mergedAt: t.mergedAt ?? null,
       conflictsWith: prOf(t)?.state === 'OPEN' && prOf(t)?.conflict ? (prOf(t)?.base ?? null) : null,
       shares: shares.get(t.key) ?? [],
+      review: reviewOf(t),
     })),
     needs: items.map(it => {
       const d = open.find(x => `D${x.id}` === it.key)

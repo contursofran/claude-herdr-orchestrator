@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseHeader, summaryOf } from '../hooks/report'
+import { parseBlockers, parseHeader, summaryOf } from '../hooks/report'
 import { oneLine } from '../view/hooks/format'
 
 // The report header a worker writes at the top of RESULT.md (report.ts), and how the coordinator reads it.
@@ -144,4 +144,21 @@ test('a head that is not 7 to 40 hex characters is ignored', () => {
   expect(head('abc12')).toBeUndefined()
   expect(head('not-a-sha')).toBeUndefined()
   expect(head(`${'a'.repeat(41)}`)).toBeUndefined()
+})
+
+test('blockers are read from the list under a Blockers heading, however it is written, and stop at Nits', () => {
+  const nits = '\n\n**Nits**\n1. naming'
+  expect(parseBlockers('Verdict.\n\n**Blockers**\n1. a.ts:3 wrong\n2. b.ts:9 no test' + nits)).toEqual(['a.ts:3 wrong', 'b.ts:9 no test'])
+  expect(parseBlockers('## Blockers\n- one\n- **two**' + nits)).toEqual(['one', 'two'])
+  expect(parseBlockers('Blockers:\n* one\n  wrapped text\n* two\nNits:\n* x')).toEqual(['one', 'two'])
+  expect(parseBlockers('**Blockers:** one thing' + nits)).toEqual(['one thing'])
+})
+
+test('no Blockers list, or "none", gives no blockers; many and long ones are capped', () => {
+  expect(parseBlockers('Looks good.\n**Nits**\n1. x')).toEqual([])
+  expect(parseBlockers('**Blockers**\nNone.\n\n**Nits**\n1. x')).toEqual([])
+  expect(parseBlockers('**Blockers:** none')).toEqual([])
+  const many = parseBlockers(`**Blockers**\n${Array.from({ length: 9 }, (_, i) => `${i + 1}. ${'x'.repeat(300)}`).join('\n')}`)
+  expect(many).toHaveLength(4)
+  expect(many[0]).toHaveLength(100)
 })

@@ -45,6 +45,8 @@ export type Job = {
   reportStatus?: string
   // the status in the last report's header (done, blocked, failed), when it had one; reportStatus is deliver's
   headerStatus?: string
+  // a reviewer's last verdict and the blockers its report listed (a newer review replaces it); `head` is the commit it reviewed
+  review?: { verdict: 'approve' | 'changes'; blockers: string[]; head?: string; at: number }
   // what a builder was started for (a new worktree: feature; an existing folder: fix), for the time comment
   kind?: 'feature' | 'fix'
   // the clock of the time comment: when the work it covers began (startedAt when unset) and how long the
