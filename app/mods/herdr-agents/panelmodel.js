@@ -84,30 +84,43 @@ export function panelState(root) {
 /** Whether the focused terminal is this board's coordinator. */
 export const onOrchestrator = (board, focus) => Boolean(focus?.terminal) && board?.coordinator?.terminal === focus.terminal
 
+/** How long the panel waits to move after the space changes. Herdr's top bar keeps a panel per space (Files, Changes, the board,
+ *  or closed) and puts it back in the frames right after the switch, so a move decided on the panel the last space left showing
+ *  was undone by it: arriving at an orchestrator in another space left its board closed. Its restore lands in a frame or two. */
+export const PANEL_SETTLE_MS = 200
+
 /**
  * What the right panel does for the tab in focus. It moves once per arrival (`last.key`), so a terminal is resized at most once
  * for it. An orchestrator's tab opens a closed panel on the board, and a shell's goes back to Changes if the board was showing.
  * Files or Changes the owner picked stay: our view only comes back over a Changes this code moved to (`last.moved`), which a
  * worker's tab does too. Otherwise a worker's tab leaves the panel as it is, and when open on our view it draws that worker.
  * `state` is `panelState`. `width` is the strip's: null until measured, when nothing is decided yet. `held`: the owner closed the
- * board, so arriving no longer opens it.
+ * board, so arriving no longer opens it. An arrival in another space (`focus.space`, the first one included) is decided only
+ * from `PANEL_SETTLE_MS` after it, on the panel that space put back: until then `until` says when to draw again.
  */
-export function panelMove(focus, board, terminals, state, width, last = null, held = false) {
-  if (!focus?.tab || !Number.isFinite(width)) return { key: last?.key ?? null, moved: last?.moved === true, commands: [] }
+export function panelMove(focus, board, terminals, state, width, last = null, held = false, now = Date.now()) {
+  if (!focus?.tab || !Number.isFinite(width)) return { ...last, key: last?.key ?? null, moved: last?.moved === true, commands: [] }
   const worker = focusedWorker(board, terminals, focus)
   const kind = onOrchestrator(board, focus) ? 'orchestrator' : worker ? 'worker' : 'shell'
   const key = `${focus.tab}|${kind}|${width >= PANEL_MIN_WORK_PX}`
+  const space = focus.space
+  const switched = space !== undefined && space !== last?.space
+  const arrived = switched || key !== last?.key
   // A draw can land before the move to Changes does, with the board still showing, and that doesn't end it.
-  const moved = last?.moved === true && (state === 'changes' || (state === 'board' && key === last.key))
-  if (key === last?.key) return { key, moved, commands: [] }
+  const moved = last?.moved === true && (state === 'changes' || (state === 'board' && !arrived))
+  // An arrival in the same space keeps a wait that hasn't ended: that space's panel may not be back yet.
+  const until = switched ? now + PANEL_SETTLE_MS : (last?.until ?? null)
+  if (until !== null && now < until) return { key, moved, space, until, commands: [] }
+  const done = { key, moved, space, until: null }
+  if (!arrived && until === null) return { ...done, commands: [] }
   if (kind === 'orchestrator' && width >= PANEL_MIN_WORK_PX && !held && (state === 'closed' || moved)) {
-    return { key, moved: false, commands: PANEL_OPEN }
+    return { ...done, moved: false, commands: PANEL_OPEN }
   }
-  if (kind === 'worker' && moved) return { key, moved: false, commands: PANEL_OPEN }
+  if (kind === 'worker' && moved) return { ...done, moved: false, commands: PANEL_OPEN }
   if (kind === 'shell' && state === 'board') {
-    return { key, moved: true, commands: [['layout.select', { stack: 'panel-body', child: 'changes' }]] }
+    return { ...done, moved: true, commands: [['layout.select', { stack: 'panel-body', child: 'changes' }]] }
   }
-  return { key, moved, commands: [] }
+  return { ...done, commands: [] }
 }
 
 /** The bottom row's way in: `panel` whenever the panel is closed (D43), nothing while an orchestrator's board is already open,
