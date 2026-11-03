@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import unittest
 
 SCRIPT = os.path.join(isolation.ROOT, "scripts", "herdr-hidden-window.sh")
@@ -18,8 +19,7 @@ NAME = "t348x"
 DIR = f"/private/tmp/hw-{NAME}"
 
 
-@unittest.skipUnless(sys.platform == "darwin", "the script is macOS only")
-class HiddenWindowTimeouts(unittest.TestCase):
+class FakeWindow(unittest.TestCase):
     def setUp(self):
         shutil.rmtree(DIR, ignore_errors=True)
         os.makedirs(f"{DIR}/Herdr.app/Contents/MacOS")
@@ -57,6 +57,9 @@ class HiddenWindowTimeouts(unittest.TestCase):
             ["bash", SCRIPT, *args], capture_output=True, text=True, timeout=timeout, env=full
         )
 
+
+@unittest.skipUnless(sys.platform == "darwin", "the script is macOS only")
+class HiddenWindowTimeouts(FakeWindow):
     def test_demo_times_out_when_the_app_never_answers(self):
         self.stub("herdr-app", "exec sleep 600")
         self.stub("hc", "exit 0")
@@ -90,6 +93,87 @@ class HiddenWindowTimeouts(unittest.TestCase):
             r = self.run_script("demo", HERDR_HIDDEN_CALL_TIMEOUT=value)
             self.assertEqual(r.returncode, 2, value)
             self.assertIn("HERDR_HIDDEN_CALL_TIMEOUT", r.stderr)
+
+
+@unittest.skipUnless(sys.platform == "darwin", "the script is macOS only")
+class HiddenWindowSmoke(FakeWindow):
+    """`smoke` against stubs: the window is "already running" (HERDR_SMOKE_USE_RUNNING), so start is skipped."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = tempfile.mkdtemp(prefix="smoke-out-")
+        self.addCleanup(shutil.rmtree, self.out, True)
+        os.makedirs(f"{DIR}/app", exist_ok=True)
+        self.status = '{"errors":[]}'
+        self.shot = 'echo png >"$2"'
+        self.write_stubs()
+
+    def write_stubs(self):
+        self.stub(
+            "herdr-app",
+            f"""case "$1" in
+status) echo '{self.status}' ;;
+shot) {self.shot} ;;
+do) [ "$2" = space.new ] && echo '{{"space":"s1"}}'; exit 0 ;;
+esac""",
+        )
+        self.stub("hc", """[ "$1" = ls ] && echo '{"terminals":[{"agent":"claude","address":"t1"}]}'; exit 0""")
+
+    def smoke(self, **env):
+        self.write_stubs()
+        return self.run_script(
+            "smoke",
+            timeout=20,
+            HERDR_SMOKE_USE_RUNNING="1",
+            HERDR_SMOKE_SETTLE="0",
+            HERDR_SMOKE_OUT=self.out,
+            **env,
+        )
+
+    def test_smoke_passes_and_leaves_shots(self):
+        r = self.smoke()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for f in ("01-strip.png", "02-board.png", "03-sheet.png", "04-arrivals.png", "status-strip.json"):
+            self.assertTrue(os.path.getsize(os.path.join(self.out, f)) > 0, f)
+        self.assertFalse(os.path.exists(DIR))
+
+    def test_smoke_fails_on_status_error(self):
+        self.status = '{"errors":["x"]}'
+        r = self.smoke()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn('smoke: status error: ["x"]', r.stderr)
+        self.assertFalse(os.path.exists(DIR))
+
+    def test_smoke_fails_on_draw_failed(self):
+        with open(f"{DIR}/app/shared.json", "w") as f:
+            f.write('{"hrd.drawFailed.strip":"boom"}')
+        r = self.smoke()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("smoke: draw failed: hrd.drawFailed.strip=boom", r.stderr)
+
+    def test_smoke_fails_when_a_shot_is_missing(self):
+        self.shot = "exit 0"
+        r = self.smoke()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("smoke: strip failed: no shot", r.stderr)
+
+    def test_smoke_keeps_the_logs_of_a_failed_run(self):
+        self.status = '{"errors":["x"]}'
+        with open(f"{DIR}/app.log", "w") as f:
+            f.write("log line\n")
+        self.smoke()
+        self.assertTrue(os.path.exists(os.path.join(self.out, "app.log")))
+
+    def test_smoke_watchdog(self):
+        self.shot = "exec sleep 600"
+        r = self.smoke(HERDR_SMOKE_TIMEOUT="3")
+        self.assertEqual(r.returncode, 124)
+        self.assertIn("smoke: timed out after 3s", r.stderr)
+        self.assertFalse(os.path.exists(DIR))
+
+    def test_bad_smoke_timeout_is_refused(self):
+        r = self.smoke(HERDR_SMOKE_TIMEOUT="abc")
+        self.assertEqual(r.returncode, 2)
 
 
 if __name__ == "__main__":

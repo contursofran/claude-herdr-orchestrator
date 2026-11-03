@@ -42,6 +42,18 @@ To draw your own board, pass it to `demo`. By hand, its file must be `.herdr-age
 
 Each call `demo`, `stop` and `start` make to the app or the core is limited to `HERDR_HIDDEN_CALL_TIMEOUT` seconds (default 15). A mod that blocks the app makes `demo` fail with `Timed out after Ns: <command>` and the log tails, not hang; `stop` gives up on a core that doesn't answer and kills it with the rest of the window's processes.
 
+## Smoke run
+
+```sh
+scripts/herdr-hidden-window.sh smoke [board]   # window name smoke unless HERDR_HIDDEN_NAME is set
+```
+
+One command that starts a window, runs `demo` (`app/fixtures/full.json` unless a board is given), and takes a shot after each step: `01-strip`, `02-board` (`herdr-agents.board`), `03-sheet` (`herdr-agents.sheet`, after `overlay.close`) and `04-arrivals` (a new to-do written to the board). The shots and a `status-<step>.json` after each step go to `$HERDR_SMOKE_OUT` (default `.herdr-agents/smoke` in the current folder). It waits about 4 s before the first shot, because the first frames come late.
+
+After each step it fails the run when `herdr-app status` lists `errors` (`smoke: status error: <json>`), when the mod reports a draw failure (`smoke: draw failed: hrd.drawFailed.<part>=<message>`, from `app/shared.json`), when a call times out (`smoke: <step> timed out`) or when a shot is missing or empty. Every problem is printed, one per line, and the exit code is 1. It always runs `stop` at the end, and a failed run copies the window's `app.log` and `hooks.log` next to the shots.
+
+`HERDR_SMOKE_TIMEOUT` (default 240 s) limits the whole run, start and stop included: past it the run is killed, `stop` cleans up and the exit code is 124. Exit 0 means every check passed. It does not look at the shots: open them to see the draw.
+
 ## What it does
 
 The copy of the app has its own bundle id and `LSBackgroundOnly`, and is ad-hoc signed, which drops the hardened runtime so `scripts/herdr-hidden-window.m` can load into it. `start` proves the hooks load, with `--version`, before anything can open a window. The hooks:

@@ -7,14 +7,19 @@
 #   scripts/herdr-hidden-window.sh sync           copy this checkout's mod over (hot reload)
 #   scripts/herdr-hidden-window.sh demo [board]   a fake coordinator and a board (default app/fixtures/full.json)
 #   scripts/herdr-hidden-window.sh stop           close it and remove every trace
+#   scripts/herdr-hidden-window.sh smoke [board]  start, demo, shots of strip, board, sheet and an arrival, stop
 #
-# HERDR_HIDDEN_NAME picks the window (default hw), so several workers can have one each.
+# HERDR_HIDDEN_NAME picks the window (default hw; smoke uses smoke), so several workers can have one each.
 # HERDR_HIDDEN_APP picks the herdr-app that start copies (default /Applications/Herdr.app).
 # HERDR_HIDDEN_CALL_TIMEOUT is the seconds one call to the app or the core may take (default 15).
+# smoke: HERDR_SMOKE_TIMEOUT is the seconds the whole run may take (default 240); HERDR_SMOKE_OUT is
+# where shots and status files go (default ./.herdr-agents/smoke).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
-name=${HERDR_HIDDEN_NAME:-hw}
+default_name=hw
+[[ ${1:-} == smoke || ${1:-} == smoke-inner ]] && default_name=smoke
+name=${HERDR_HIDDEN_NAME:-$default_name}
 # The longest socket, $dir/state/herdr-core/hw-$name/hw-$name.holder.<8 hex>.sock, is
 # 62 characters plus three names, and macOS allows 103: so 13 at most.
 if [[ ! $name =~ ^[a-z0-9-]{1,13}$ ]]; then
@@ -262,8 +267,16 @@ demo() {
 process.stdout.write('\x1b]7501;state=idle:app=claude\x1b\\')
 setInterval(() => {}, 1e6)
 EOF
-  local reply
-  reply=$(call herdr-app do space.new --name shop --folder "$dir/home") || die "space.new failed."
+  local reply i status
+  # The core can take a few seconds to answer after start ("the window did not answer"): retry for up to 15 s.
+  for ((i = 0; i < 75; i++)); do
+    status=0
+    reply=$(call herdr-app do space.new --name shop --folder "$dir/home") || status=$?
+    [[ $status == 0 ]] && break
+    [[ $status == 142 ]] && die "space.new timed out."
+    sleep 0.2
+  done
+  [[ $i -lt 75 ]] || die "space.new failed: ${reply:-no answer}"
   space=$(node -pe 'JSON.parse(require("fs").readFileSync(0)).space' <<<"$reply" 2>/dev/null) || space=
   if [[ -z $space || $space == undefined ]]; then die "space.new gave no space: $reply"; fi
   sleep 0.5
@@ -271,7 +284,6 @@ EOF
     claude "$dir/fake-agent.js" >/dev/null || die "hc run failed."
   # The agent announces itself a moment after it starts: wait for it, within the call timeout.
   address=
-  local i
   for ((i = 0; i < call_timeout * 5; i++)); do
     address=$(call hc ls --json | node -pe '
       const t = JSON.parse(require("fs").readFileSync(0)).terminals.filter(t => t.agent !== "sh").pop()
@@ -288,7 +300,16 @@ EOF
     board.coordinator.terminal = address
     fs.writeFileSync(`${folder}/${board.session}.json`, JSON.stringify(board))
   ' "$fixture" "$dir/home/.herdr-agents/board" "$address"
-  call herdr-app do pane.focus --terminal "$address" >/dev/null
+  # The app attaches the pane a moment after the terminal exists ("no such pane"): retry for up to 15 s.
+  local focused=0
+  for ((i = 0; i < 75; i++)); do
+    if call herdr-app do pane.focus --terminal "$address" >/dev/null 2>&1; then
+      focused=1
+      break
+    fi
+    sleep 0.2
+  done
+  [[ $focused == 1 ]] || die "pane.focus on $address kept failing (no such pane) for 15s."
   echo "Coordinator at $address."
 }
 
@@ -328,7 +349,143 @@ close_window() {
   rm -rf "$dir"
 }
 
+# The whole smoke run under a watchdog. The run is a process group of its own: on timeout the
+# group is killed (a stuck call or a held lock can't outlive it), then stop cleans up.
+smoke_timeout=${HERDR_SMOKE_TIMEOUT:-240}
+smoke() {
+  if [[ ! $smoke_timeout =~ ^[0-9]+$ || $smoke_timeout -eq 0 ]]; then
+    echo "HERDR_SMOKE_TIMEOUT takes a whole number of seconds above 0, not '$smoke_timeout'." >&2
+    exit 2
+  fi
+  local status=0 out=${HERDR_SMOKE_OUT:-$PWD/.herdr-agents/smoke}
+  export HERDR_HIDDEN_NAME=$name # the subcommands it runs take the same window
+  perl -e '
+    my ($n, @cmd) = @ARGV;
+    my $p = fork;
+    if (!$p) { setpgrp(0, 0); exec @cmd or exit 127 }
+    $SIG{ALRM} = sub { kill "KILL", -$p; waitpid($p, 0); exit 142 };
+    alarm $n;
+    waitpid($p, 0);
+    exit($? >> 8)' "$smoke_timeout" bash "$0" smoke-inner "$@" || status=$?
+  if [[ $status == 142 ]]; then
+    echo "smoke: timed out after ${smoke_timeout}s" >&2
+    keep_logs "$out"
+    bash "$0" stop >/dev/null 2>&1 || true
+    exit 124
+  fi
+  exit "$status"
+}
+
+keep_logs() {
+  mkdir -p "$1"
+  cp "$dir"/*.log "$1/" 2>/dev/null || true
+}
+
+smoke_failures=()
+smoke_seen=" "
+
+smoke_fail() {
+  echo "smoke: $*" >&2
+  smoke_failures+=("$*")
+}
+
+# Fails the run when the app reports errors or the mod reports a draw failure.
+smoke_check() {
+  local step=$1 status_file=$2 line key
+  if ! call herdr-app status >"$status_file" 2>/dev/null; then
+    smoke_fail "status error: no answer after $step"
+    return
+  fi
+  line=$(node -e '
+    const e = JSON.parse(require("fs").readFileSync(process.argv[1])).errors
+    if (Array.isArray(e) && e.length) console.log(JSON.stringify(e))' "$status_file" 2>&1) ||
+    line="unreadable status: $(head -c 200 "$status_file")"
+  [[ -z $line ]] || smoke_fail "status error: $line"
+  while IFS= read -r line; do
+    key=${line%%=*}
+    # Once per key: the same failure stays in shared.json through every later step.
+    [[ $smoke_seen == *" $key "* ]] && continue
+    smoke_seen+="$key "
+    smoke_fail "draw failed: $line"
+  done < <(node -e '
+    const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))
+    for (const [k, v] of Object.entries(s)) if (k.startsWith("hrd.drawFailed.") && v) console.log(`${k}=${v}`)
+  ' "$dir/app/shared.json" 2>/dev/null || true)
+}
+
+# One command to the window; a failure is recorded under the step's name.
+smoke_do() {
+  local step=$1 status=0
+  shift
+  call "$@" >/dev/null || status=$?
+  if [[ $status == 142 ]]; then
+    smoke_fail "$step timed out"
+  elif [[ $status != 0 ]]; then
+    smoke_fail "$step failed"
+  fi
+}
+
+smoke_shot() {
+  local file=$1.png step=$2
+  smoke_do "$step" herdr-app shot "$out/$file"
+  [[ -s $out/$file ]] || smoke_fail "$step failed: no shot at $out/$file"
+}
+
+smoke_inner() {
+  local fixture=${1:-$here/app/fixtures/full.json}
+  local settle=${HERDR_SMOKE_SETTLE:-4} later=1
+  [[ $settle == 0 ]] && later=0
+  out=${HERDR_SMOKE_OUT:-$PWD/.herdr-agents/smoke}
+  mkdir -p "$out"
+  rm -f "$out"/[0-9][0-9]-*.png "$out"/status-*.json "$out"/*.log
+  # stop always runs, and a failed run keeps the window's logs beside the shots.
+  trap 'smoke_exit' EXIT
+  smoke_exit() {
+    local status=$?
+    if [[ $status != 0 || ${#smoke_failures[@]} -gt 0 ]]; then keep_logs "$out"; fi
+    bash "$0" stop >/dev/null 2>&1 || true
+    if [[ $status == 0 && ${#smoke_failures[@]} -gt 0 ]]; then status=1; fi
+    exit "$status"
+  }
+  # HERDR_SMOKE_USE_RUNNING is for the tests, which stand in for the app.
+  if [[ ${HERDR_SMOKE_USE_RUNNING:-} != 1 ]]; then bash "$0" start || exit 1; fi
+  bash "$0" demo "$fixture" || exit 1
+  smoke_check demo "$out/status-demo.json"
+  # The first frames come a moment after the window is up; an early shot is blank.
+  sleep "$settle"
+  smoke_shot 01-strip strip
+  smoke_check strip "$out/status-strip.json"
+  smoke_do board herdr-app do herdr-agents.board
+  sleep "$later"
+  smoke_shot 02-board board
+  smoke_check board "$out/status-board.json"
+  smoke_do overlay herdr-app do overlay.close
+  smoke_do sheet herdr-app do herdr-agents.sheet
+  sleep "$later"
+  smoke_shot 03-sheet sheet
+  smoke_check sheet "$out/status-sheet.json"
+  smoke_do overlay herdr-app do overlay.close
+  # A new to-do on the board is an arrival: the mod announces it and the strip changes.
+  node -e '
+    const fs = require("fs")
+    const folder = process.argv[1]
+    const file = fs.readdirSync(folder).filter(f => f.endsWith(".json"))[0]
+    const board = JSON.parse(fs.readFileSync(`${folder}/${file}`))
+    board.needs.push({ key: "T99", kind: "do", text: "Smoke arrival: check the strip shows this.", from: "w-api", at: Date.now(), isOpen: true, title: "Smoke arrival" })
+    board.summary.needs += 1
+    board.at = Date.now()
+    fs.writeFileSync(`${folder}/${file}`, JSON.stringify(board))
+  ' "$dir/home/.herdr-agents/board" || smoke_fail "arrivals failed: could not write the arrival"
+  sleep "$settle"
+  smoke_shot 04-arrivals arrivals
+  smoke_check arrivals "$out/status-arrivals.json"
+  if [[ ${#smoke_failures[@]} -gt 0 ]]; then exit 1; fi
+  echo "smoke: passed; shots in $out"
+}
+
 case ${1:-} in
+smoke) shift; smoke "$@" ;;
+smoke-inner) shift; smoke_inner "$@" ;;
 start) start ;;
 stop)
   take_lock
@@ -351,7 +508,7 @@ run)
   exec "${window_env[@]}" "$@"
   ;;
 *)
-  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
   ;;
 esac
