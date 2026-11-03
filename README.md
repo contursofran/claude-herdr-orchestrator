@@ -52,7 +52,7 @@ The strip shows the coordinator's context (`ctx 145k / 250k · aerum`, with the 
 
 ### A playbook that keeps workers busy
 
-Builder, then reviewer; the builder plans for itself, and the planner goes first only for work that needs several PRs or leaves the approach open. Each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run.
+Builder, then reviewer; the builder plans for itself, and the planner goes first only for work that needs several PRs or leaves the approach open. Each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. After `/hrd-orchestrate`, the coordinator is reminded when fewer than `target` workers run. A session that did not run it gets no playbook and no reminders, and does the work itself unless you ask for a worker; reports from workers you did ask for still arrive.
 
 ### Learning notes
 
