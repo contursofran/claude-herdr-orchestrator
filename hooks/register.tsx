@@ -15,7 +15,6 @@ import type { AskArgs, DecidedArgs, PinArgs } from './owner'
 import { session } from './session'
 import { dropOldJobs, jobs, restoreJobs } from './state'
 import { writeBlock } from './stateblock'
-import { jobTmp, pinTmp } from './tmpguard'
 import { refreshSpawnTool, registerTools } from './tools'
 import { checkReports, interruptWorker, messageWorker, resumeWatching, spawnWorker, stopWorker, sweep, sweepNeeded } from './workers'
 import type { SpawnArgs } from './workers'
@@ -157,11 +156,6 @@ export const register: Register = on => {
       if (chunk.kind !== 'engine') void liveOutput($).catch(() => {})
       yield chunk
     }
-  })
-  // A worker's Bash runs with TMPDIR in its job folder: the sandbox's own /tmp/claude-<uid> is shared (#161).
-  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const tmp = await jobTmp($)
-    return next(tmp && typeof e.command === 'string' ? { ...e, command: pinTmp(e.command, tmp) } : e)
   })
   on('tool.call', async ($, e, next) => {
     const done = await liveTool($, e).catch(() => null)
