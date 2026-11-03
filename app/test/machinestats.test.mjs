@@ -336,3 +336,70 @@ test('a window in the background reads nothing and redraws nothing, and the time
   const r = await ticked(() => (active = false))
   assert.deepEqual(r, { calls: 0, redraws: 0, timers: 1 })
 })
+
+const INTEL = [
+  'chip coretemp',
+  'Package id 0:71000',
+  'Core 0:67000',
+  'Core 1:71000',
+  'Core 2:71000',
+  'Core 3:62000',
+  'Core 4:63000',
+  'Core 5:61000',
+].join('\n')
+const AMD = ['chip k10temp', 'Tctl:68500', 'Tdie:58500', 'Tccd1:55000'].join('\n')
+
+test('CPU temperature: Intel coretemp averages the cores, AMD k10temp reads Tdie then Tctl, none gives nothing', () => {
+  assert.equal(m.parseTemps(INTEL), 66) // (67+71+71+62+63+61)/6 = 65.8; the package figure is not counted
+  assert.equal(m.parseTemps(AMD), 59)
+  assert.equal(m.parseTemps('chip zenpower\nTctl:70400'), 70)
+  assert.equal(m.parseTemps('chip coretemp\nPackage id 0:52000'), 52, 'a chip with no cores falls back to the package')
+  assert.equal(m.parseTemps('chip coretemp\nCore 0:\nCore 1:'), null, 'an unreadable value is no figure')
+  assert.equal(m.parseTemps(['chip nct6798', 'Core 0:50000'].join('\n')), null, 'other chips are not CPU')
+  assert.equal(m.parseTemps(''), null)
+  assert.equal(m.parseTemps(undefined), null)
+})
+
+test('the temperature follows the other figures in the line, and macOS or a machine without a sensor shows none', () => {
+  const withTemp = t => LINUX() + '\n--temp\n' + t
+  assert.equal(m.statsLine(m.readFigures(withTemp(INTEL), null)), 'RAM 30%  Disk 47%  66°C')
+  assert.equal(m.statsLine(m.readFigures(withTemp(AMD), null)), 'RAM 30%  Disk 47%  59°C')
+  assert.equal(m.statsLine(m.readFigures(withTemp(''), null)), 'RAM 30%  Disk 47%')
+  assert.equal(m.statsLine(m.readFigures(LINUX(), null)), 'RAM 30%  Disk 47%', 'an old reading without the section')
+  assert.equal(m.statsLine(m.readFigures(MAC + '\n--temp\n', null)), 'CPU 58%  RAM 70%  Disk 86%')
+  assert.equal(m.statsLine({ cpu: null, ram: null, disk: null, temp: 80 }), '80°C')
+})
+
+test('READ_SCRIPT prints the --temp section from hwmon: coretemp and k10temp chips, nothing for others', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  if (process.platform === 'win32') return
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hwmon-'))
+  const chip = (dir, name, temps) => {
+    fs.mkdirSync(path.join(root, dir))
+    fs.writeFileSync(path.join(root, dir, 'name'), name + '\n')
+    temps.forEach(([label, v], i) => {
+      if (label) fs.writeFileSync(path.join(root, dir, `temp${i + 1}_label`), label + '\n')
+      fs.writeFileSync(path.join(root, dir, `temp${i + 1}_input`), v + '\n')
+    })
+  }
+  chip('hwmon0', 'nvme', [['Composite', 40000]])
+  chip('hwmon1', 'coretemp', [
+    ['Package id 0', 71000],
+    ['Core 0', 60000],
+    ['Core 1', 70000],
+  ])
+  const tempSection = m.READ_SCRIPT.split('\n').find(l => l.includes('/sys/class/hwmon'))
+  const run = () => execFileSync('sh', ['-c', 'os=Linux\n' + tempSection.replaceAll('/sys/class/hwmon', root)], { encoding: 'utf8' })
+  assert.ok(m.READ_SCRIPT.includes('echo --temp'))
+  assert.equal(m.parseTemps(run()), 65)
+  fs.rmSync(path.join(root, 'hwmon1'), { recursive: true })
+  chip('hwmon2', 'k10temp', [['Tctl', 61000]])
+  assert.equal(m.parseTemps(run()), 61)
+  fs.rmSync(path.join(root, 'hwmon2'), { recursive: true })
+  assert.equal(run(), '')
+  assert.equal(m.parseTemps(run()), null)
+  fs.rmSync(root, { recursive: true })
+})
