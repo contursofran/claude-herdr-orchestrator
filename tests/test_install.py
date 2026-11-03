@@ -57,7 +57,7 @@ class Install(unittest.TestCase):
         self.install()
         self.assertFalse(os.path.exists(self.app))
 
-    def test_with_the_app_the_mod_and_a_coordinator_layout_land_and_main_stays(self):
+    def test_with_the_app_the_mod_and_a_coordinator_layout_land_and_main_only_gains_the_arrivals_block(self):
         os.makedirs(os.path.join(self.app, "layouts"))
         main = {"id": "root", "children": [{"id": "work", "children": [{"id": "tabs"}, {"id": "work-body", "children": [{"id": "main"}]}]}]}
         with open(os.path.join(self.app, "layouts", "main.json"), "w") as f:
@@ -65,7 +65,10 @@ class Install(unittest.TestCase):
         self.install()
         self.install()  # a second run leaves the layout and the keys as they are
         with open(os.path.join(self.app, "layouts", "main.json")) as f:
-            self.assertEqual(json.load(f), main)
+            got = json.load(f)
+        floating = got.pop("floating")  # the one change: a single invisible arrivals block
+        self.assertEqual([c["id"] for c in floating], ["hrd-arrivals"])  # once, not twice, after two installs
+        self.assertEqual(got, main)
         with open(os.path.join(self.app, "layouts", "coordinator.json")) as f:
             work = json.load(f)["children"][0]["children"]
         self.assertEqual([c["id"] for c in work], ["tabs", "work-body", "hrd-strip"])

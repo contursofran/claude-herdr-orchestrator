@@ -259,6 +259,45 @@ export async function pollPrs($: EngineInterface) {
   }
 }
 
+// A row keyed by a number in a known repo: its issue or PR is on GitHub.
+const onGitHub = (t: Task) => Boolean(t.repo) && /#\d{1,6}$/.test(t.key)
+
+// Rows take their title from GitHub (`gh issue view` gives a PR's too): the brief's first line is often a command
+// (`gh issue view 158`) or says where the work is, not what it is. Read once per row while the app mod draws the boards, a
+// few per poll. A number GitHub doesn't have keeps the brief's title (null); a failed read is asked again at the next poll.
+let titling = false
+export async function pollTitles($: EngineInterface) {
+  if (titling || !(await appModShown($))) return
+  titling = true
+  try {
+    const { v, tasks } = await gather($)
+    const listed = new Set(tasks.filter(onGitHub).map(t => t.key))
+    const got: Record<string, string | null> = {}
+    for (const k of [...listed].filter(k => v.titles?.[k] === undefined).slice(0, PR_POLL_MAX)) {
+      const [repo = '', n = ''] = k.split('#')
+      try {
+        const ran = await $.process.run(['gh', 'issue', 'view', n, '-R', repo, '--json', 'title'], { timeoutMs: 20_000 })
+        if (ran.exitCode === 0) {
+          const title = String((JSON.parse(ran.stdout) as { title?: unknown }).title ?? '')
+            .replace(/\s+/g, ' ')
+            .trim()
+          got[k] = title ? title.slice(0, 120) : null
+        } else if (/could not resolve to an issue/i.test(ran.stderr)) got[k] = null
+      } catch {
+        // asked again at the next poll
+      }
+    }
+    const isStale = Object.keys(v.titles ?? {}).some(k => !listed.has(k))
+    if (!Object.keys(got).length && !isStale) return
+    await update($, state, s => ({
+      ...s,
+      titles: Object.fromEntries(Object.entries({ ...s.titles, ...got }).filter(([k]) => listed.has(k))),
+    }))
+  } finally {
+    titling = false
+  }
+}
+
 // What the snapshot below is built from, cheap to read: when it and the minute are the
 // same, so is the snapshot (rows age out of the table by the minute).
 export async function boardInputs($: EngineInterface) {
@@ -332,7 +371,7 @@ export async function boardSnapshot($: EngineInterface) {
     tasks: tasks.map(t => ({
       key: t.key,
       label: t.label,
-      title: t.title,
+      title: v.titles?.[t.key] || t.title,
       repo: t.repo ?? null,
       pr: t.pr ?? null,
       url: ghUrl(t) ?? null,

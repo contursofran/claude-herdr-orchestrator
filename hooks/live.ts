@@ -1,5 +1,6 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface } from 'claude-code'
-import { LIVE_COMMAND_MS, LIVE_SAVE_MS } from './defaults'
+import { LIVE_COMMAND_MS, LIVE_SAVE_MS, QUIET_SHOW_MS, QUIET_WARN_MS } from './defaults'
 
 // What an agent is doing right now (#277), for its row: the tool it is running and when the model last said anything.
 // Every session records its own from its hooks. A worker also writes it to the file spawn named in HERDR_AGENTS_LIVE, and its
@@ -10,6 +11,9 @@ export type Live = {
   outputAt: number
   command: string | null
   commandAt: number | null
+  // When this turn started and how many tools it has run (#174): the coordinator's own live line only. Older files lack them.
+  turnAt?: number | null
+  tools?: number
   // The context fill after its last turn; kept between turns.
   context?: { tokens: number; limit: number }
 }
@@ -18,12 +22,40 @@ const running = new Set<{ command: string; at: number }>()
 let path: string | null = null
 let inTurn = false
 let outputAt = 0
+let turnAt: number | null = null
+let tools = 0
 let savedAt = 0
 let context: Live['context']
 
+export type BandText = { text: string; warn: boolean } | null
+
+// What the band last drew. Its render reads it, so a change redraws the band: a tool call or a turn start/end updates it at once,
+// the coordinator's tick when the minute or the quiet state moves.
+const shown = atom({ plugin: 'herdr-agents', key: 'liveline' } as const, { line: null as BandText })
+
+export async function liveLine($: EngineInterface): Promise<BandText> {
+  return (await read($, shown)).line
+}
+
+// Works out the band's line now and stores it if it changed (the text carries the minute, so a same-minute tick writes nothing).
+export async function syncLive($: EngineInterface) {
+  const line = bandLine(await $.clock.now())
+  const prev = (await read($, shown)).line
+  if (prev?.text === line?.text && prev?.warn === line?.warn) return
+  await update($, shown, () => ({ line }))
+}
+
 function liveNow(): Live {
   const oldest = [...running].sort((a, b) => a.at - b.at)[0]
-  return { inTurn, outputAt, command: oldest?.command ?? null, commandAt: oldest?.at ?? null, ...(context ? { context } : {}) }
+  return {
+    inTurn,
+    outputAt,
+    turnAt,
+    tools,
+    command: oldest?.command ?? null,
+    commandAt: oldest?.at ?? null,
+    ...(context ? { context } : {}),
+  }
 }
 
 async function save($: EngineInterface, now: number) {
@@ -36,8 +68,11 @@ export async function startLive($: EngineInterface) {
   running.clear()
   inTurn = false
   outputAt = 0
+  turnAt = null
+  tools = 0
   savedAt = 0
   context = undefined
+  await syncLive($)
 }
 
 // After each turn: how full this session's context is, for the worker panel's `ctx 41%`.
@@ -51,7 +86,10 @@ export async function liveTurn($: EngineInterface, started: boolean) {
   running.clear()
   inTurn = started
   if (started) outputAt = now
+  turnAt = started ? now : null
+  tools = 0
   await save($, now)
+  await syncLive($)
 }
 
 // A piece of the model's answer. It arrives many times a second, so the file follows at most every LIVE_SAVE_MS.
@@ -65,12 +103,15 @@ export async function liveOutput($: EngineInterface) {
 export async function liveTool($: EngineInterface, e: { tool: string; command?: unknown }) {
   const call = { command: toolLabel(e), at: await $.clock.now() }
   running.add(call)
+  tools++
   await save($, call.at)
+  await syncLive($)
   return async () => {
     running.delete(call)
     const now = await $.clock.now()
     outputAt = now
     await save($, now)
+    await syncLive($)
   }
 }
 
@@ -106,7 +147,27 @@ export function liveFields(live: Live | null, now: number) {
 }
 
 // This session's own, for a coordinator's row.
-export const ownLiveFields = (now: number) => liveFields(liveNow(), now)
+// It also has the turn's start (rounded down to the minute, like the output time) and its tool count (#174); a worker's row has neither,
+// so the board isn't rewritten at every tool call of every worker.
+export function ownLiveFields(now: number) {
+  const live = liveNow()
+  const fields = liveFields(live, now)
+  if (!live.inTurn || live.turnAt == null) return fields
+  return { ...fields, turnAt: Math.floor(live.turnAt / 60_000) * 60_000, tools: live.tools ?? 0 }
+}
+
+// The coordinator's line above its prompt when the app mod isn't drawing: `3m · 12 tools · running npm test`, or `· no output · 2m`
+// once the model has said nothing for QUIET_SHOW_MS. Null outside a turn.
+export function bandLine(now: number) {
+  const live = liveNow()
+  if (!live.inTurn || live.turnAt == null) return null
+  const mins = (ms: number) => `${Math.max(0, Math.floor(ms / 60_000))}m`
+  const n = live.tools ?? 0
+  const parts = [mins(now - live.turnAt), `${n} ${n === 1 ? 'tool' : 'tools'}`]
+  if (live.command) parts.push(`running ${live.command}`)
+  else if (now - live.outputAt >= QUIET_SHOW_MS) parts.push(`no output · ${mins(now - live.outputAt)}`)
+  return { text: parts.join(' · '), warn: !live.command && now - live.outputAt >= QUIET_WARN_MS }
+}
 
 // A worker's, from the file it writes, read once: the live line (only while it works) and its context fill as a whole percent
 // (what the board shows, so it only rewrites when the number moves). No file, or one caught mid-write, shows nothing until the next tick.

@@ -49,7 +49,7 @@ export function applyFile(boards, id, text) {
  *  The agents list draws coordinators and parked workers; the pop-up its own board; the sheet task rows too (the tasks waiting on
  *  an item), only while open (`open`, its hrd.sheet). The pin bar, strip and card draw no task rows, but the strip sizes the pop-up from how many there are, so the rows'
  *  keys count and their text (a minute clock) does not. */
-const liveKey = a => [a?.command, a?.commandAt, a?.outputAt]
+const liveKey = a => [a?.command, a?.commandAt, a?.outputAt, a?.turnAt, a?.tools]
 
 export function drawnKey(role, boards, session, open = null) {
   const list = boards ?? []
@@ -231,6 +231,16 @@ export const QUIET_WARN_MS = 5 * 60_000
  *  time out of a running command, as the board's rows do. The board has these fields only mid-turn, so an idle agent gets no warning.
  *  `coordinator` is set for the coordinator's own row: once amber, its text also suggests the way out (workers have an interrupt button). */
 export function liveLine(agent, now, coordinator = false) {
+  const line = liveBase(agent, now, coordinator)
+  // The coordinator's own row also says how long its turn has run and how many tools it has used (#174).
+  if (!coordinator || !Number.isFinite(agent?.turnAt)) return line
+  const n = Number.isFinite(agent.tools) ? agent.tools : 0
+  const prefix = `${Math.max(0, Math.floor((now - agent.turnAt) / 60_000))}m · ${n} ${n === 1 ? 'tool' : 'tools'}`
+  if (!line) return { text: prefix, short: prefix, quiet: false, warn: false }
+  return { ...line, text: `${prefix} · ${line.text}` }
+}
+
+function liveBase(agent, now, coordinator) {
   if (typeof agent?.command === 'string' && agent.command) {
     const short = `running ${agent.command}`
     const age = ageText(agent.commandAt, now)
@@ -289,7 +299,8 @@ export const AGE_TICK_MS = 60_000
 export function agedTimes(role, { boards = [], open = null, session = null } = {}) {
   const known = at => (at ? [at] : [])
   // The clocks of a board's agents, which move on their own, and of its merged rows.
-  const liveTimes = b => [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
+  const liveTimes = b =>
+    [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt), ...known(w?.turnAt)])
   const mergeTimes = b => workRows(b).flatMap(r => (r.isMerged ? known(r.mergedAt) : []))
   if (role === 'board') {
     const board = boards.find(b => b.session === session)
@@ -1035,17 +1046,26 @@ export const isBoardCommand = name => /(?:^|\.)board$/.test(String(name))
 // ---- Sound and notification (S10) ----
 
 /**
- * New `know`, `do` and `ask` items on one board (a `do` is a strip tab, not a pin; it sounds like a question). `prevKeys` is the Set
- * this returned last time for the board, or null the first time the board is seen (then nothing is new). Blocked workers are not items here: Herdr sounds for those itself.
- * Returns {keys, fresh}: every open know/do/ask key now, and the items in it that were not in `prevKeys` ({key, kind, text}).
+ * New `do` and `ask` items on one board (a `do` is a to-do and sounds like a question; `know` items do not chime, as nothing
+ * shows them). `prevKeys` is the Set this returned last time for the board, or null the first time the board is seen: then
+ * nothing is new, unless `since` (the ms mark of the last announcement) is a number, and then the open items with an `at`
+ * newer than it are. Blocked workers are not items here: Herdr sounds for those itself.
+ * Returns {keys, fresh}: every open do/ask key now, and the items in it that were new ({key, kind, text, at}).
  */
-export function newArrivals(prevKeys, board) {
-  const items = openNeeds(board).filter(n => n.kind === 'know' || n.kind === 'do' || n.kind === 'ask')
+export function newArrivals(prevKeys, board, since = null) {
+  const items = openNeeds(board).filter(n => n.kind === 'do' || n.kind === 'ask')
   const keys = new Set(items.map(n => n.key))
-  if (!prevKeys) return { keys, fresh: [] }
-  const fresh = items
-    .filter(n => !prevKeys.has(n.key))
-    .map(n => ({ key: n.key, kind: n.kind, text: firstLine(n.title) || firstLine(n.text) || n.key }))
+  const isNew = prevKeys
+    ? n => !prevKeys.has(n.key)
+    : typeof since === 'number'
+      ? n => typeof n.at === 'number' && n.at > since
+      : () => false
+  const fresh = items.filter(isNew).map(n => ({
+    key: n.key,
+    kind: n.kind,
+    text: firstLine(n.title) || firstLine(n.text) || n.key,
+    ...(typeof n.at === 'number' ? { at: n.at } : {}),
+  }))
   return { keys, fresh }
 }
 
@@ -1061,15 +1081,13 @@ export function arrivalNotice(arrivals) {
   const terminal = list.find(a => typeof a.terminal === 'string')?.terminal ?? null
   if (all.length === 1) {
     const [one] = all
-    return { title: one.kind === 'ask' ? 'New question' : one.kind === 'do' ? 'New to-do' : 'New pin', body: one.text, terminal }
+    return { title: one.kind === 'ask' ? 'New question' : 'New to-do', body: one.text, terminal }
   }
   const asks = all.filter(i => i.kind === 'ask').length
-  const dos = all.filter(i => i.kind === 'do').length
-  const pinsN = all.length - asks - dos
+  const dos = all.length - asks
   const parts = []
   if (asks) parts.push(`${asks} ${asks === 1 ? 'question' : 'questions'}`)
   if (dos) parts.push(`${dos} ${dos === 1 ? 'to-do' : 'to-dos'}`)
-  if (pinsN) parts.push(`${pinsN} ${pinsN === 1 ? 'pin' : 'pins'}`)
   return { title: `${all.length} new items`, body: parts.join(', '), terminal }
 }
 

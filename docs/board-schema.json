@@ -25,7 +25,9 @@
         },
         "command": { "type": "string", "description": "Like a worker's `command`, `commandAt` and `outputAt`: there only mid-turn." },
         "commandAt": { "type": "number" },
-        "outputAt": { "type": "number" }
+        "outputAt": { "type": "number" },
+        "turnAt": { "type": "number", "description": "When the coordinator's turn started, to the minute; there only mid-turn." },
+        "tools": { "type": "integer", "description": "How many tools the coordinator has run this turn; there only mid-turn." }
       }
     },
     "stageNames": {
@@ -134,7 +136,10 @@
         "properties": {
           "key": { "type": "string" },
           "label": { "type": "string", "description": "#640" },
-          "title": { "type": "string" },
+          "title": {
+            "type": "string",
+            "description": "The row's issue or PR title on GitHub once read, else what the first worker's brief says the work is."
+          },
           "repo": { "type": ["string", "null"] },
           "pr": { "type": ["integer", "null"] },
           "url": { "type": ["string", "null"], "description": "The PR on GitHub, else the issue." },

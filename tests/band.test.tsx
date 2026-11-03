@@ -1,6 +1,7 @@
 import { expect } from 'claude-code/testing'
 import { BATCH_MS } from '../hooks/defaults'
 import { BAND, spawn, start, stopAll, test } from './harness'
+import { turnEnd } from './workerkit'
 import type { TestBody } from 'claude-code/testing'
 
 // The one line above the prompt, what pin_for_owner keeps, and the worker states the board shows.
@@ -22,6 +23,43 @@ test('a tick reads the settings file twice at most: for the state file and for t
   expect(settings() - before).toBeGreaterThan(0)
   expect(settings() - before).toBeLessThanOrEqual(10 * 2)
   await stopAll($, clock, ['w-busy'])
+})
+
+test('the band shows the coordinator live line mid-turn, warns at 5 min, and clears at turn end', async ($, on) => {
+  let finish = () => {}
+  on('tool.call', { tool: 'Bash' }, () => new Promise(resolve => (finish = () => resolve({ result: { stdout: '' } } as never))) as never)
+  const { clock } = await start($, on)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+  await $.turn.start({ text: 'Go.', turnId: 't1' })
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /tools/ }))?.text).toBe('0m · 0 tools')
+  const call = $.tool.call({ tool: 'Bash', command: 'npm test -- --watch' } as never)
+  await clock.advance(3 * 60_000)
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /tool/ }))?.text).toBe('3m · 1 tool · running npm test')
+  finish()
+  await call
+  await $.turn.complete(turnEnd('t1'))
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: /tools/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /engine band/ })).toBeDefined()
+})
+
+test('the band follows the turn without any redraw: tool calls and the tick change its text', async ($, on) => {
+  let finish = () => {}
+  on('tool.call', { tool: 'Bash' }, () => new Promise(resolve => (finish = () => resolve({ result: { stdout: '' } } as never))) as never)
+  const { clock } = await start($, on)
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.turn.start({ text: 'Go.', turnId: 't1' })
+  expect((await ui.find({ type: 'Text', text: /tools/ }))?.text).toBe('0m · 0 tools')
+  const call = $.tool.call({ tool: 'Bash', command: 'npm test' } as never)
+  await clock.advance(1)
+  expect((await ui.find({ type: 'Text', text: /tool/ }))?.text).toBe('0m · 1 tool · running npm test')
+  await clock.advance(61_000)
+  expect((await ui.find({ type: 'Text', text: /tool/ }))?.text).toBe('1m · 1 tool · running npm test')
+  finish()
+  await call
 })
 
 test('with nothing waiting the band draws nothing of its own, and one line once something waits', async ($, on) => {

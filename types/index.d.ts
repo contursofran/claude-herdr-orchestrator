@@ -128,6 +128,9 @@ export type Row = {
   command?: string | null
   commandAt?: number | null
   outputAt?: number
+  // The coordinator's own row only: when its turn started (to the minute) and how many tools it has run (#174).
+  turnAt?: number
+  tools?: number
   // Its context fill after its last turn, in whole percent (see workerLive).
   context?: number
 }
@@ -184,6 +187,8 @@ export type BoardState = {
   next?: NextItem[]
   // each worker's branch against the default branch, by worker name (see branchdiff.ts)
   diffs?: Record<string, BranchDiff>
+  // a row's issue or PR title on GitHub, by owner/name#123; null when GitHub has none by that number (see pollTitles)
+  titles?: Record<string, string | null>
 }
 
 // `base` is the branch it is read against; `files` are the first few, `more` the ones left out; `add` and `del` count every file.
@@ -247,6 +252,8 @@ declare module 'claude-code' {
       boardState: BoardState
       // whether the Herdr app mod drew this session's board at the last check; changing it redraws the band
       appmod: { shown: boolean }
+      // the coordinator's band text in a turn (null outside one); changing it redraws the band
+      liveline: { line: { text: string; warn: boolean } | null }
     }
   }
 }

@@ -1,5 +1,5 @@
 import { View, div } from 'gpui-kit'
-import { props } from 'herdr'
+import { props, setShared, shared, theme } from 'herdr'
 
 // One mod, one file per part; props().role says which part this copy draws. Herdr keeps every load of a mod for the life of
 // the window, and loads it again for each copy, so a copy imports only its own role's code, with import() (#335). Each role
@@ -14,6 +14,7 @@ const roles = {
   board: () => import('./role-board.js'),
   strip: () => import('./role-strip.js'),
   sheet: () => import('./role-sheet.js'),
+  arrivals: () => import('./role-arrivals.js'),
 }
 
 export default class HerdrAgents extends View {
@@ -25,13 +26,23 @@ export default class HerdrAgents extends View {
     // `loaded` settles once the role is running (the tests wait on it); until then the copy draws nothing.
     this.loaded = load()
       .then(mod => {
-        this.role = new mod.default()
-        this.role.props = own
-        this.role.init(cx)
+        const role = new mod.default()
+        role.props = own
+        role.init(cx)
+        this.role = role // only once it runs: a role whose init threw is never drawn or closed half-set
         // The redraw that shows the role goes through a spawn: a bare cx.notify() here reaches only some of the copies.
         cx.spawn(async cx => cx.notify())
       })
-      .catch(error => console.log(`herdr-agents: ${own.role} failed to load: ${error}`))
+      .catch(error => this.loadFailed(own.role, error, cx))
+  }
+
+  /** A role that cannot load says so: in the log, in the view (a dim line, so the owner is not left with a blank band) and,
+   *  for a part the plugin's band stands in for, in the draw-failed key the strip's copy reports with its heartbeat. */
+  loadFailed(role, error, cx) {
+    this.failure = `herdr-agents: ${role} failed to load: ${error?.message ?? error}`
+    console.log(this.failure)
+    import('./drawguard.js').then(guard => guard.guardsDraw(role) && guard.noteDraw(role, error, shared, setShared)).catch(() => {})
+    cx.spawn(async cx => cx.notify())
   }
 
   async close() {
@@ -40,6 +51,10 @@ export default class HerdrAgents extends View {
   }
 
   render(cx) {
+    if (this.failure) {
+      const t = theme()
+      return div().size_full().flex().items_center().px(8).text_size(11).text_color(t.dim).child(div().truncate().child(this.failure))
+    }
     return this.role?.render(cx) ?? div()
   }
 }

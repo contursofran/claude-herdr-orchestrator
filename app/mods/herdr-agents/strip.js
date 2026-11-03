@@ -1,6 +1,6 @@
 import { Popup } from 'gpui-base'
 import { div, svg } from 'gpui-kit'
-import { focused, layout, nextCommand, notify, openOverlay, playSound, run, setShared, shared, terminals } from 'herdr'
+import { focused, layout, nextCommand, openOverlay, run, setShared, shared, terminals } from 'herdr'
 import {
   FLASH_MS,
   anyFlashing,
@@ -33,7 +33,6 @@ import {
   panelMove,
   panelState,
 } from './panelmodel.js'
-import { Arrivals } from './arrivals.js'
 import { card } from './card.js'
 import { closeCard, openCard } from './cardctl.js'
 import { handBack, openPopupBack, takeDismissed } from './outside.js'
@@ -86,9 +85,9 @@ export class StripState {
     this.board = null
     this.boardsRead = false // the first read of the boards has ended
     this.waiting = null // the last command that came before it
-    this.arrivals = new Arrivals({ play: playSound, post: notify })
     this.width = null // the strip's, from its last layout
     this.panelLast = null // the arrival the right panel last moved for, and whether it moved off the board
+    this.panelSettling = false // a draw is set for when a move waiting on a space switch is due
   }
 
   /** Lets Herdr's top bar restore the board when a space comes back: it hides any panel not on this list. */
@@ -99,8 +98,10 @@ export class StripState {
   /** Called from the draw, so the panel follows focus with no polling; the commands wait for the draw to end. */
   followPanel(cx, board) {
     const state = panelState(layout())
-    const move = panelMove(focused(), board, terminals(), state, this.width, this.panelLast, panelHeld())
+    const now = Date.now()
+    const move = panelMove(focused(), board, terminals(), state, this.width, this.panelLast, panelHeld(), now)
     this.panelLast = move
+    if (move.until > now) this.settlePanel(cx, move.until - now)
     if (!move.commands.length && (state === null || panelAllowed())) return
     cx.spawn(async cx => {
       await cx.sleep(0)
@@ -110,9 +111,19 @@ export class StripState {
     })
   }
 
+  /** One draw when a move waiting for the space's own panel is due: nothing else may draw the strip by then. */
+  settlePanel(cx, ms) {
+    if (this.panelSettling) return
+    this.panelSettling = true
+    cx.spawn(async cx => {
+      await cx.sleep(ms)
+      this.panelSettling = false
+      cx.notify()
+    })
+  }
+
   /** Called with a live `cx` (from the board reader) after the boards changed. */
   observe(cx, boards) {
-    this.arrivals.observe(boards)
     const now = Date.now()
     this.known = observeArrivals(this.known, boards, now)
     if (anyFlashing(this.known, now)) {

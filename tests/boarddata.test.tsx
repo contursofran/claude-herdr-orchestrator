@@ -107,6 +107,33 @@ test("a reviewer joins the row of the PR its builder linked, with the PR's check
   await stopAll($, clock, ['f-12'])
 })
 
+test("a row takes its issue's title from GitHub, and keeps the brief's where GitHub has none", async ($, on) => {
+  const { clock, files, issues } = await start($, on)
+  issues['acme/app-client#158'] = { title: 'App mod: the window stops answering after a delivery' }
+  await $.tool.call({ tool: 'mcp__herdr-agents__spawn', worker: 'd-158', profile: 'builder', cwd: '/repo/wt', task: '`gh issue view 158`' })
+  await $.tool.call({
+    tool: 'mcp__herdr-agents__spawn',
+    worker: 'b-159',
+    profile: 'builder',
+    cwd: '/repo/wt2',
+    task: 'Issue #159: fix the login page',
+  })
+  await settled()
+  await clock.advance(3000)
+  const row = (n: number) => rowsIn(files).find(r => r.key === `acme/app-client#${n}`)
+  expect(row(158)?.title).toBe('`gh issue view 158`')
+  // The 2-minute tick reads them while the app mod's heartbeat is fresh.
+  for (let i = 0; i < 5; i++) {
+    files[HEARTBEAT] = beat(clock.now())
+    await clock.advance(30_000)
+  }
+  await clock.advance(3000)
+  await until(clock, async () => row(158)?.title !== '`gh issue view 158`')
+  expect(row(158)?.title).toBe('App mod: the window stops answering after a delivery')
+  expect(row(159)?.title).toBe('fix the login page')
+  await stopAll($, clock, ['d-158', 'b-159'])
+})
+
 test('one number in two repos is two rows, and a review row joins its builder once the report names the PR', async ($, on) => {
   const { clock, typed, files } = await start($, on)
   const spawn = async (worker: string, profile: string, cwd: string, task: string) => {
