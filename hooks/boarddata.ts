@@ -295,7 +295,12 @@ export async function boardSnapshot($: EngineInterface) {
     cwd: session.cwd,
     at: now,
     // The hc terminal this coordinator runs in (null outside hc); an app finds the board by it.
-    coordinator: { terminal: (await $.env.get('HC_TERMINAL_ID')) || null, orchestrating: await isOrchestrating($), ...ownLiveFields(now) },
+    coordinator: {
+      terminal: (await $.env.get('HC_TERMINAL_ID')) || null,
+      ...((await $.env.get('HERDR_PANE_ID')) ? { pane: await $.env.get('HERDR_PANE_ID') } : {}),
+      orchestrating: await isOrchestrating($),
+      ...ownLiveFields(now),
+    },
     stageNames: [...STAGES],
     summary: {
       busy,
@@ -318,6 +323,7 @@ export async function boardSnapshot($: EngineInterface) {
       ...(r.model ? { model: r.model } : {}),
       ...(r.worktree ? { worktree: r.worktree } : {}),
       ...(r.branch ? { branch: r.branch } : {}),
+      ...(r.pane ? { pane: r.pane } : {}),
       ...(r.outputAt === undefined ? {} : { command: r.command ?? null, commandAt: r.commandAt ?? null, outputAt: r.outputAt }),
       ...(r.context === undefined ? {} : { context: r.context }),
       ...(v.diffs?.[r.name] ? { diff: v.diffs[r.name] } : {}),

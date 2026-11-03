@@ -18,9 +18,10 @@
       "description": "Optional, so older boards stay valid.",
       "properties": {
         "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." },
+        "pane": { "type": "string", "description": "Optional. The coordinator's herdr pane id (HERDR_PANE_ID); absent when unknown." },
         "orchestrating": {
           "type": "boolean",
-          "description": "True once /hrd-orchestrate ran in this session (it starts workers), false while it works on its own; /hrd-wrap-up does not clear it. Missing on older boards: unknown."
+          "description": "True once /hrd-orchestrate ran in this session (it starts workers), false while it works on its own; a finished /hrd-wrap-up clears it. Missing on older boards: unknown."
         },
         "command": { "type": "string", "description": "Like a worker's `command`, `commandAt` and `outputAt`: there only mid-turn." },
         "commandAt": { "type": "number" },
@@ -78,6 +79,10 @@
           },
           "worktree": { "type": "string", "description": "Optional. The folder it works in." },
           "branch": { "type": "string", "description": "Optional. The git branch checked out there when it started." },
+          "pane": {
+            "type": "string",
+            "description": "Optional. The herdr pane id of its terminal, as hc's spawn reply gave it; absent when hc gave none."
+          },
           "command": {
             "type": ["string", "null"],
             "description": "Optional, like the next two, and only on a working worker that runs this mod, mid-turn. The tool it has been running for 15 s or more: `npm test`."
@@ -91,7 +96,7 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 100,
-            "description": "Optional, so older boards stay valid, and only for a worker that runs this mod. How full its context was after its last turn, in whole percent of the model's context window (the coordinator's reset limit when the window is unknown); drawn as `ctx 41%`."
+            "description": "Optional, so older boards stay valid, and only for a worker that runs this mod. How full its context was after its last turn, in whole percent of the model's context window; absent when the window is unknown; drawn as `ctx 41%`."
           },
           "diff": {
             "type": "object",
