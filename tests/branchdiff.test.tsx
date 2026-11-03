@@ -1,6 +1,7 @@
+import { BATCH_MS } from '../hooks/defaults'
 import { expect } from 'claude-code/testing'
 import { DIFF_FILES_MAX, parseDiff } from '../hooks/branchdiff'
-import { W } from './workerkit'
+import { W, reportW } from './workerkit'
 import { spawn, start, stopAll, test, until } from './harness'
 
 // A worker's context fill and what its branch changes (#283), from the worker's file and git to the board.
@@ -109,4 +110,41 @@ test("a worker's context is a percent of its window, kept between turns, and abs
   await s.clock.advance(3000)
   expect(worker(s)().context).toBe(100)
   await stopAll($, s.clock, ['w-busy'])
+})
+
+test('a finished worker triggers no git calls and keeps the diff it had', async ($, on) => {
+  const s = await start($, on)
+  await spawn($, ['w-busy'], '/repo/wt')
+  s.runs.set(`${GIT} symbolic-ref --short refs/remotes/origin/HEAD`, [{ exitCode: 0, stdout: 'origin/develop\n' }])
+  s.runs.set(`${GIT} diff --no-renames --numstat origin/develop...HEAD`, [{ exitCode: 0, stdout: '4\t2\ta.ts\n' }])
+  s.runs.set(`${GIT} diff --no-renames --name-status origin/develop...HEAD`, [{ exitCode: 0, stdout: 'M\ta.ts\n' }])
+  // Steps of 10 s with a live heartbeat, so the worker can end 80 s after the poll that read its diff and be on the board at the next.
+  const step = async (ms: number) => {
+    for (let t = 0; t < ms; t += 10_000) {
+      s.files[HEARTBEAT] = JSON.stringify({ at: s.clock.now(), terminals: ['t1'] })
+      await s.clock.advance(10_000)
+    }
+  }
+  while (!worker(s)()?.diff) await step(10_000)
+  const diff = worker(s)().diff
+  await step(70_000)
+  const token = s.typed[0]?.match(/<!-- report (\S+) -->/)?.[1]
+  s.files[`${W}/RESULT.md`] = `<!-- report ${token} -->\nDone.`
+  await s.finish('w-busy')
+  s.shell.length = 0
+  await step(50_000)
+  expect(worker(s)()).toMatchObject({ state: 'reported' })
+  expect(s.shell.some(c => c.includes(' diff ') || c.includes('symbolic-ref'))).toBe(false)
+  expect(worker(s)().diff).toEqual(diff)
+  await stopAll($, s.clock, ['w-busy'])
+})
+
+test('LIVE.json is read once per row per tick, for a finished row too', async ($, on) => {
+  const s = await start($, on)
+  await reportW($, s)
+  s.files[`${W}/LIVE.json`] = JSON.stringify({ inTurn: false, outputAt: 0, command: null, commandAt: null })
+  s.reads.length = 0
+  await s.clock.advance(3000)
+  const once = s.reads.filter(p => p === `${W}/LIVE.json`).length
+  expect(once).toBe(1)
 })

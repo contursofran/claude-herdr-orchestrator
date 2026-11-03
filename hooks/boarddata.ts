@@ -13,7 +13,7 @@ import { ownLiveFields } from './live'
 import { sharedFiles } from './overlap'
 import { answered, choose, decisionTitle, openQuestions, pinnedItems, tick } from './owner'
 import { session } from './session'
-import { jobs } from './state'
+import { active, jobs } from './state'
 import { groupTasks, STAGES, type ItemRef, type Task } from './tasks'
 import { interruptWorker, stopWorker } from './workers'
 
@@ -166,13 +166,20 @@ export async function pollDiffs($: EngineInterface) {
   try {
     const { board } = await gather($)
     const all = await jobs($)
+    const kept = (await read($, state)).diffs ?? {}
     const got: NonNullable<BoardState['diffs']> = {}
     for (const r of board.rows) {
-      const cwd = all[r.name]?.cwd
-      const d = cwd ? await readDiff($, cwd).catch(() => null) : null
+      const job = all[r.name]
+      // A finished worker's branch no longer moves: it keeps the diff it had, with no git calls.
+      if (!job || !active(job)) {
+        const k = kept[r.name]
+        if (k) got[r.name] = k
+        continue
+      }
+      const d = await readDiff($, job.cwd).catch(() => null)
       if (d) got[r.name] = d
     }
-    if (JSON.stringify(got) === JSON.stringify((await read($, state)).diffs ?? {})) return
+    if (JSON.stringify(got) === JSON.stringify(kept)) return
     await update($, state, s => ({ ...s, diffs: got }))
   } finally {
     diffing = false

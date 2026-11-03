@@ -122,7 +122,7 @@ export type Row = {
   command?: string | null
   commandAt?: number | null
   outputAt?: number
-  // Its context fill after its last turn, in whole percent (see workerContext).
+  // Its context fill after its last turn, in whole percent (see workerLive).
   context?: number
 }
 
