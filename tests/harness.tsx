@@ -183,6 +183,10 @@ export async function start(
   const fail = { list: 0, get: 0, pane: 0, start: 0, rename: 0, send: 0 }
   // Terminals whose `hc read --lines` stalls past any timeout the caller gives it.
   const slowHistory = new Set<string>()
+  // Workers whose `hc send` types the text (the core lands it) and then never answers: the call times out.
+  const slowSend = new Set<string>()
+  // Workers whose `hc send` cannot run at all (hc missing): the call rejects at once.
+  const brokenSend = new Set<string>()
   // Sleeps seen between `hc send` tries are in the clock; these are the timeouts `hc read` was given.
   const readTimeouts: (number | undefined)[] = []
   // Whether the events streams yield each line in two pieces (a piece is not a line).
@@ -503,6 +507,8 @@ export async function start(
           status[t.name] = STATUS[t.name] ?? status[t.name]!
         }
         sends.push({ name: t.name, text, force })
+        if (slowSend.has(t.name)) return { deny: 'hc send timed out' }
+        if (brokenSend.has(t.name)) return { deny: 'spawn hc ENOENT' }
         if (holds.has(t.name)) {
           screens[t.name] = '❯ [Pasted text #1]\n✻ Shimmying… (4s)\n❯'
           status[t.name] = 'idle'
@@ -692,6 +698,8 @@ export async function start(
     self,
     fail,
     slowHistory,
+    slowSend,
+    brokenSend,
     readTimeouts,
     pieces,
     terms,

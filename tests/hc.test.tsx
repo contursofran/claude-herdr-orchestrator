@@ -1,5 +1,5 @@
 import { expect } from 'claude-code/testing'
-import { BATCH_MS, LOST_REPORT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS } from '../hooks/defaults'
+import { BATCH_MS, LOST_REPORT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SEND_DEADLINE_MS } from '../hooks/defaults'
 import { registering, settled, spawn, start, stopAll, test, until } from './harness'
 
 // The hc side of the mod: the guard, how a worker is started, prompted, watched, messaged and
@@ -763,6 +763,57 @@ test('a prompt hc keeps refusing as unavailable is reported as not delivered aft
   expect(used).toBe(5)
   expect(sends).toHaveLength(0)
   expect(toasts.join('\n')).toMatch(/first prompt failed: hc send: .*still starting/)
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a first prompt whose hc send times out is not a failed start, and starts when the core types it', async ($, on) => {
+  const { clock, slowSend, sends, status, toasts, store, submitted } = await start($, on)
+  slowSend.add('w-hc')
+  await $.tool.call(spawnArgs)
+  await settled()
+  // The core lands the text late, and the worker starts.
+  status['w-hc'] = 'working'
+  await clock.advance(PROMPT_CHECK_MS)
+  await settled()
+  expect(sends).toHaveLength(1)
+  expect(toasts.join('\n')).not.toMatch(/first prompt failed/)
+  expect(jobOf(store, 'w-hc')).toMatchObject({ status: 'running' })
+  expect(reportsOf(submitted)).toEqual([])
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a timed-out send is never typed again', async ($, on) => {
+  const { clock, slowSend, typed, submitted, toasts } = await start($, on)
+  slowSend.add('w-hc')
+  await $.tool.call(spawnArgs)
+  await settled()
+  await clock.advance(SEND_DEADLINE_MS + LOST_REPORT_MS)
+  await clock.advance(BATCH_MS)
+  expect(typed).toHaveLength(1)
+  expect(toasts.join('\n')).not.toMatch(/first prompt failed/)
+  expect(reportsOf(submitted).join('\n')).toMatch(/its prompt may still arrive: hc send timed out/)
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a timed-out send whose text shows on screen is submitted with enter, not typed again', async ($, on) => {
+  const { clock, slowSend, typed, keyed, screens, onKeys } = await start($, on)
+  slowSend.add('w-hc')
+  onKeys['w-hc'] = 'working'
+  await $.tool.call(spawnArgs)
+  await settled()
+  screens['w-hc'] = 'Your task is in /repo/wt/.herdr-agents/w-hc/TASK.md. Read it and do it.'
+  await clock.advance(PROMPT_WAIT_MS)
+  expect(typed).toHaveLength(1)
+  expect(keyed).toEqual([['w-hc', 'enter']])
+  await stopAll($, clock, ['w-hc'])
+})
+
+test('a send that fails for another reason is still a failed start', async ($, on) => {
+  const { clock, brokenSend, toasts } = await start($, on)
+  brokenSend.add('w-hc')
+  await $.tool.call(spawnArgs)
+  await settled()
+  expect(toasts.join('\n')).toMatch(/first prompt failed: .*ENOENT/)
   await stopAll($, clock, ['w-hc'])
 })
 

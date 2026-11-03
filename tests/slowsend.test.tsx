@@ -1,5 +1,5 @@
 import { expect } from 'claude-code/testing'
-import { BATCH_MS, MESSAGE_WAIT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SWEEP_MS } from '../hooks/defaults'
+import { BATCH_MS, LOST_REPORT_MS, MESSAGE_WAIT_MS, PROMPT_CHECK_MS, PROMPT_WAIT_MS, SEND_DEADLINE_MS, SWEEP_MS } from '../hooks/defaults'
 import { jobOf } from './workerkit'
 import { settled, start, stopAll, test } from './harness'
 
@@ -206,6 +206,23 @@ test('a stop while a message is queued drops it: it is named as not sent and nev
   expect(submitted.filter(t => t.includes('was not sent'))).toEqual([])
   // The stopped job is not brought back to running by the dropped send.
   expect(jobOf(store, 'w-a').status).toBe('reported')
+})
+
+test('a queued message whose send times out is not reported as failed, and is not typed again', async ($, on) => {
+  const started = await start($, on)
+  const { clock, slowSend, submitted, typed } = started
+  await reportedWorker(started, $, 'w-a')
+  slowSend.add('w-a')
+  const called = $.tool.call({ tool: 'mcp__herdr-agents__message', worker: 'w-a', text: 'Also check the docs.' })
+  await clock.advance(MESSAGE_WAIT_MS)
+  await called
+  // The worker never starts: the coordinator is told the message may still arrive, not that it failed.
+  await clock.advance(SEND_DEADLINE_MS + LOST_REPORT_MS)
+  await clock.advance(BATCH_MS)
+  expect(typed.filter(t => t.includes('Also check the docs.'))).toHaveLength(1)
+  expect(submitted.filter(t => t.includes('was not sent') || t.includes('could not type'))).toEqual([])
+  expect(submitted.filter(t => t.includes('its prompt may still arrive'))).toHaveLength(1)
+  await stopAll($, clock, ['w-a'])
 })
 
 test('a queued message that cannot be typed in is reported to the coordinator once it fails', async ($, on) => {
