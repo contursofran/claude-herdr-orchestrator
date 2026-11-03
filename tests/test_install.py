@@ -21,6 +21,16 @@ class Install(unittest.TestCase):
         self.config = tempfile.mkdtemp(prefix="hrd-install-test-")
         self.addCleanup(shutil.rmtree, self.config, True)
         self.app = os.path.join(self.config, "no-app")
+        # A fake herdr-app first on PATH, so no test asks the owner's real window; it is "not running" unless a test says otherwise.
+        self.bin = os.path.join(self.config, "bin")
+        os.makedirs(self.bin)
+        self.fake_app('exit 1')
+
+    def fake_app(self, body):
+        path = os.path.join(self.bin, "herdr-app")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(path, 0o755)
 
     def install(self):
         return subprocess.run([INSTALL], capture_output=True, text=True, env=self.env(), check=True)
@@ -29,7 +39,14 @@ class Install(unittest.TestCase):
         # No app home unless a test makes one: install.sh must not touch the real Herdr app.
         # HOME is the temporary folder too: with the real one, install.sh finds the Discord bot's launch agent
         # and restarts the owner's real bot (launchctl kickstart -k), which is what made this file slow (#270).
-        return dict(os.environ, CLAUDE_CONFIG_DIR=self.config, HERDR_APP_HOME=self.app, HOME=self.config)
+        return dict(
+            os.environ,
+            CLAUDE_CONFIG_DIR=self.config,
+            HERDR_APP_HOME=self.app,
+            HOME=self.config,
+            PATH=self.bin + os.pathsep + os.environ["PATH"],
+            INSTALL_WINDOW_WAIT="0",
+        )
 
     def recorded(self):
         with open(os.path.join(self.config, "mods", "herdr-agents", "clone")) as f:
@@ -75,6 +92,27 @@ class Install(unittest.TestCase):
         floating = work[1]["children"][0]["floating"]
         self.assertEqual([c["id"] for c in floating], ["hrd-sheet"])  # the strip draws the answer card: no block for it
         self.assertTrue(os.path.isfile(os.path.join(self.app, "mods", "herdr-agents", "main.js")))
+
+    def test_with_the_app_running_the_install_ends_with_the_windows_errors(self):
+        os.makedirs(self.app)
+        self.fake_app('echo \'{"layout":"main","errors":["mod herdr-agents: main.js:3 boom","second"]}\'')
+        lines = self.install().stdout.strip().splitlines()
+        self.assertEqual(lines[-3:], ["Window errors (2):", "- mod herdr-agents: main.js:3 boom", "- second"])
+
+    def test_with_the_app_running_and_no_errors_the_install_says_so(self):
+        os.makedirs(self.app)
+        self.fake_app('echo \'{"errors":[]}\'')
+        self.assertEqual(self.install().stdout.strip().splitlines()[-1], "Window: no errors.")
+
+    def test_with_the_app_not_running_the_install_prints_no_window_line(self):
+        os.makedirs(self.app)  # the fake herdr-app exits 1: not running
+        self.assertNotIn("Window", self.install().stdout)
+
+    def test_without_the_app_home_the_window_is_not_asked(self):
+        self.fake_app('echo asked >&2; echo \'{"errors":["x"]}\'')
+        out = self.install()
+        self.assertNotIn("Window", out.stdout)
+        self.assertNotIn("asked", out.stderr)
 
     def version_file(self):
         return os.path.join(self.app, "mods", "herdr-agents", "version.json")
