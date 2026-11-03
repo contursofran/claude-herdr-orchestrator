@@ -1,13 +1,22 @@
 import { expect } from 'claude-code/testing'
 import { actionFile, answerAction, doneAction } from '../app/mods/herdr-agents/model.js'
 import { BATCH_MS } from '../hooks/defaults'
-import { spawn, start, stopAll, test } from './harness'
+import { command, spawn, start, stopAll, test } from './harness'
 
 // The board for apps outside Claude Code: a snapshot file per session, and action files.
 
 const DIR = '/home/t/.herdr-agents/board'
 const FILE = `${DIR}/session-1234.json`
 const INBOX = `${DIR}/session-1234.actions`
+
+test('/hrd-orchestrate flips coordinator.orchestrating on the board', async ($, on) => {
+  const { clock, files } = await start($, on)
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(false)
+  await command($, 'hrd-orchestrate')
+  await clock.advance(3000)
+  expect(JSON.parse(files[FILE] ?? '{}').coordinator.orchestrating).toBe(true)
+})
 
 test('the board is written for outside apps, and their action files answer and tick', async ($, on) => {
   const { clock, submitted, files } = await start($, on)
@@ -25,7 +34,7 @@ test('the board is written for outside apps, and their action files answer and t
 
   const board = JSON.parse(files[FILE] ?? '{}')
   expect(board.version).toBe(1)
-  expect(board.coordinator).toEqual({ terminal: 't1' })
+  expect(board.coordinator).toEqual({ terminal: 't1', orchestrating: false })
   expect(board.stageNames).toEqual(['plan', 'build', 'rev', 'CI', 'you'])
   expect(board.workers.map((w: { name: string }) => w.name)).toEqual(['w-busy'])
   expect(board.summary.needs).toBe(2)
@@ -79,7 +88,7 @@ test('the board says null for the coordinator terminal outside hc, and keeps the
   const { clock, files } = await start($, on, {}, {}, { HC_TERMINAL_ID: '' })
   await clock.advance(3000)
   const board = JSON.parse(files[FILE] ?? '{}')
-  expect(board.coordinator).toEqual({ terminal: null })
+  expect(board.coordinator).toEqual({ terminal: null, orchestrating: false })
   expect(Object.keys(board)).toEqual(
     expect.arrayContaining(['version', 'session', 'cwd', 'at', 'stageNames', 'summary', 'workers', 'tasks', 'needs', 'status', 'actions']),
   )

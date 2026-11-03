@@ -357,6 +357,18 @@ export function agentLive(boards, terminals, address, now) {
   return null
 }
 
+/** The mode of a board: `orchestrating`, `solo`, or null when the board doesn't say (an older one). */
+export function modeText(board) {
+  const o = board?.coordinator?.orchestrating
+  return o === true ? 'orchestrating' : o === false ? 'solo' : null
+}
+
+/** The mode of the orchestrator on a terminal, found by the board's coordinator terminal. */
+export function agentMode(boards, address) {
+  const b = (boards ?? []).find(x => x.coordinator?.terminal === address)
+  return b ? modeText(b) : null
+}
+
 /** What an Interrupt button in the agents list presses: a worker on its board, or an orchestrator's terminal. */
 export function interruptTarget(boards, terminals, address) {
   const name = (terminals ?? []).find(t => t.address === address)?.name
@@ -1033,6 +1045,30 @@ function ciFailureOf(t) {
     first: tests[0] ?? '',
     more: more ? `+${more} more failing test${more === 1 ? '' : 's'}` : '',
   }
+}
+
+/** The board's Next list as rows the panel draws like its work rows: the issue's link, its plan mark, and `ready`, the first one
+ *  `ready · next in line`. [] for a board without one (an older plugin). */
+export function nextRows(board) {
+  return (Array.isArray(board?.next) ? board.next : [])
+    .filter(x => x && typeof x === 'object' && Number.isInteger(x.issue) && typeof x.title === 'string')
+    .map((x, i) => ({
+      key: `next-${x.key ?? x.issue}`,
+      label: '',
+      title: x.title,
+      who: { text: i === 0 ? 'ready · next in line' : 'ready', kind: 'dim' },
+      stages: [x.planned === true ? 'done' : null, null, null, null, null],
+      item: null,
+      tab: null,
+      workers: [],
+      now: '',
+      link: typeof x.url === 'string' && /^https?:\/\//.test(x.url) ? { text: `issue #${x.issue}`, url: x.url, onLabel: false } : null,
+      isMerged: false,
+      isFinished: false,
+      mergedAt: null,
+      conflictsWith: null,
+      shares: '',
+    }))
 }
 
 /** `touches pin-panel.ts like #215`, from a task's `shares`; `+2` for further files, and every PR they are shared with. '' when none. */

@@ -78,6 +78,8 @@ export const SAVE_WAIT_MS = 10 * 60_000
 // and how many of the PRs it lists have their GitHub state read.
 export const TASK_RECENT_MS = 3 * 60 * 60_000
 export const PR_POLL_MAX = 8
+// How many issues set_next takes: the next few to start, not the backlog.
+export const NEXT_MAX = 10
 export const PR_POLL_MS = 2 * 60_000
 
 // Keys in $.store, which every session on the machine shares.

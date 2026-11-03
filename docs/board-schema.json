@@ -18,6 +18,10 @@
       "description": "Optional, so older boards stay valid.",
       "properties": {
         "terminal": { "type": ["string", "null"], "description": "The coordinator's hc terminal id (HC_TERMINAL_ID); null outside hc." },
+        "orchestrating": {
+          "type": "boolean",
+          "description": "True once /hrd-orchestrate ran in this session (it starts workers), false while it works on its own; /hrd-wrap-up does not clear it. Missing on older boards: unknown."
+        },
         "command": { "type": "string", "description": "Like a worker's `command`, `commandAt` and `outputAt`: there only mid-turn." },
         "commandAt": { "type": "number" },
         "outputAt": { "type": "number" }
@@ -137,6 +141,23 @@
               }
             }
           }
+        }
+      }
+    },
+    "next": {
+      "type": "array",
+      "description": "The coordinator's Ready list from set_next, in the order it starts; an issue a task already has is left out. Absent on older boards.",
+      "items": {
+        "type": "object",
+        "required": ["key", "issue", "title"],
+        "properties": {
+          "key": { "type": "string", "description": "owner/repo#218, or #218 when the repo is unknown." },
+          "label": { "type": "string", "description": "issue #218" },
+          "title": { "type": "string" },
+          "repo": { "type": ["string", "null"] },
+          "issue": { "type": "integer" },
+          "url": { "type": ["string", "null"] },
+          "planned": { "type": "boolean", "description": "A planner already wrote its plan." }
         }
       }
     },

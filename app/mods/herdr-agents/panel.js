@@ -4,7 +4,7 @@ import { div, svg } from 'gpui-kit'
 import { closeOverlay, exec, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { boardSpace, counts, liveLine, mergedText, projectName, rowAction, rowLive, stripItems } from './model.js'
+import { boardSpace, counts, liveLine, mergedText, modeText, nextRows, projectName, rowAction, rowLive, stripItems } from './model.js'
 import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { interruptButton } from './interrupt.js'
@@ -497,7 +497,12 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
             .flex_col()
             .gap(2)
             .child(div().truncate().font_bold().child(projectName(board)))
-            .child(div().text_size(11).text_color(color.dim).child('Board')),
+            .child(
+              div()
+                .text_size(11)
+                .text_color(color.dim)
+                .child(modeText(board) ? `Board \u00b7 ${modeText(board)}` : 'Board'),
+            ),
         )
         .when(Boolean(chip), el => el.child(chip))
         .child(closeButton(ui)),
@@ -518,6 +523,7 @@ export function panelView(board, now = Date.now(), ui = { open: new Set() }) {
         .child(sectionHead(`Work · ${counts(board).working} running`, stuck.length > 0 ? null : stageHeads(names)))
         .children(work.map(r => row(r, board, now, ui)))
         .when(work.length === 0, el => el.child(div().px(8).py(6).text_color(color.dim).child('Nothing running.')))
+        .when(nextRows(board).length > 0, el => el.child(sectionHead('Next')).children(nextRows(board).map(r => row(r, board, now, ui))))
         .children(history('Merged', merged, board, now, ui)),
     )
 }

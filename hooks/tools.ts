@@ -89,6 +89,31 @@ export async function registerTools($: EngineInterface) {
     isDeferred: false,
   })
   await $.tool.register({
+    name: 'set_next',
+    description:
+      "Put your Ready list on the board's Next section, in the order the issues start: the first is next in line. Each call replaces the list, and an empty list clears it. An issue leaves it by itself once a worker starts on it, so call it again only when the order or the items change.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          description: 'At most 10, in order.',
+          items: {
+            type: 'object',
+            properties: {
+              issue: { type: 'string', description: '#123, or owner/repo#123 when the folder has several repos.' },
+              title: { type: 'string', description: 'A short title, as the row shows it.' },
+              planned: { type: 'boolean', description: 'A planner already wrote its plan.' },
+            },
+            required: ['issue', 'title'],
+          },
+        },
+      },
+      required: ['items'],
+    },
+    isDeferred: false,
+  })
+  await $.tool.register({
     name: 'ask_owner',
     description: [
       'Pin a question only the person can answer (a product rule, a design choice, an approval) where they will see it, with a toast.',

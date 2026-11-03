@@ -7,6 +7,7 @@ const hcCalls = []
 globalThis.__fakeGpui.hc = async args => (hcCalls.push(args), { code: 0, stdout: '' })
 
 const m = await import('../mods/herdr-agents/panelmodel.js')
+const model = await import('../mods/herdr-agents/model.js')
 const { floatView, panelFor, panelView, stageHead, workerView } = await import('../mods/herdr-agents/panel.js')
 const { panelHeld } = await import('../mods/herdr-agents/panelheld.js')
 
@@ -561,4 +562,35 @@ test('pressing the failed CI opens its run, and the press stops there', () => {
   findId(panelView(b), 'panel-ci-one').node.calls.on_mouse_down[1](null, { stop_propagation: () => (stopped = true) })
   assert.deepEqual(app.execs, [['open', FAIL.url]])
   assert.ok(stopped)
+})
+
+test('the head says whether the session is orchestrating or solo, and plain Board when the board does not say', () => {
+  const head = coordinator => textOf(panelView(board({ coordinator }), 0))
+  assert.ok(head({ orchestrating: true }).includes('Board · orchestrating'))
+  assert.ok(head({ orchestrating: false }).includes('Board · solo'))
+  assert.ok(!head({}).includes('Board ·'))
+})
+
+test('the Next list sits between Work and Merged, the first row next in line', () => {
+  const b = board({
+    tasks: [task('m', { isMerged: true, isFinished: true, who: { text: 'merged', kind: 'dim' }, mergedAt: 1 })],
+    next: [
+      { key: 'acme/x#218', issue: 218, title: 'PR links', url: 'https://github.com/acme/x/issues/218', planned: true },
+      { key: 'acme/x#219', issue: 219, title: 'Card keys', url: 'https://github.com/acme/x/issues/219' },
+      { issue: 'bad', title: 'dropped' },
+    ],
+  })
+  const text = textOf(panelView(b))
+  const at = s => text.indexOf(s)
+  assert.ok(at('Next') > at('Nothing running.') && at('Next') < at('Merged'))
+  assert.deepEqual(
+    text.filter(s => /^(PR links|Card keys|dropped|issue #\d+ ↗|ready.*)$/.test(s)),
+    ['PR links', 'issue #218 ↗', 'ready · next in line', 'Card keys', 'issue #219 ↗', 'ready'],
+  )
+  // Planned shows in the P column; nothing else is marked.
+  const [first, second] = model.nextRows(b)
+  assert.deepEqual(first.stages, ['done', null, null, null, null])
+  assert.deepEqual(second.stages, [null, null, null, null, null])
+  // An older board has no Next section.
+  assert.equal(textOf(panelView(board())).includes('Next'), false)
 })

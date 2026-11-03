@@ -86,7 +86,7 @@ Tests: `npm run test:app`.
 
 ## What's in the repo
 
-- **`herdr-agents`** (the mod): the `spawn`, `message`, `interrupt` and `stop` tools for workers, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for what needs you, and everything above.
+- **`herdr-agents`** (the mod): the `spawn`, `message`, `interrupt` and `stop` tools for workers, `set_next` for the board's Next list, `ask_owner`, `decided`, `pin_for_owner` and `unpin_for_owner` for what needs you, and everything above.
 - **`herdr-agents-view`** (`view/`): draws worker reports as one dim line. It has to be a separate mod, because Claude Code never raises a mod's own `ui.render` hooks for the prompts that mod submits.
 - **Subagents** (`agents/`, shipped with the mod as `herdr-agents:planner`, `herdr-agents:builder` and `herdr-agents:reviewer`): `planner` (Opus high), `builder` (Sonnet medium) and `reviewer` (Opus high); the `debugger` profile is Opus with full tools. They hold no repo rules of their own: they read the repo's `AGENTS.md`/`CLAUDE.md` and its `.claude/skills` checklists.
 

@@ -165,7 +165,12 @@ export type BoardState = {
   cleared: Record<string, number>
   status?: string
   prs: Record<string, Pr>
+  // the coordinator's Ready list in its order, from set_next: what starts next
+  next?: NextItem[]
 }
+
+// One issue on the board's Next list. `planned`: a planner already wrote its plan.
+export type NextItem = { repo?: string; issue: number; title: string; planned?: boolean }
 
 // The context reset in progress (see maybeReset): the coordinator was asked at
 // `at` to save its state, and the mod compacts once it has.
