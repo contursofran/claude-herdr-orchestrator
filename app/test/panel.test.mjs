@@ -638,3 +638,49 @@ test('the Next list sits between Work and Merged, the first row next in line', (
   // An older board has no Next section.
   assert.equal(textOf(panelView(board())).includes('Next'), false)
 })
+
+const DIFF = {
+  base: 'main',
+  add: 142,
+  del: 31,
+  files: [
+    { path: 'app/panel.js', status: 'M', add: 120, del: 30 },
+    { path: 'app/new.js', status: 'A', add: 22, del: 1 },
+  ],
+  more: 3,
+}
+
+test("a worker's context and branch diff read as the design has them, and an older board draws neither", () => {
+  assert.equal(model.ctxText({ context: 41 }), 'ctx 41%')
+  assert.equal(model.ctxText({ context: 0 }), 'ctx 0%')
+  for (const bad of [{}, { context: null }, { context: 'x' }, { context: 101 }, { context: 4.5 }, null])
+    assert.equal(model.ctxText(bad), '')
+  assert.deepEqual(model.branchDiff({ diff: DIFF }), {
+    title: 'Branch vs main',
+    total: '+142 −31',
+    files: [
+      { path: 'app/panel.js', status: 'M', delta: '+120 −30' },
+      { path: 'app/new.js', status: 'A', delta: '+22 −1' },
+    ],
+    more: '+3 more files',
+  })
+  assert.equal(model.branchDiff({ diff: { ...DIFF, more: 1 } }).more, '+1 more file')
+  for (const bad of [{}, { diff: null }, { diff: { base: 'main' } }, null]) assert.equal(model.branchDiff(bad), null)
+
+  const b = board({ tasks: [task('one', { tab: 'fix-1', pr: 7, url: 'https://github.com/o/app/pull/7' })] })
+  const text = textOf(workerView(b, { ...worker, context: 41, diff: DIFF }))
+  for (const want of ['ctx 41%', 'Branch vs main', '+142 −31', 'app/panel.js', 'M', 'A', '+22 −1', '+3 more files', 'Open diff ↗'])
+    assert.ok(text.includes(want), want)
+  const old = textOf(workerView(b, worker))
+  assert.ok(!old.some(t => /ctx|Branch vs/.test(t)))
+})
+
+test('Open diff opens the PR files, and a worker with no PR has the rows only', () => {
+  app.execs.length = 0
+  const b = board({ tasks: [task('one', { tab: 'fix-1', pr: 7, url: 'https://github.com/o/app/pull/7' })] })
+  findId(workerView(b, { ...worker, diff: DIFF }), 'panel-diff-fix-1').node.calls.on_mouse_down[1](null, { stop_propagation() {} })
+  assert.deepEqual(app.execs, [['open', 'https://github.com/o/app/pull/7/files']])
+  const bare = workerView(board(), { ...worker, diff: DIFF })
+  assert.ok(textOf(bare).includes('Branch vs main'))
+  assert.equal(findId(bare, 'panel-diff-fix-1'), null)
+})

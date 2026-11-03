@@ -86,6 +86,37 @@
           "outputAt": {
             "type": "number",
             "description": "When the model last said anything or a tool last ended, ms since the epoch, rounded up to the minute. A reader works the clocks out from these, so the time passing never rewrites the file."
+          },
+          "context": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Optional, so older boards stay valid, and only for a worker that runs this mod. How full its context was after its last turn, in whole percent of the model's context window (the coordinator's reset limit when the window is unknown); drawn as `ctx 41%`."
+          },
+          "diff": {
+            "type": "object",
+            "description": "Optional, so older boards stay valid; absent when the branch changes nothing or git could not say. What the worker's committed branch changes against the repo's default branch (three dots, renames shown as a delete and an add), read at the PR poll's pace while the app mod draws.",
+            "required": ["base", "add", "del", "files", "more"],
+            "properties": {
+              "base": { "type": "string", "description": "The branch it is read against: main." },
+              "add": { "type": "integer", "description": "Lines added, over every file." },
+              "del": { "type": "integer", "description": "Lines removed, over every file." },
+              "files": {
+                "type": "array",
+                "description": "The first 30 changed files by path.",
+                "items": {
+                  "type": "object",
+                  "required": ["path", "status", "add", "del"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "status": { "type": "string", "description": "git's letter: A, M, D, T." },
+                    "add": { "type": "integer", "description": "0 for a binary file." },
+                    "del": { "type": "integer" }
+                  }
+                }
+              },
+              "more": { "type": "integer", "description": "Changed files beyond the ones listed." }
+            }
           }
         }
       }

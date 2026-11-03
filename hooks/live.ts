@@ -5,17 +5,25 @@ import { LIVE_COMMAND_MS, LIVE_SAVE_MS } from './defaults'
 // Every session records its own from its hooks. A worker also writes it to the file spawn named in HERDR_AGENTS_LIVE, and its
 // coordinator reads that file at its tick. Only workers running this mod have one: a Codex or opencode worker shows no line.
 
-export type Live = { inTurn: boolean; outputAt: number; command: string | null; commandAt: number | null }
+export type Live = {
+  inTurn: boolean
+  outputAt: number
+  command: string | null
+  commandAt: number | null
+  // The context fill after its last turn; kept between turns.
+  context?: { tokens: number; limit: number }
+}
 
 const running = new Set<{ command: string; at: number }>()
 let path: string | null = null
 let inTurn = false
 let outputAt = 0
 let savedAt = 0
+let context: Live['context']
 
 function liveNow(): Live {
   const oldest = [...running].sort((a, b) => a.at - b.at)[0]
-  return { inTurn, outputAt, command: oldest?.command ?? null, commandAt: oldest?.at ?? null }
+  return { inTurn, outputAt, command: oldest?.command ?? null, commandAt: oldest?.at ?? null, ...(context ? { context } : {}) }
 }
 
 async function save($: EngineInterface, now: number) {
@@ -29,6 +37,13 @@ export async function startLive($: EngineInterface) {
   inTurn = false
   outputAt = 0
   savedAt = 0
+  context = undefined
+}
+
+// After each turn: how full this session's context is, for the worker panel's `ctx 41%`.
+export async function liveContext($: EngineInterface, tokens: number, limit: number) {
+  context = { tokens, limit }
+  await save($, await $.clock.now())
 }
 
 export async function liveTurn($: EngineInterface, started: boolean) {
@@ -97,6 +112,17 @@ export const ownLiveFields = (now: number) => liveFields(liveNow(), now)
 export async function workerLiveFields($: EngineInterface, dir: string, now: number) {
   try {
     return liveFields(JSON.parse(await $.fs.read(`${dir}/LIVE.json`)) as Live, now)
+  } catch {
+    return {}
+  }
+}
+
+// A worker's context fill as a whole percent (what the board shows, so it only rewrites when the number moves), from the same file.
+export async function workerContext($: EngineInterface, dir: string) {
+  try {
+    const c = (JSON.parse(await $.fs.read(`${dir}/LIVE.json`)) as Live).context
+    if (!c || !(c.limit > 0) || !(c.tokens >= 0)) return {}
+    return { context: Math.min(100, Math.round((c.tokens / c.limit) * 100)) }
   } catch {
     return {}
   }

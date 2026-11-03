@@ -14,8 +14,8 @@ export async function isOrchestrating($: EngineInterface) {
   return read($, orchestrating)
 }
 
-export async function setOrchestrating($: EngineInterface) {
-  await update($, orchestrating, () => true)
+export async function setOrchestrating($: EngineInterface, on: boolean) {
+  await update($, orchestrating, () => on)
 }
 
 // The line the coordinator gets with a prompt that follows a report or a stop: while wrapping up,

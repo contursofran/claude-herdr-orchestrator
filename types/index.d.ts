@@ -122,6 +122,8 @@ export type Row = {
   command?: string | null
   commandAt?: number | null
   outputAt?: number
+  // Its context fill after its last turn, in whole percent (see workerContext).
+  context?: number
 }
 
 // The GitHub repo (owner/name) of each folder this session and its workers used, from its git
@@ -174,6 +176,17 @@ export type BoardState = {
   prs: Record<string, Pr>
   // the coordinator's Ready list in its order, from set_next: what starts next
   next?: NextItem[]
+  // each worker's branch against the default branch, by worker name (see branchdiff.ts)
+  diffs?: Record<string, BranchDiff>
+}
+
+// `base` is the branch it is read against; `files` are the first few, `more` the ones left out; `add` and `del` count every file.
+export type BranchDiff = {
+  base: string
+  add: number
+  del: number
+  files: { path: string; status: string; add: number; del: number }[]
+  more: number
 }
 
 // One issue on the board's Next list. `planned`: a planner already wrote its plan.

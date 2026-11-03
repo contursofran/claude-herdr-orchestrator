@@ -4,7 +4,20 @@ import { div, svg } from 'gpui-kit'
 import { closeOverlay, exec, notify, props, run, setShared, shared, terminals, theme } from 'herdr'
 import { send } from './board.js'
 import { openCard } from './cardctl.js'
-import { boardSpace, counts, liveLine, mergedText, modeText, nextRows, projectName, rowAction, rowLive, stripItems } from './model.js'
+import {
+  boardSpace,
+  branchDiff,
+  counts,
+  ctxText,
+  liveLine,
+  mergedText,
+  modeText,
+  nextRows,
+  projectName,
+  rowAction,
+  rowLive,
+  stripItems,
+} from './model.js'
 import { holdPanel } from './panelheld.js'
 import { PANEL_FLOAT_W, PANEL_HISTORY, focusedWorker, panelSections, rowStageNames, workerRow } from './panelmodel.js'
 import { interruptButton } from './interrupt.js'
@@ -357,6 +370,43 @@ function ciFailureBlock(f, key) {
     )
 }
 
+/** `Branch vs main  +142 \u221231`, a row per file with its status letter and +/\u2212, and Open diff: the PR's files when the task has a PR. */
+function diffBlock(diff, row, name) {
+  const line = (text, c) => div().min_w_0().truncate().text_size(11).text_color(c).child(text)
+  return div()
+    .flex()
+    .flex_col()
+    .gap(4)
+    .child(
+      div()
+        .flex()
+        .items_center()
+        .gap(8)
+        .child(div().text_color(look.head).child(diff.title))
+        .child(div().text_size(11).text_color(color.dim).child(diff.total)),
+    )
+    .children(
+      diff.files.map(f =>
+        div()
+          .flex()
+          .items_center()
+          .gap(8)
+          .text_size(11)
+          .child(div().flex_none().w(10).text_color(color.dim).child(f.status))
+          .child(div().flex_1().min_w_0().truncate().child(f.path))
+          .child(div().flex_none().text_color(color.dim).child(f.delta)),
+      ),
+    )
+    .when(Boolean(diff.more), el => el.child(line(diff.more, color.dim)))
+    .when(Boolean(row?.link), el =>
+      el.child(
+        div()
+          .flex()
+          .child(link({ link: { url: `${row.link.url}/files` } }, 'Open diff ↗', `panel-diff-${name}`)),
+      ),
+    )
+}
+
 /** A worker's tab: who it is, how far it got, what it is on and its PR, from what the board has. */
 export function workerView(board, worker, ui = { open: new Set() }) {
   const t = theme()
@@ -368,6 +418,8 @@ export function workerView(board, worker, ui = { open: new Set() }) {
   const live = worker.state === 'working' ? liveLine(worker, Date.now()) : null
   const target = { session: board.session, worker: worker.name }
   const back = backButton(board, ui)
+  const ctx = ctxText(worker)
+  const diff = branchDiff(worker)
   return frame('hrd-panel-worker')
     .child(
       div()
@@ -400,6 +452,7 @@ export function workerView(board, worker, ui = { open: new Set() }) {
               ),
             )
             .child(div().flex_1())
+            .when(Boolean(ctx), el => el.child(div().flex_none().text_size(11).text_color(color.dim).child(ctx)))
             .child(
               div()
                 .flex_none()
@@ -495,7 +548,8 @@ export function workerView(board, worker, ui = { open: new Set() }) {
             .when(Boolean(r.review && (r.review.blockers.length || r.review.verdict === 'changes')), inner =>
               inner.child(reviewBlock(r.review)),
             ),
-        ),
+        )
+        .when(Boolean(diff), el => el.child(diffBlock(diff, r, worker.name))),
     )
     .child(
       div()

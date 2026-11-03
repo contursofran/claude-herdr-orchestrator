@@ -200,6 +200,7 @@ While you work, run only the test files you touched, with `npm run test:file -- 
 | `defaults.ts` | Default settings and tuning values. |
 | `overlap.ts` | Which open PRs on the board change the same files. |
 | `failure.ts` | The failed job and failing tests behind a PR's red CI, read once per failing head. |
+| `branchdiff.ts` | What a worker's branch changes against the default branch, per file, for the worker panel. |
 | `workers.ts` | `spawn`, `message`, `interrupt`, `stop`: starting workers, watching them, delivering `RESULT.md`, `WAIT.json` waits. |
 | `stateblock.ts` | The Workers block the mod keeps in the state file: running and waiting workers, recent reports. |
 | `archive.ts` | The copy of each delivered report in `~/.herdr-agents/reports`, which outlives a pruned worktree. |
