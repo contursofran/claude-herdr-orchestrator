@@ -26,7 +26,7 @@ test('two reports that land together reach the coordinator as one prompt, with o
   // Both elements in one prompt. Their order is the order the tick delivered them in, which the test does not fix.
   expect(submitted[0]).toMatch(/<herdr-agent name="w-a"/)
   expect(submitted[0]).toMatch(/<herdr-agent name="w-b"/)
-  expect(submitted[0]?.match(/workers working/g)).toHaveLength(1)
+  expect(submitted[0]).not.toContain('workers working')
   await stopAll($, clock, ['w-a', 'w-b'])
 })
 

@@ -32,7 +32,7 @@ test('a session without /hrd-orchestrate gets the report of a worker it started,
   await stopAll($, ctx.clock, ['w-a'])
 })
 
-test('a session with /hrd-orchestrate gets the playbook, the roles and the nudge', async ($, on) => {
+test('a session with /hrd-orchestrate gets the playbook, the roles, and no worker count', async ($, on) => {
   const ctx = await start($, on)
   await command($, 'hrd-orchestrate', 'ship it')
   const all = await reportOnce($, ctx)
@@ -40,7 +40,8 @@ test('a session with /hrd-orchestrate gets the playbook, the roles and the nudge
   expect(all).toContain('Answer first:')
   expect(all).toContain("Say what's next:")
   expect(all).toMatch(ROLES)
-  expect(all).toMatch(NUDGE)
+  // The report prompt leaves the worker count out (#174).
+  expect(all).not.toMatch(NUDGE)
   await stopAll($, ctx.clock, ['w-a'])
 })
 
