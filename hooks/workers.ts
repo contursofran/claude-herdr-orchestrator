@@ -45,7 +45,7 @@ import { active, jobs, latestJob, patchJob, saveJob, updateJob } from './state'
 import { ensureOpencodePlugin } from './opencode'
 import { briefRefs, withPr } from './tasks'
 import { belowTarget } from './target'
-import { checkWorktree, createWorktree, defaultBase, excludeFromGit, repoTop, validBranch, worktreePath } from './worktrees'
+import { checkWorktree, createWorktree, defaultBase, excludeFromGit, installDeps, repoTop, validBranch, worktreePath } from './worktrees'
 
 // Worker agents that run as hc terminals, shown in a Herdr tab. spawn starts the CLI in one,
 // hands it the task and returns at once. When the worker ends its turn, its RESULT.md
@@ -1084,7 +1084,9 @@ async function startWorker($: EngineInterface, job: Job, task: string, p: Profil
   }
   try {
     if (tree) await createWorktree($, tree.top, tree.branch, tree.base, cwd)
-    await $.fs.write(`${dir}/TASK.md`, task)
+    // Worktrees (new or reused) get an install when they have a lockfile and no node_modules; a folder the coordinator named is left as it is.
+    const deps = job.kind === 'feature' ? await installDeps($, cwd) : ''
+    await $.fs.write(`${dir}/TASK.md`, deps ? `${deps}\n\n${task}` : task)
     await excludeFromGit($, cwd)
     // A temp folder of its own, so a fixed name cannot collide with another worker's (#157). The folder must exist.
     const tmp = `${dir}/tmp`
