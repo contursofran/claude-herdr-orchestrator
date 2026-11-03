@@ -43,3 +43,10 @@ Behaviours of Herdr (and GitHub) that cost a debugging session each. Read this b
 - **Cause:** the core runs calls in spawned tasks, and only `machine.exec` aborts one when the client goes away (`server.rs`, v0.1.14). Killing the client does not cancel the send.
 - **Our code:** `hc()` throws a timed-out call with kind `timeout`. `send()` then counts the text as "may still land" and never types it again: a later try only presses enter when the screen shows the text, otherwise it waits for work to start. Out of time it reports "its prompt may still arrive", not "not delivered".
 - **Link:** #107.
+
+## `pane.focus` and `space.new` fail just after a start
+
+- **Symptom:** `demo` died at its last step with `no such pane` (`pane.focus --terminal tN`), or at the first with `the window did not answer` (`space.new`, "terminal.run: no reply from core" in `app.log`). It came and went, most on a slow machine such as a CI runner.
+- **Cause:** the app attaches a terminal's pane a moment after the terminal exists, and the core answers late right after a start.
+- **Our code:** `demo` retries `space.new` and `pane.focus` for up to 15 s. A call that times out is not retried.
+- **Link:** #348.
