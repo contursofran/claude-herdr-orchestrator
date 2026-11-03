@@ -28,7 +28,7 @@ jobs:
           trap 'cp /private/tmp/hw-hw/*.log .herdr-agents/smoke/ 2>/dev/null; tail -n 40 /private/tmp/hw-hw/*.log || true; $w stop || true' EXIT
           set -x
           $w start
-          $w demo
+          bash -x $w demo
           $w run herdr-app status | tee .herdr-agents/smoke/status.json
           $w run herdr-app shot "$PWD/.herdr-agents/smoke/a.png"
           sleep 1
