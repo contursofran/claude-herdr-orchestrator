@@ -40,6 +40,8 @@ The window follows the system's light or dark. To see the other one, set `"appea
 
 To draw your own board, pass it to `demo`. By hand, its file must be `.herdr-agents/board/<session>.json` in the window's home and its `coordinator.terminal` a live agent, or the bar and strip stay empty and the pop-up has no content.
 
+Each call `demo`, `stop` and `start` make to the app or the core is limited to `HERDR_HIDDEN_CALL_TIMEOUT` seconds (default 15). A mod that blocks the app makes `demo` fail with `Timed out after Ns: <command>` and the log tails, not hang; `stop` gives up on a core that doesn't answer and kills it with the rest of the window's processes.
+
 ## What it does
 
 The copy of the app has its own bundle id and `LSBackgroundOnly`, and is ad-hoc signed, which drops the hardened runtime so `scripts/herdr-hidden-window.m` can load into it. `start` proves the hooks load, with `--version`, before anything can open a window. The hooks:

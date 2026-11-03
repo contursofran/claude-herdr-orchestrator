@@ -10,6 +10,7 @@
 #
 # HERDR_HIDDEN_NAME picks the window (default hw), so several workers can have one each.
 # HERDR_HIDDEN_APP picks the herdr-app that start copies (default /Applications/Herdr.app).
+# HERDR_HIDDEN_CALL_TIMEOUT is the seconds one call to the app or the core may take (default 15).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -18,6 +19,12 @@ name=${HERDR_HIDDEN_NAME:-hw}
 # 62 characters plus three names, and macOS allows 103: so 13 at most.
 if [[ ! $name =~ ^[a-z0-9-]{1,13}$ ]]; then
   echo "HERDR_HIDDEN_NAME takes lowercase letters, digits and dashes, at most 13: a longer name won't fit the Unix socket path limit." >&2
+  exit 2
+fi
+
+call_timeout=${HERDR_HIDDEN_CALL_TIMEOUT:-15}
+if [[ ! $call_timeout =~ ^[0-9]+$ || $call_timeout -eq 0 ]]; then
+  echo "HERDR_HIDDEN_CALL_TIMEOUT takes a whole number of seconds above 0, not '$call_timeout'." >&2
   exit 2
 fi
 
@@ -32,7 +39,7 @@ copy=$dir/Herdr.app
 binary=$copy/Contents/MacOS/Herdr
 bundle_id=dev.herdr.app.hidden-test.$name
 # The app version the hooks were last measured on; start warns on any other.
-tested_version=0.1.10
+tested_version=0.1.12
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
 # The caller's PATH without the owner's own Herdr tools: $dir/bin has the copy's.
@@ -54,6 +61,25 @@ hooks=("HERDR_HIDDEN_LOG=$dir/hooks.log" "DYLD_INSERT_LIBRARIES=$dir/hooks.dylib
 die() {
   echo "$*" >&2
   exit 1
+}
+
+# Runs a command for at most N seconds; exit 142 (SIGALRM) when it ran out. macOS has no timeout(1).
+limit() {
+  local n=$1
+  shift
+  perl -e 'alarm shift; exec @ARGV or exit 127' "$n" "$@"
+}
+
+# One call to the app or the core, in the window's environment, with the call timeout. A call
+# that outlasts it (a mod blocking the app's main thread, say) fails with the log tails, not a hang.
+call() {
+  local status=0
+  limit "$call_timeout" "${window_env[@]}" "$@" || status=$?
+  if [[ $status == 142 ]]; then
+    echo "Timed out after ${call_timeout}s: $*" >&2
+    tail -5 "$dir/app.log" "$dir/hooks.log" >&2 2>/dev/null || true
+  fi
+  return "$status"
 }
 
 # True only for a process that really is this copy, even if the pid was reused.
@@ -209,11 +235,11 @@ start() {
   echo $! >"$dir/pid"
   local i
   for i in {1..75}; do
-    if "${window_env[@]}" herdr-app shot "$dir/first.png" >/dev/null 2>&1; then
+    if limit "$call_timeout" "${window_env[@]}" herdr-app shot "$dir/first.png" >/dev/null 2>&1; then
       sync_mod
       "${window_env[@]}" node "$here/app/layout.mjs" "$dir/app" >/dev/null
       "${window_env[@]}" node "$here/app/keys.mjs" "$dir/app" >/dev/null
-      "${window_env[@]}" herdr-app do layout.switch --name coordinator >/dev/null
+      call herdr-app do layout.switch --name coordinator >/dev/null
       check_hidden
       warn_if_no_display_link
       closing_on_failure=0
@@ -236,14 +262,24 @@ demo() {
 process.stdout.write('\x1b]7501;state=idle:app=claude\x1b\\')
 setInterval(() => {}, 1e6)
 EOF
-  space=$("${window_env[@]}" herdr-app do space.new --name shop --folder "$dir/home" |
-    node -pe 'JSON.parse(require("fs").readFileSync(0)).space')
+  local reply
+  reply=$(call herdr-app do space.new --name shop --folder "$dir/home") || die "space.new failed."
+  space=$(node -pe 'JSON.parse(require("fs").readFileSync(0)).space' <<<"$reply" 2>/dev/null) || space=
+  if [[ -z $space || $space == undefined ]]; then die "space.new gave no space: $reply"; fi
   sleep 0.5
-  "${window_env[@]}" hc run --bg --label "herdr.space=$space" --label herdr.tab=coordinator \
-    claude "$dir/fake-agent.js" >/dev/null
-  sleep 1
-  address=$("${window_env[@]}" hc ls --json |
-    node -pe 'JSON.parse(require("fs").readFileSync(0)).terminals.filter(t => t.agent !== "sh").pop().address')
+  call hc run --bg --label "herdr.space=$space" --label herdr.tab=coordinator \
+    claude "$dir/fake-agent.js" >/dev/null || die "hc run failed."
+  # The agent announces itself a moment after it starts: wait for it, within the call timeout.
+  address=
+  local i
+  for ((i = 0; i < call_timeout * 5; i++)); do
+    address=$(call hc ls --json | node -pe '
+      const t = JSON.parse(require("fs").readFileSync(0)).terminals.filter(t => t.agent !== "sh").pop()
+      t ? t.address : ""' 2>/dev/null) || address=
+    [[ -n $address ]] && break
+    sleep 0.2
+  done
+  [[ -n $address ]] || die "The fake coordinator didn't start (hc ls shows no agent)."
   mkdir -p "$dir/home/.herdr-agents/board"
   node -e '
     const fs = require("fs")
@@ -252,7 +288,7 @@ EOF
     board.coordinator.terminal = address
     fs.writeFileSync(`${folder}/${board.session}.json`, JSON.stringify(board))
   ' "$fixture" "$dir/home/.herdr-agents/board" "$address"
-  "${window_env[@]}" herdr-app do pane.focus --terminal "$address" >/dev/null
+  call herdr-app do pane.focus --terminal "$address" >/dev/null
   echo "Coordinator at $address."
 }
 
@@ -269,7 +305,8 @@ close_window() {
     if running; then kill -9 "$pid" 2>/dev/null || true; fi
   fi
   # Its own core only: HC_SESSION names it.
-  [[ -d $dir ]] && "${window_env[@]}" hc server stop >/dev/null 2>&1 || true
+  # A core that doesn't answer is killed below with everything else from this folder.
+  [[ -d $dir ]] && limit "$call_timeout" "${window_env[@]}" hc server stop >/dev/null 2>&1 || true
   # Whatever that missed runs from this folder, so it can only be this window's.
   local leftovers
   leftovers=$(own_processes)
