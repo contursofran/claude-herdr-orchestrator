@@ -9,9 +9,7 @@ const { DISMISS_MS, pastFrame, samePress, stripItems } = await import('../mods/h
 const { card, makeCardState } = await import('../mods/herdr-agents/card.js')
 const { makeSheetState, sheetBlock } = await import('../mods/herdr-agents/sheet.js')
 const { popupView } = await import('../mods/herdr-agents/popup.js')
-const { strip, StripState } = await import('../mods/herdr-agents/strip.js')
-const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
-const { pinbar } = await import('../mods/herdr-agents/pinbar.js')
+const { openBoardPopup, strip, StripState, toggleSheet } = await import('../mods/herdr-agents/strip.js')
 const { clearStaleOverlays } = await import('../mods/herdr-agents/cardstate.js')
 
 const board = () => ({ ...JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url))), session: 's' })
@@ -185,34 +183,6 @@ test("sheet button: a press that closed the card opens the sheet on the card's i
   assert.equal(app.store['hrd.sheet'].back, 't1')
 })
 
-test('pin bar: a press that closed the card opens the pin, which keeps the terminal to hand back', () => {
-  const needs = [{ key: 'K1', kind: 'know', isOpen: true, text: 'K1 text' }]
-  const pinBoard = { session: 's', needs }
-  const ctl = new PinCtl()
-  const e = press({ bounds: { x: 0, y: 0, width: 800, height: 30 } })
-  out(cardRoot(), e)
-  app.focused = { terminal: null, space: 'a' }
-  const ui = ctl.ui(pinBoard, cx)
-  const root = pinbar(pinBoard, ui)
-  root.node.calls.on_mouse_down[1](e, cx)
-  findId(root, 'pin-all').node.calls.on_click[0](null, cx)
-  assert.equal(app.opened[0].props.back, 't1')
-  assert.equal(app.store['hrd.open'], null)
-})
-
-test('pin bar: a press that closed the card, then the caret, hands the keyboard back for the pin', () => {
-  const needs = [{ key: 'K1', kind: 'know', isOpen: true, text: 'K1 text' }]
-  const pinBoard = { session: 's', needs }
-  const ctl = new PinCtl()
-  const e = press({ bounds: { x: 0, y: 0, width: 800, height: 30 } })
-  out(cardRoot(), e)
-  app.focused = { terminal: null, space: 'a' }
-  const root = pinbar(pinBoard, ctl.ui(pinBoard, cx))
-  root.node.calls.on_mouse_down[1](e, cx)
-  findId(root, 'pin-caret').node.calls.on_click[0](null, cx)
-  assert.equal(app.opened[0].props.back, 't1')
-})
-
 test('a later press on the button is its own press: it opens again', () => {
   out(cardRoot(), press())
   pressOn(bar(), `tab-${first.key}`, press({ position: { x: 20, y: 900 } }))
@@ -250,4 +220,48 @@ test('a note left by the last run is forgotten at start', () => {
     (k, v) => (app.store[k] = v),
   )
   assert.equal(app.store['hrd.dismissed'], null)
+})
+
+// --- a replaced pop-up still hands the keyboard back (#190): it holds the keyboard, so focused() names no terminal ---
+
+const heldPopup = () => {
+  popupRoot()
+  app.store['hrd.popupBack'] = { back: 't1', space: 'a' }
+  app.focused = { terminal: null, space: 'a' }
+}
+
+test("a pop-up row that opens the card hands the card the pop-up's terminal", () => {
+  const card = b.tasks.find(t => t.item && !t.tab) ?? { key: 'x', item: first.key }
+  const root = popupRoot()
+  const row = findId(root, `work-${card.key}`)
+  app.focused = { terminal: null, space: 'a' }
+  row.node.calls.on_mouse_down[1]()
+  assert.equal(app.store['hrd.open'].back, 't1')
+  assert.equal(app.store['hrd.open'].space, 'a')
+})
+
+test('the board key while the pop-up is open: the new pop-up keeps the terminal to hand back', () => {
+  heldPopup()
+  openBoardPopup(b)
+  assert.equal(app.opened[0].props.back, 't1')
+  assert.equal(app.opened[0].props.space, 'a')
+})
+
+test('⌘J while the pop-up is open: the sheet keeps the terminal to hand back', () => {
+  heldPopup()
+  toggleSheet(b)
+  assert.equal(app.store['hrd.sheet'].back, 't1')
+})
+
+test('a pick key while the pop-up is open: the card keeps the terminal to hand back', () => {
+  heldPopup()
+  new StripState().pick(b, first, false)
+  assert.equal(app.store['hrd.open'].back, 't1')
+})
+
+test('a closed pop-up leaves no terminal to hand back', () => {
+  heldPopup()
+  app.store['hrd.popup'] = null
+  toggleSheet(b)
+  assert.equal(app.store['hrd.sheet'].back, null)
 })

@@ -1,5 +1,4 @@
 // The mod's logic, with no gpui-kit or herdr imports so node can test it (app/test).
-import { copyTargets } from './copystate.js'
 
 /** True when the watcher's `paths` include the board file of `session` (either spelling of the folder: /tmp may be
  *  reported as /private/tmp, so only the file name is compared). Files in <session>.actions/ and .tmp files do not count. */
@@ -71,13 +70,6 @@ export function drawnKey(role, boards, session, open = null) {
     const { at: _at, ...board } = list.find(b => b.session === session) ?? {}
     return JSON.stringify(board)
   }
-  if (role === 'pins')
-    return JSON.stringify(
-      stillOpen(
-        open ?? [],
-        list.find(b => b.session === session),
-      ).map(p => p.id),
-    )
   if (role === 'sheet') return open ? JSON.stringify(list.map(({ at: _at, ...b }) => b)) : ''
   return JSON.stringify(list.map(({ at: _at, tasks, ...b }) => ({ ...b, rows: (tasks ?? []).map(t => t?.key) })))
 }
@@ -220,98 +212,6 @@ export function pins(board, read = {}, hidden = new Set()) {
     .filter(p => !hidden.has(p.id))
 }
 
-/** Those of `list` (an overlay's pins) still open on `board`. With no board read yet, all of them. */
-export function stillOpen(list, board) {
-  if (!board) return list
-  const open = new Set(pins(board).map(p => p.id))
-  return list.filter(p => open.has(p.id))
-}
-
-/** Whether a pins overlay has nothing left to show: its pin, or every pin, was resolved or Done. */
-export function pinsOverlayEmpty({ view, id, list = [] }, board, gone = new Set()) {
-  const left = stillOpen(list, board).filter(p => !gone.has(p.id))
-  return view === 'panel' ? !left.some(p => p.id === id) : left.length === 0
-}
-
-/** The newest of some pins; the later one in board order when `at` is equal. */
-export function newestPin(list) {
-  let best = null
-  for (const p of list) if (!best || p.at >= best.at) best = p
-  return best
-}
-
-/** The pin the full bar shows: the one picked by the owner (`sel`, an id) while it exists, else the newest unread, else null. */
-export function currentPin(list, sel = null) {
-  const picked = sel && list.find(p => p.id === sel)
-  if (picked) return picked
-  return newestPin(list.filter(p => p.unread))
-}
-
-/** 'empty' (no pins: the row stays, with a quiet line), 'full' (a pin to show) or 'slim' (pins, all read, or `slim`
- *  asked for while the sheet is open: the row keeps its height). */
-export function pinbarMode(list, sel = null, slim = false) {
-  if (list.length === 0) return 'empty'
-  if (slim) return 'slim'
-  return currentPin(list, sel) ? 'full' : 'slim'
-}
-
-/** The slim line: `N pins · nothing new · last: <title>`; with `showNew` (the sheet forced the row slim) unread pins are
- *  counted instead: `N pins · M new · last: <title>`. */
-export function slimLine(list, showNew = false) {
-  const last = newestPin(list)
-  if (!last) return ''
-  const unread = showNew ? list.filter(p => p.unread).length : 0
-  return `${list.length} ${list.length === 1 ? 'pin' : 'pins'} · ${unread ? `${unread} new` : 'nothing new'} · last: ${last.title}`
-}
-
-/** The segments: one per pin, in board order, with the kind the bar draws (current, unread, read). */
-export function segments(list, current) {
-  return list.map(p => ({ id: p.id, title: p.title, kind: current && p.id === current.id ? 'current' : p.unread ? 'unread' : 'read' }))
-}
-
-/** The id of the pin `dir` (1 next, -1 previous) from `current`, wrapping round; null with fewer than 2 pins. */
-export function stepPin(list, current, dir) {
-  if (list.length < 2) return null
-  const at = Math.max(
-    0,
-    list.findIndex(p => p.id === current?.id),
-  )
-  return list[(at + dir + list.length) % list.length].id
-}
-
-/**
- * A step by key or button from what the row last showed: `shown` is {mode, list, current}. Does nothing (null) unless the
- * row shows a full or slim pin bar. From the slim row it starts at the newest pin, the one a click on the row opens.
- * Otherwise {sel, shown}: the pin moved to (marked read through `mark`), and `shown` as the row will be drawn next,
- * so a second press before the redraw moves on again.
- */
-export function keyStep(shown, dir, mark) {
-  if (!shown || (shown.mode !== 'full' && shown.mode !== 'slim')) return null
-  const from = shown.mode === 'slim' ? newestPin(shown.list) : shown.current
-  const sel = stepPin(shown.list, from, dir)
-  if (!sel) return null
-  mark(sel)
-  return { sel, shown: { ...shown, mode: 'full', current: shown.list.find(p => p.id === sel) } }
-}
-
-/** 1 for `herdr-agents.nextpin`, -1 for `herdr-agents.prevpin`, else null. */
-export function pinStepDir(name) {
-  const m = /(?:^|\.)(next|prev)pin$/.exec(String(name))
-  return m ? (m[1] === 'next' ? 1 : -1) : null
-}
-
-/** The empty row's line: `No pins`, then `· 2 working` from the board's summary (zeros and missing left out). */
-export function emptyLine(board) {
-  const busy = board?.summary?.busy
-  return typeof busy === 'number' && busy > 0 ? `No pins · ${busy} working` : 'No pins'
-}
-
-/** Pin ids in `list` that were not in `prev` (a Set, or null on the first call, when nothing is new). */
-export function newPinIds(prev, list) {
-  if (!prev) return []
-  return list.map(p => p.id).filter(id => !prev.has(id))
-}
-
 /** `5m`, `2h`, `3d` from a time in ms; `now` under a minute; empty without a time. */
 export function ageText(at, now) {
   if (!at || !now || now < at) return at ? 'now' : ''
@@ -382,10 +282,9 @@ export function interruptTarget(boards, terminals, address) {
 /** How often a copy that draws ages looks at them. */
 export const AGE_TICK_MS = 60_000
 
-/** The times behind the ages a copy has on screen; [] when it shows none (a closed card or sheet, no pin, other roles).
- *   boards  every board read       session  the pop-up's board       open  hrd.open or hrd.sheet, for the card and the sheet
- *   pinAt   the pin bar's current pin's time       pins  props() of a pins copy       gone  the pins it has hidden */
-export function agedTimes(role, { boards = [], open = null, pinAt = null, pins = null, gone = new Set(), session = null } = {}) {
+/** The times behind the ages a copy has on screen; [] when it shows none (a closed card or sheet, other roles).
+ *   boards  every board read       session  the pop-up's board       open  hrd.open or hrd.sheet, for the card and the sheet */
+export function agedTimes(role, { boards = [], open = null, session = null } = {}) {
   const known = at => (at ? [at] : [])
   // The clocks of a board's agents, which move on their own, and of its merged rows.
   const liveTimes = b => [b?.coordinator, ...(b?.workers ?? [])].flatMap(w => [...known(w?.commandAt), ...known(w?.outputAt)])
@@ -396,11 +295,6 @@ export function agedTimes(role, { boards = [], open = null, pinAt = null, pins =
   }
   // The right panel: every board, since which it shows follows focus.
   if (role === 'panel') return boards.flatMap(b => [...mergeTimes(b), ...liveTimes(b)])
-  if (role === 'pinbar') return known(pinAt)
-  if (role === 'pins') {
-    const list = (pins?.list ?? []).filter(p => !gone.has(p.id))
-    return (pins?.view === 'panel' ? list.filter(p => p.id === pins.id) : list).flatMap(p => known(p.at))
-  }
   if ((role === 'strip' || role === 'sheet') && open) {
     const board = boards.find(b => b.session === open.session)
     // The sheet stays on an answered item until the owner closes it; the card only draws open ones.
@@ -439,9 +333,6 @@ export function pruneRead(read, boards) {
   }
   return dropped ? out : read
 }
-
-/** The read marks with one more. */
-export const markRead = (read, id) => (read?.[id] === true ? read : { ...(read ?? {}), [id]: true })
 
 // ---- Sending (S4): an action waits UNDO_MS in the mod, then is written to the board's actions folder ----
 
@@ -499,57 +390,6 @@ export function settleSent(sent, boards) {
     if (open) keep.push(s)
   }
   return { sent: keep, failed }
-}
-
-/** The pin bar's memory between draws: the picked pin, the board it was on, the pins seen, the pins already flashed. */
-export const newBarState = () => ({ session: null, sel: null, seen: null, flashed: new Set() })
-
-/**
- * One draw of the pin bar, pure. `waiting` are the queued actions ({id, session, key}) and `hidden` the keys to leave out.
- * Returns {state, view, list, flashStart}: the next state, the data pinbar() draws (without handlers), and the pin id
- * whose flash starts now (once per pin), else null.
- */
-export function deriveBar(prev, board, { read = {}, hidden = new Set(), waiting = [], now = 0, slim = false } = {}) {
-  if (!board) return { state: prev, view: { mode: 'empty', waiting: [] }, list: [], flashStart: null }
-  const list = pins(board, read, hidden)
-  let { session, sel, seen, flashed } = prev
-  if (session !== board.session) {
-    session = board.session
-    sel = null
-    seen = null
-  }
-  if (newPinIds(seen, list).length) sel = null // a new pin takes the bar back from a picked one
-  seen = new Set(list.map(p => p.id))
-
-  const mode = pinbarMode(list, sel, slim)
-  const current = currentPin(list, sel)
-  let flashStart = null
-  if (mode === 'full' && current.unread && !flashed.has(current.id)) {
-    flashStart = current.id
-    flashed = new Set(flashed).add(current.id)
-  }
-  const all = pins(board, read)
-  return {
-    state: { session, sel, seen, flashed },
-    list,
-    flashStart,
-    view: {
-      mode,
-      current,
-      many: list.length > 1,
-      empty: emptyLine(board),
-      segments: segments(list, current),
-      slim: slimLine(list, slim),
-      meta: current ? [current.who, ageText(current.at, now)].filter(Boolean).join(' · ') : '',
-      // Only pins: the queue is shared with the card and sheet, whose answers to questions are not the bar's.
-      waiting: waiting
-        .filter(q => q.session === board.session)
-        .flatMap(q => {
-          const pin = all.find(p => p.key === q.key)
-          return pin ? [{ id: q.id, title: pin.title }] : []
-        }),
-    },
-  }
 }
 
 // --- S12: the agents list's Orchestrators section ---
@@ -1231,127 +1071,11 @@ export function arrivalNotice(arrivals) {
   return { title: `${all.length} new items`, body: parts.join(', '), terminal }
 }
 
-// ---- The pin drop panel and the all-pins popover (S8) ----
-
-export const PINS_ALL_W = 470
-export const PINS_ALL_ROW_TEXT = 3 // lines of a row's summary
-const PINS_ALL_ROW = 122 // padding 10 + 8, title 18, text 3 x 18, buttons 24, gaps 4 + 4
-const PINS_ALL_ROWS = 4 // more than this scroll
-const PINS_ALL_CHROME = 2 + 20 + 24 + 4 // border, padding, header, gap
-const PANEL_CHAR_W = 7.8 // a 13 px mono character
-const PANEL_MAX_LINES = 12
-const PANEL_COPY_ROW = 36 // a Copy row: 30 high (the panel's 20 px line, padding, border) and a 6 gap above it
-const PANEL_MAX_COPY_ROWS = 3 // more scroll
-const PANEL_FALLBACK_TOP = 80 // tabs 42 + pin bar 38, when the bar's own bounds are not known
-const PANEL_FALLBACK_SIDE = CARD_SIDE
-const PINS_MIN_H = 120 // an overlay never gets smaller than this, however small the window
-const PINS_WINDOW_GAP = 8 // kept free between an overlay and the window's bottom edge
-
-/** Unread first, then read; the newest first within each (board order when equal). Does not change `list`. */
-export function orderPins(list) {
-  return list
-    .map((p, i) => ({ p, i }))
-    .sort((a, b) => Number(b.p.unread) - Number(a.p.unread) || b.p.at - a.p.at || a.i - b.i)
-    .map(x => x.p)
-}
-
 /** How long after the popover's rows change a press on a row is ignored: a press already on its way was meant for the old row. */
 export const ROWS_SETTLE_MS = 500
 
-/** Note the rows being drawn, top to bottom: a different list or order than last draw means they moved now. */
-export function noteRows(seen, keys, now) {
-  const rows = keys.join('\n')
-  if (seen.rows !== undefined && seen.rows !== rows) seen.movedAt = now
-  seen.rows = rows
-}
-
 /** Whether a press now can only be meant for the row under it. */
 export const rowsSteady = (seen, now) => seen.movedAt === undefined || now - seen.movedAt >= ROWS_SETTLE_MS
-
-/** The read marks with every pin of `list` marked; the same object when none was unread. */
-export const markAllRead = (read, list) => list.reduce((r, p) => markRead(r, p.id), read)
-
-/** A pin's drop panel is this tall for `text` at `width`: fixed, because a popup whose root has no size draws nothing. */
-export function panelHeight(text, width) {
-  const per = Math.max(10, Math.floor((Number(width) - 16 - 39) / PANEL_CHAR_W))
-  const lines = String(text ?? '')
-    .split('\n')
-    .reduce((n, l) => n + Math.max(1, Math.ceil(l.length / per)), 0)
-  const rows = Math.min(copyTargets(text).length, PANEL_MAX_COPY_ROWS)
-  return 1 + 14 + Math.min(Math.max(lines, 1), PANEL_MAX_LINES) * 20 + rows * PANEL_COPY_ROW + 12 + 18 + 12 + 28 + 14
-}
-
-/** The drop panel's context line: who, age and tag, as far as the pin has them. */
-export const pinContext = (pin, now) => [pin.who, ageText(pin.at, now), pin.tag].filter(Boolean).join(' · ')
-
-/** `height`, limited to what fits below `y` in the window, so the buttons stay reachable and the content scrolls. The app
- *  scales an overlay's size by the zoom but not its position, so what is left below `y` is divided by it. */
-export function fitHeight(height, y, viewport, zoom = 1) {
-  const vh = Number(viewport?.height)
-  if (!(vh > 0)) return height
-  return Math.min(height, Math.max(PINS_MIN_H, (vh - y - PINS_WINDOW_GAP) / (zoom > 0 ? zoom : 1)))
-}
-
-/** The all-pins popover's height for `n` pins. */
-export const allPinsHeight = n => PINS_ALL_CHROME + (PINS_ALL_ROW + 4) * Math.min(Math.max(n, 1), PINS_ALL_ROWS)
-
-/**
- * The pin bar's place, worked out from the layout tree: `x` and `right` are what fixed blocks take on its left and right,
- * `y` is its bottom edge. The app multiplies a layout's px by the zoom. Null with no pin bar in the tree, or when a block
- * sized by weight comes before it or beside it, which the tree alone cannot place.
- */
-export function barArea(root, zoom = 1) {
-  const scale = zoom > 0 ? zoom : 1
-  const isBar = node => node?.type === 'block' && node.content?.props?.role === 'pinbar'
-  const walk = node => {
-    if (isBar(node)) return Number(node.size?.px) > 0 ? { x: 0, y: Number(node.size.px), right: 0 } : null
-    const kids = node?.children ?? []
-    for (let i = 0; i < kids.length; i++) {
-      if (kids[i]?.hidden) continue
-      const inner = walk(kids[i])
-      if (!inner) continue
-      const fixed = list => {
-        const shown = list.filter(c => !c?.hidden)
-        return shown.every(c => Number(c?.size?.px) >= 0) ? shown.reduce((sum, c) => sum + Number(c.size.px), 0) : null
-      }
-      const before = fixed(kids.slice(0, i))
-      if (node.type === 'row') {
-        const after = fixed(kids.slice(i + 1))
-        return before === null || after === null ? null : { ...inner, x: inner.x + before, right: inner.right + after }
-      }
-      if (node.type === 'column') return before === null ? null : { ...inner, y: inner.y + before }
-      return inner
-    }
-    return null
-  }
-  const area = walk(root)
-  return area && { x: area.x * scale, y: area.y * scale, right: area.right * scale }
-}
-
-/**
- * Where the overlay goes. `bar` is the pin bar's bounds in the window ({x, y, width, height}) as a click reported them;
- * without them `area` (barArea) places it, and with neither the work area is taken to lie between the sidebars. The panel is as wide as the bar, right under it; the
- * popover is right aligned under it.
- * `x` and `y` are window px, the overlay's width is drawn at the zoom: without bounds, the width is divided by it.
- * The bar's bounds keep their numbers: a drawn window has to confirm their units first.
- */
-export function pinsSpot(view, bar, viewport, area = null, zoom = 1) {
-  const ok = Number(bar?.width) > 0
-  const x = ok ? bar.x : (area?.x ?? PANEL_FALLBACK_SIDE)
-  const y = ok ? bar.y + bar.height : (area?.y ?? PANEL_FALLBACK_TOP)
-  const side = area ? area.x + area.right : 2 * PANEL_FALLBACK_SIDE
-  const width = ok ? bar.width : Math.max(CARD_MIN_W, atZoom(Number(viewport?.width) - side, zoom) || CARD_W)
-  if (view === 'panel') return { x, y, width }
-  const scale = !ok && zoom > 0 ? zoom : 1
-  return { x: Math.max(0, x + (width - PINS_ALL_W) * scale - 8), y: y + 4, width: PINS_ALL_W }
-}
-
-/** Done from the overlay: a list of requests in shared("hrd.doneReq"), so two in one tick both stay; the pin bar copy empties
- *  it and turns each into the same queued, undoable action as its own Done ×. These are the usable ones of `list`. */
-export function doneRequests(list) {
-  if (!Array.isArray(list)) return []
-  return list.filter(r => r?.session && r?.key).map(r => ({ session: r.session, key: r.key }))
-}
 
 // --- S6: the band steps aside ---
 

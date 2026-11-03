@@ -1,6 +1,6 @@
 # claude-herdr-orchestrator
 
-Run a team of coding agents from one Claude Code session. The coordinator plans the work, starts workers (Claude, opencode, codex) in [herdr](https://herdr.dev) tabs, and their reports come back to it as prompts. What needs you shows in the Herdr app: a pin bar, a strip under the terminal, and a card to answer from.
+Run a team of coding agents from one Claude Code session. The coordinator plans the work, starts workers (Claude, opencode, codex) in [herdr](https://herdr.dev) tabs, and their reports come back to it as prompts. What needs you shows in the Herdr app: a strip under the terminal, and a card to answer from.
 
 Install it from the plugin marketplace, at a Claude Code prompt (details under [Install](#install)):
 
@@ -52,7 +52,7 @@ The strip shows the coordinator's context (`ctx 145k / 250k · aerum`, with the 
 
 ### A playbook that keeps workers busy
 
-Builder, then reviewer; the builder plans for itself, and the planner goes first only for work that needs several PRs or leaves the approach open. Each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. The coordinator is reminded when fewer than `target` workers run.
+Builder, then reviewer; the builder plans for itself, and the planner goes first only for work that needs several PRs or leaves the approach open. Each fix round goes to a fresh builder, and the debugger takes over after two failed rounds. After `/hrd-orchestrate`, the coordinator is reminded when fewer than `target` workers run. A session that did not run it gets no playbook and no reminders, and does the work itself unless you ask for a worker; reports from workers you did ask for still arrive.
 
 ### Learning notes
 
@@ -72,15 +72,15 @@ The work and what needs you are kept in `~/.herdr-agents/board/<session id>.json
 
 ### The Herdr app mod
 
-`app/` holds the mod that draws the board inside the Herdr window, for the coordinator of the space you are in: a pin bar under the tabs for things to read, a needs-you strip under the terminal, a floating card to answer from, a board pop-up with the work, a sheet that lists everything, and the settings dialog. It follows Herdr's light or dark theme.
+`app/` holds the mod that draws the board inside the Herdr window, for the coordinator of the space you are in: a needs-you strip under the terminal, a floating card to answer from, a board pop-up with the work, a sheet that lists everything, and the settings dialog. It follows Herdr's light or dark theme.
 
-`./install.sh` installs it when the app's folder exists (`$HERDR_APP_HOME`, default `~/.config/herdr-app`). It copies the mod, adds a layout called `coordinator` next to `main` (a copy of `main` with the two rows) and adds the mod's keys without replacing any key you use. It never switches your layout. On an orchestrator's tab the right panel opens on its board: what's running and what merged, with PR links and stage checks. Clicking a row opens that worker's tab. Its × closes it, and it stays closed until you press `panel ▴` in the bottom row. A shell tab goes back to Changes, and Files or Changes you picked stay when you switch tabs. The status bar also shows how much of your Claude and Codex plans' 5-hour and weekly limits is used, with the reset times on hover. It asks `api.anthropic.com` and `chatgpt.com` every 10 minutes using the sign-in each CLI already keeps on your computer (the Claude Code keychain item or `.credentials.json`, and `~/.codex/auth.json`). The token goes only to the service it belongs to, and a provider you aren't signed in to stays hidden. These endpoints aren't public APIs, so a figure can go stale if one changes. To switch, use your layout-switch key (`ctrl-shift-l` by default, `cmd-shift-l` in a Mac keys file) or `herdr-app do layout.switch --name coordinator`; to go back, `herdr-app do layout.switch --name main`.
+`./install.sh` installs it when the app's folder exists (`$HERDR_APP_HOME`, default `~/.config/herdr-app`). It copies the mod, adds a layout called `coordinator` next to `main` (a copy of `main` with the strip row) and adds the mod's keys without replacing any key you use. It never switches your layout. On an orchestrator's tab the right panel opens on its board: what's running and what merged, with PR links and stage checks. Clicking a row opens that worker's tab. Its × closes it, and it stays closed until you press `panel ▴` in the bottom row. A shell tab goes back to Changes, and Files or Changes you picked stay when you switch tabs. The status bar also shows how much of your Claude and Codex plans' 5-hour and weekly limits is used, with the reset times on hover. It asks `api.anthropic.com` and `chatgpt.com` every 10 minutes using the sign-in each CLI already keeps on your computer (the Claude Code keychain item or `.credentials.json`, and `~/.codex/auth.json`). The token goes only to the service it belongs to, and a provider you aren't signed in to stays hidden. These endpoints aren't public APIs, so a figure can go stale if one changes. To switch, use your layout-switch key (`ctrl-shift-l` by default, `cmd-shift-l` in a Mac keys file) or `herdr-app do layout.switch --name coordinator`; to go back, `herdr-app do layout.switch --name main`.
 
 In the `coordinator` layout the agents list is a copy of Herdr's own (taken from herdr-app 0.1.9) with an **Orchestrators** section on top: the agents that are a live board's coordinator stay there whatever their state. Herdr's later changes to its list do not reach the copy, and pins and "time in state" start empty. Each install points the `coordinator` layout's agents list at the copy again, even if you put Herdr's own back there: `main` keeps Herdr's own list. The Spaces list is also a copy, with CPU, RAM and disk under each machine. At the right of the status bar the layout shows the installed version and commit.
 
 ### One line when the app isn't showing
 
-While the pin bar runs it writes `~/.herdr-agents/app-mod.json` every 30 s, naming the hc terminals it draws and the hc core. PR checks are polled only while that file is fresh. For any session the file doesn't list (the `main` layout, an app crash, another machine or hc core, a session outside hc), one line above the prompt says what waits, such as `2 waiting (reply in chat): Sort bags by type?`, and you reply in chat. After a crash the file goes stale and the line returns within 90 s; a switch to `main` removes the file at once.
+While the needs-you strip runs it writes `~/.herdr-agents/app-mod.json` every 30 s, naming the hc terminals it draws and the hc core. PR checks are polled only while that file is fresh. For any session the file doesn't list (the `main` layout, an app crash, another machine or hc core, a session outside hc), one line above the prompt says what waits, such as `2 waiting (reply in chat): Sort bags by type?`, and you reply in chat. After a crash the file goes stale and the line returns within 90 s; a switch to `main` removes the file at once.
 
 Tests: `npm run test:app`.
 

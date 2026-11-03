@@ -70,6 +70,8 @@ export async function refresh($: EngineInterface) {
   const known = { ...PROFILES, ...settings.profiles }
   for (const j of shown) {
     const profile = known[j.profile]
+    // A user profile that overrides a built-in without naming a model keeps the built-in's.
+    const model = modelOf(profile) ?? modelOf(PROFILES[j.profile])
     let state = 'reported'
     if (j.status === 'starting') state = 'starting'
     if (j.status === 'running') state = lastStatus.get(j.name) ?? 'working'
@@ -79,9 +81,10 @@ export async function refresh($: EngineInterface) {
       name: j.name,
       profile: j.profile,
       ...(profile ? { provider: profile.kind } : {}),
-      ...(modelOf(profile) ? { model: modelOf(profile) } : {}),
-      worktree: j.cwd,
+      ...(model ? { model } : {}),
+      ...(j.cwd ? { worktree: j.cwd } : {}),
       ...(j.branch ? { branch: j.branch } : {}),
+      ...(j.pane ? { pane: j.pane } : {}),
       state,
       startedAt: j.startedAt,
       endedAt: j.endedAt,

@@ -740,6 +740,7 @@ test('a starting job is not swept as gone and an old RESULT.md in its folder is 
 
 test('a starting worker counts toward the target and holds its name', async ($, on) => {
   const { clock, gate } = await start($, on)
+  await command($, 'hrd-orchestrate')
   await spawn($, ['w-a'], '/repo-a', clock)
   const release = gate(hcRun)
   await $.tool.call({ ...spawnArgs, worker: 'w-b', cwd: '/repo-b' })
@@ -1236,4 +1237,18 @@ test('the spawn tool offers branch, repo and base, and only worker, profile and 
   const spec = tools.spawn as any
   expect(Object.keys(spec.inputSchema.properties)).toEqual(expect.arrayContaining(['branch', 'repo', 'base']))
   expect(spec.inputSchema.required).toEqual(['worker', 'profile', 'task'])
+})
+
+test('a worker is told to check the author of an issue, PR or comment, and to run no outside code unapproved', async ($, on) => {
+  const { clock, typed, files } = await start($, on, claudeX)
+  await spawnX($)
+  const rule = "check the author's login (`gh issue view N --json author --jq .author.login`"
+  for (const text of [typed[0], files['/repo/wt/.herdr-agents/w-env/REPORTING.md']]) {
+    expect(text).toContain(rule)
+    expect(text).toContain("against the owner's (`gh api user --jq .login`)")
+    expect(text).toContain(
+      'do not check out or run code from their PR, unless the owner approved it or your brief says the owner approved it',
+    )
+  }
+  await stopAll($, clock, ['w-env'])
 })

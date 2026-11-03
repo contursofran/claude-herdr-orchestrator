@@ -122,8 +122,8 @@ export const panelFloats = width => !(width >= PANEL_MIN_WORK_PX)
 
 /** The design's panel width, which it keeps when floating. */
 export const PANEL_FLOAT_W = 380
-// What the floating panel leaves clear of the window's height: top bar, pin bar, strip, status bar and a little air.
-const PANEL_FLOAT_CLEAR = 42 + 38 + 34 + 28 + 16
+// What the floating panel leaves clear of the window's height: top bar, strip, status bar and a little air.
+const PANEL_FLOAT_CLEAR = 42 + 34 + 28 + 16
 const PANEL_FLOAT_MIN_H = 240
 
 /** The floating panel's height, from the window's. */

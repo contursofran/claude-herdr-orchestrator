@@ -261,20 +261,20 @@ test('every board change settles the card outbox, so a failed send shows (the pa
   const pin = { onBoards: bs => calls.push(['pin', bs.length]) }
   const strip = { observe: (_cx, bs) => calls.push(['strip', bs.length]) }
   const failed = { ...b, actions: [{ id, ok: false, message: 'no such item' }] }
-  onBoardsChanged({ pinbar: false, pin, card: ctl, strip }, [failed], cx)
-  assert.deepEqual(calls, [['strip', 1]], 'the pin bar copy only for the pin bar role')
+  onBoardsChanged({ pin: null, card: ctl, strip }, [failed], cx)
+  assert.deepEqual(calls, [['strip', 1]], 'no pin outbox on a copy that has none')
   assert.deepEqual(
     t.notes.map(n => n.body),
     ['no such item'],
   )
-  onBoardsChanged({ pinbar: true, pin, card: null, strip: null }, [failed], cx)
+  onBoardsChanged({ pin, card: null, strip: null }, [failed], cx)
   assert.deepEqual(calls.at(-1), ['pin', 1])
 })
 
 test('onBoardsChanged redraws when the picture changed or a sent action settled, and otherwise not', () => {
   const run = (drawn, settled) => {
     let notified = 0
-    const parts = { pinbar: true, pin: { onBoards: () => settled }, card: null, strip: null }
+    const parts = { pin: { onBoards: () => settled }, card: null, strip: null }
     onBoardsChanged(parts, [], { notify: () => notified++ }, () => drawn)
     return notified
   }

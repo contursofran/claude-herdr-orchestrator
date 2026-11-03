@@ -32,3 +32,10 @@ export function takeDismissed(press) {
 export function handBack(note) {
   if (canRefocus(note, focused()?.space)) run('pane.focus', { terminal: note.back })
 }
+
+/** Where the open board pop-up would hand the keyboard ({back, space}), or null. While it is open it holds the keyboard, so
+ *  focused() names no terminal; the surface that replaces it (a key, not a press) takes this as the terminal to return to. */
+export function openPopupBack() {
+  const open = shared('hrd.popup') ? shared('hrd.popupBack') : null
+  return open?.back ? { back: open.back, space: open.space ?? null } : null
+}

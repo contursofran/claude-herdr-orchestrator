@@ -4,14 +4,11 @@ import { afterEach, test } from 'node:test'
 import { app } from './fake-gpui.mjs'
 
 const tokens = await import('../mods/herdr-agents/tokens.js')
-const { pinbar } = await import('../mods/herdr-agents/pinbar.js')
-const { PinCtl } = await import('../mods/herdr-agents/pinctl.js')
 const { palettes, color, strip: stripLook, card, mode } = tokens
 const { strip } = await import('../mods/herdr-agents/strip.js')
 const { card: drawCard } = await import('../mods/herdr-agents/card.js')
 const { CardState } = await import('../mods/herdr-agents/cardstate.js')
 const { popupView } = await import('../mods/herdr-agents/popup.js')
-const { pinsView } = await import('../mods/herdr-agents/pinbar.js')
 const { sheetBlock, SheetState } = await import('../mods/herdr-agents/sheet.js')
 
 const cx = { notify() {}, spawn() {}, focus_handle: () => ({ focus() {} }), timer: { after() {}, every() {} } }
@@ -80,22 +77,16 @@ test('tokens follow a theme change live, nested groups too', () => {
 })
 
 const full = () => JSON.parse(readFileSync(new URL('../fixtures/full.json', import.meta.url), 'utf8'))
-const CONSUMERS = ['strip', 'pinbar', 'card', 'popup', 'sheet', 'copy']
+const CONSUMERS = ['strip', 'card', 'popup', 'sheet', 'copy']
 
 // Every surface, drawn with the full fixture and a decision open.
 const SURFACES = {
-  pinbar: b => pinbar(b, new PinCtl().ui(b, cx)),
   strip: b => strip(b, { boards: [b], terminals: [] }),
   card: b => {
     app.store['hrd.open'] = { session: b.session, key: 'D7', seq: 1 }
     return drawCard([b], new CardState({ send() {}, notify() {}, handle: { focus() {} } }), cx)
   },
   popup: b => popupView(b, { h: {}, leaving: false }),
-  pins: () => {
-    const list = [{ key: 'K2', kind: 'know', isOpen: true, text: 'K2 full text', from: 'builder' }]
-    app.props = { view: 'panel', session: 's', id: 's:K2', list, width: 900, height: 200, overlay: 'o1' }
-    return pinsView(new Set(), {})
-  },
   sheet: b => {
     app.store['hrd.sheet'] = { session: b.session, key: 'D7', seq: 1 }
     return sheetBlock([b], new SheetState({ send() {}, notify() {}, handle: { focus() {} } }), cx)
