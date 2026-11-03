@@ -683,6 +683,10 @@ export async function waiting($: EngineInterface, job: Job, status: string, now:
       await post(
         $,
         `<herdr-agent name="${job.name}" profile="${job.profile}" status="parked">\nParked on WAIT.json, waiting for: ${what}${pr ? ` (PR #${pr})` : ''}. It is not finished: its report comes when the wait ends.\n</herdr-agent>`,
+        false,
+        { worker: job.name },
+        // It rides along with the next prompt: a notice that only says "parked" is not worth a turn.
+        true,
       )
     }
   }

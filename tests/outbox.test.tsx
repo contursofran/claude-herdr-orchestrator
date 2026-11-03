@@ -204,3 +204,21 @@ test('a turn whose decision ping throws still ends, so a report that comes later
   expect(submitted[1]).toMatch(/^<herdr-agent name="w-b"/)
   await stopAll($, clock, ['w-a', 'w-b'])
 })
+
+test('a quiet item is held across a reload, and goes out with the next prompt that is not quiet', async ($, on) => {
+  const { clock, submitted, files, store } = await start($, on)
+  // A reload left a quiet item in the store.
+  const quiet = { text: '<herdr-agent name="w-q" status="parked">\nParked.\n</herdr-agent>', worker: 'w-q', quiet: true }
+  store.set('outbox:session-1234', { at: 0, items: [quiet] })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.advance(BATCH_MS * 2)
+  expect(submitted).toEqual([])
+  expect(store.has('outbox:session-1234')).toBe(true)
+  await $.tool.call({ tool: 'mcp__herdr-agents__ask_owner', question: 'Ship it today?', options: ['Yes', 'No'], from: 'p-1' })
+  files[`${INBOX}/1-answer.json`] = JSON.stringify({ action: 'answer', key: 'D1', answer: 'Yes' })
+  await clock.advance(3000 + BATCH_MS)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toContain('Parked.')
+  expect(submitted[0]).toContain('<herdr-decision id="D1"')
+  expect(store.has('outbox:session-1234')).toBe(false)
+})
